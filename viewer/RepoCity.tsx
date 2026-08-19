@@ -624,7 +624,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   );
 }
 
-function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowcase, onImport }: { map: CityMap; slug: string | null; jsonPath: string | null; notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void }) {
+function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowcase, onImport, onMapFolder }: { map: CityMap; slug: string | null; jsonPath: string | null; notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
   const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
   // Local change: campus structures may be district-less (no parentId).
   const isCampusNode = (node: CityNode) =>
@@ -800,7 +800,7 @@ function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowc
         <div className="stat"><span>Repository</span><strong>{map.name}</strong></div>
         {!slug && map.repository && <div className="stat"><span>Repo path</span><strong>{map.repository}</strong></div>}
         {!slug && jsonPath && <button className="stat stat-action" type="button" onClick={onImport} title="Open another map file"><span>Map file</span><strong>{jsonPath}</strong></button>}
-        <div className="header-actions"><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
+        <div className="header-actions"><button className="secondary-action" type="button" onClick={onMapFolder}>Map a folder</button><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
       </header>
 
       <aside className="rail">
@@ -869,6 +869,8 @@ export default function Functionary() {
     setNotice(`Opened ${showcase.map.name} · ${showcase.map.nodes.length} nodes · ${showcase.map.edges.length} relationships.`);
   }
 
+  const [browserOpen, setBrowserOpen] = useState(false);
+
   async function importMap(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -886,17 +888,84 @@ export default function Functionary() {
     }
   }
 
+  function acceptGenerated(payload: { map: CityMap; jsonPath: string }) {
+    setCurrent({ map: payload.map, slug: null, jsonPath: payload.jsonPath });
+    setNotice(`Generated ${payload.map.name} · ${payload.map.nodes.length} nodes · ${payload.map.edges.length} relationships.`);
+    setBrowserOpen(false);
+  }
+
   return (
     <>
       <input ref={fileInput} className="sr-only" type="file" accept="application/json,.json" onChange={importMap} />
       {current.map
-        ? <MapViewer key={current.map.id} map={current.map} slug={current.slug} jsonPath={current.jsonPath} notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} />
-        : <EmptyShell notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} />}
+        ? <MapViewer key={current.map.id} map={current.map} slug={current.slug} jsonPath={current.jsonPath} notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />
+        : <EmptyShell notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />}
+      {browserOpen && <FolderBrowser onClose={() => setBrowserOpen(false)} onGenerated={acceptGenerated} />}
     </>
   );
 }
 
-function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport }: { notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void }) {
+function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenerated: (payload: { map: CityMap; jsonPath: string }) => void }) {
+  type Listing = { path: string; parent: string; entries: Array<{ name: string; path: string }>; isRepo: boolean };
+  const [listing, setListing] = useState<Listing | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (path?: string) => {
+    try {
+      const response = await fetch(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`);
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      setListing(data);
+      setError(null);
+    } catch (browseError) {
+      setError(browseError instanceof Error ? browseError.message : String(browseError));
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function generate() {
+    if (!listing || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repoPath: listing.path }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      const errors = validateCityMap(data.map);
+      if (errors.length) throw new Error(errors.slice(0, 3).join(" "));
+      onGenerated(data);
+    } catch (generateError) {
+      setError(generateError instanceof Error ? generateError.message : String(generateError));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="folder-overlay" role="dialog" aria-label="Map a folder">
+      <div className="folder-browser">
+        <header><strong>Map a folder</strong><button type="button" aria-label="Close" onClick={onClose}>×</button></header>
+        {listing && <>
+          <div className="folder-path"><code>{listing.path}</code>{listing.isRepo && <span className="repo-badge">git</span>}</div>
+          <div className="folder-list">
+            <button type="button" onClick={() => load(listing.parent)}>../</button>
+            {listing.entries.map((entry) => <button type="button" key={entry.path} onClick={() => load(entry.path)}>{entry.name}/</button>)}
+          </div>
+          <footer>
+            <button className="map-action" type="button" disabled={busy} onClick={generate}>{busy ? "Generating…" : "Generate map for this folder"}</button>
+          </footer>
+        </>}
+        {error && <p className="folder-error">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport, onMapFolder }: { notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
   return (
     <main className="empty-shell">
       <header className="topbar">
@@ -907,10 +976,13 @@ function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport }: { n
           <option value="" disabled>Choose a map</option>
           {showcases.map((candidate) => <option key={candidate.slug} value={candidate.slug}>{candidate.map.name}</option>)}
         </select>
-        <div className="header-actions"><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
+        <div className="header-actions"><button className="secondary-action" type="button" onClick={onMapFolder}>Map a folder</button><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
       </header>
       <section className="empty-state">
-        <button className="map-action empty-open" type="button" onClick={onImport}>Open map</button>
+        <div className="empty-actions">
+          <button className="map-action empty-open" type="button" onClick={onImport}>Open map</button>
+          <button className="secondary-action empty-open" type="button" onClick={onMapFolder}>Map a folder</button>
+        </div>
         <p className="empty-or">or explore a showcase</p>
         <div className="showcase-cards">
           {showcases.map((candidate) => (

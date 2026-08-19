@@ -877,7 +877,7 @@ for (const pkg of packages) {
   // campus structures directly. Non-residual packages keep a package district
   // as the grouping; residual leftovers get a district per structured dir
   // (devstack, bootstrap) and district-less nodes for flat dirs.
-  if (!residual) {
+  if (!residual && !nodes.some((n) => n.id === scopeId)) {
     nodes.push({
       id: scopeId, label: titleCase(pkg.name), kind: "scope", archetype: "district",
       description: `Package ${pkg.name}, rooted at ${pkg.dir === "." ? "the repository root" : pkg.dir + "/"}.`,
@@ -891,6 +891,12 @@ for (const pkg of packages) {
     const reassigned = pathReassignments.get(room.id);
     if (reassigned) {
       parentId = `${reassigned.pkg.id}-area`;
+      if (!nodes.some((n) => n.id === parentId)) {
+        nodes.push({
+          id: parentId, label: titleCase(reassigned.pkg.name), kind: "scope", archetype: "district",
+          description: `Package ${reassigned.pkg.name}, rooted at ${reassigned.pkg.dir === "." ? "the repository root" : reassigned.pkg.dir + "/"}.`,
+        });
+      }
       const fromRoom = fileToRoom.get(reassigned.fromFile);
       if (fromRoom) {
         addEdge({ id: `${fromRoom.id}--${room.id}`, from: fromRoom.id, to: room.id,
@@ -1047,6 +1053,11 @@ if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
 
 // --- 8. Emit map and intermediate artefacts ----------------------------------------
 
+// Final sweep: an edge may have been declared from a room that a later rule
+// excluded (dev tooling, orphan); drop any edge with a missing endpoint.
+const finalNodeIds = new Set(nodes.map((n) => n.id));
+const finalEdges = edges.filter((e) => finalNodeIds.has(e.from) && finalNodeIds.has(e.to));
+
 const map = {
   schemaVersion: 1,
   id: kebab(basename(repo)),
@@ -1055,7 +1066,7 @@ const map = {
   summary: "Deterministic draft map generated without an agent (prototype).",
   generatedAt: new Date().toISOString(),
   nodes,
-  edges,
+  edges: finalEdges,
   warnings,
 };
 
