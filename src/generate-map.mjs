@@ -975,14 +975,18 @@ const packagesWithEliminations = [...new Set(
   eliminatedRooms.map((r) => rooms.get(r.id).pkg))];
 for (const pkg of packagesWithEliminations) {
   const pkgEliminated = eliminatedRooms.filter((r) => rooms.get(r.id).pkg === pkg);
-  // District-less: the shared-library structure floats in the implicit
-  // "System" neighbourhood (requires the patched viewer in viewer/).
+  // Parent the shared-library structure to the package's own district when it
+  // has one (a self-contained tool keeps its lib inside its district); only
+  // float it district-less, in the implicit "System" neighbourhood, when the
+  // package's district does not exist (e.g. flattened into hosts).
   const sharedId = `${pkg.id}-shared-libraries`;
+  const homeDistrict = nodes.some((n) => n.id === `${pkg.id}-area`) ? `${pkg.id}-area` : undefined;
   const totalLoc = pkgEliminated.reduce((sum, r) => sum + rooms.get(r.id).loc, 0);
   const asBuilding = pkgEliminated.length >= 2;
   nodes.push({
     id: sharedId, label: "Shared libraries", kind: "module",
     archetype: asBuilding ? "building" : "storage",
+    ...(homeDistrict ? { parentId: homeDistrict } : {}),
     description: `Utility modules with high fan-in and low fan-out, folded into one structure: ${pkgEliminated.map((r) => r.segment).join(", ")}.`,
     sourceRefs: [{ path: rooms.get(pkgEliminated[0].id).files[0] }],
     metrics: { loc: totalLoc },

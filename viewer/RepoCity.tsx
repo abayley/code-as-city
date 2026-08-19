@@ -624,7 +624,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   );
 }
 
-function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowcase, onImport, onMapFolder }: { map: CityMap; slug: string | null; jsonPath: string | null; notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
+function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolder }: { map: CityMap; slug: string | null; jsonPath: string | null; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
   const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
   // Local change: campus structures may be district-less (no parentId).
   const isCampusNode = (node: CityNode) =>
@@ -638,11 +638,6 @@ function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowc
   const [focusId, setFocusId] = useState<string | null>(null);
   const [neighborhoodId, setNeighborhoodId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  useEffect(() => {
-    if (!notice) return;
-    const timeout = window.setTimeout(onDismissNotice, 6000);
-    return () => window.clearTimeout(timeout);
-  }, [notice, onDismissNotice]);
 
   const campusNodes = useMemo(() => map.nodes.filter(isCampusNode), [map.nodes, nodeById]);
   const visibleNodes = campusNodes;
@@ -835,7 +830,6 @@ function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowc
           {activeNeighborhoodId && <span className="breadcrumb"><b>{map.name}</b><i>/</i><span>{layout.neighborhoods.find((neighborhood) => neighborhood.id === activeNeighborhoodId)?.label}</span></span>}
         </div>
         <p className="viewport-help">{activeExpandedId ? "Select a room · Esc to return · the city remains around you" : activeFocusId ? "Click a connected structure to trace that path · Esc to return" : activeNeighborhoodId ? "Choose a building to open it · Esc to return to the whole city" : "Click any nameplate to explore · double-clicking a structure also works"}</p>
-        {notice && <button className="notice" type="button" key={notice} aria-live="polite" onClick={onDismissNotice}>{notice}<span>×</span><i aria-hidden="true" /></button>}
       </section>
 
       <aside className="inspector">
@@ -860,13 +854,10 @@ function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowc
 export default function Functionary() {
   const [current, setCurrent] = useState<{ map: CityMap | null; slug: string | null; jsonPath: string | null }>(
     { map: null, slug: null, jsonPath: null });
-  const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const dismissNotice = useCallback(() => setNotice(null), []);
 
   function openShowcase(showcase: Showcase) {
     setCurrent({ map: showcase.map, slug: showcase.slug, jsonPath: null });
-    setNotice(`Opened ${showcase.map.name} · ${showcase.map.nodes.length} nodes · ${showcase.map.edges.length} relationships.`);
   }
 
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -880,9 +871,8 @@ export default function Functionary() {
       if (errors.length) throw new Error(errors.slice(0, 3).join(" "));
       const nextMap = parsed as CityMap;
       setCurrent({ map: nextMap, slug: null, jsonPath: file.name });
-      setNotice(`Loaded ${nextMap.name} · ${nextMap.nodes.length} nodes · ${nextMap.edges.length} relationships.`);
     } catch (error) {
-      setNotice(error instanceof Error ? `Map rejected: ${error.message}` : "Map rejected: invalid JSON.");
+      window.alert(error instanceof Error ? `Map rejected: ${error.message}` : "Map rejected: invalid JSON.");
     } finally {
       event.target.value = "";
     }
@@ -890,7 +880,6 @@ export default function Functionary() {
 
   function acceptGenerated(payload: { map: CityMap; jsonPath: string }) {
     setCurrent({ map: payload.map, slug: null, jsonPath: payload.jsonPath });
-    setNotice(`Generated ${payload.map.name} · ${payload.map.nodes.length} nodes · ${payload.map.edges.length} relationships.`);
     setBrowserOpen(false);
   }
 
@@ -898,8 +887,8 @@ export default function Functionary() {
     <>
       <input ref={fileInput} className="sr-only" type="file" accept="application/json,.json" onChange={importMap} />
       {current.map
-        ? <MapViewer key={current.map.id} map={current.map} slug={current.slug} jsonPath={current.jsonPath} notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />
-        : <EmptyShell notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />}
+        ? <MapViewer key={current.map.id} map={current.map} slug={current.slug} jsonPath={current.jsonPath} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />
+        : <EmptyShell onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} onMapFolder={() => setBrowserOpen(true)} />}
       {browserOpen && <FolderBrowser onClose={() => setBrowserOpen(false)} onGenerated={acceptGenerated} />}
     </>
   );
@@ -965,7 +954,7 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
   );
 }
 
-function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport, onMapFolder }: { notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
+function EmptyShell({ onSelectShowcase, onImport, onMapFolder }: { onSelectShowcase: (showcase: Showcase) => void; onImport: () => void; onMapFolder: () => void }) {
   return (
     <main className="empty-shell">
       <header className="topbar">
@@ -993,7 +982,6 @@ function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport, onMap
             </button>
           ))}
         </div>
-        {notice && <button className="notice" type="button" key={notice} aria-live="polite" onClick={onDismissNotice}>{notice}<span>×</span><i aria-hidden="true" /></button>}
       </section>
     </main>
   );
