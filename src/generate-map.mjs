@@ -1,0 +1,1107 @@
+#!/usr/bin/env node
+// PROTOTYPE - throwaway code answering one question:
+// "How useful is a fully deterministic (agent-free) Functionary city map?"
+// No tests, minimal error handling, mechanical naming by design.
+//
+// v2: test exclusion, deployment-shape detection (docker-compose hosts,
+// Dockerfile service->source binding, crontab schedules, wrangler edge),
+// and intermediate artefacts for heuristic exploration.
+//
+// Usage: node src/generate-map.mjs <target-repo> [--out-dir out/<name>]
+// Outputs: map.json, deploy-shape.json, deps-files.json, deps-rooms.json, deps-rooms.dot
+
+import { readdirSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+
+const IGNORED_DIRS = new Set([
+  "node_modules", ".git", ".next", "dist", "build", "coverage", ".wrangler",
+  ".turbo", "out", "vendor", ".venv", "__pycache__", ".functionary", ".repo-city",
+  "generated", "docs",
+]);
+// Codebase/dev utilities are detected by reachability, not by name: code
+// reachable only from package.json scripts and imported by nothing that
+// deploys is excluded from the map (see section 6b).
+const TEST_DIRS = new Set(["test", "tests", "__tests__", "test-database", "testing"]);
+const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", "api"]);
+
+// Known container images -> infra classification.
+const IMAGE_CLASSES = [
+  { pattern: /postgres|mysql|mariadb|sqlite|clickhouse/, archetype: "database" },
+  { pattern: /redis|valkey|rabbitmq|kafka|nats/, archetype: "queue" },
+  { pattern: /minio|s3/, archetype: "storage" },
+  { pattern: /nginx|traefik|caddy|haproxy|envoy/, archetype: "gateway" },
+  { pattern: /langfuse|latitude|grafana|prometheus|otel|collector/, archetype: "cloud" },
+];
+
+function parseArguments(argv) {
+  const positionals = [];
+  let outDir;
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--out-dir") { outDir = argv[i + 1]; i += 1; }
+    else positionals.push(argv[i]);
+  }
+  if (!positionals[0]) {
+    console.error("Usage: generate-map.mjs <target-repo> [--out-dir path]");
+    process.exit(2);
+  }
+  const repo = resolve(positionals[0]);
+  return { repo, outDir: resolve(outDir ?? join("out", basename(repo))) };
+}
+
+// Inventory: prefer `git ls-files` (respects .gitignore, excludes vendored
+// checkouts); fall back to a directory walk. Either way, exclude nested git
+// repositories (vendored third-party code) and generated/dependency dirs.
+function inventory(root) {
+  let files;
+  if (existsSync(join(root, ".git"))) {
+    const result = spawnSync("git", ["-C", root, "ls-files", "-z"], {
+      encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+    });
+    files = result.status === 0 ? result.stdout.split("\0").filter(Boolean) : null;
+  }
+  files ??= walk(root);
+  const nestedRepos = new Set();
+  for (const file of files) {
+    const parts = file.split(sep);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const dir = parts.slice(0, depth).join(sep);
+      if (!nestedRepos.has(dir) && existsSync(join(root, dir, ".git"))) nestedRepos.add(dir);
+    }
+  }
+  return files
+    .filter((f) => ![...nestedRepos].some((dir) => f.startsWith(dir + sep)))
+    .filter((f) => !f.split(sep).some((seg) => IGNORED_DIRS.has(seg)))
+    .sort();
+}
+
+function walk(root) {
+  const files = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") && entry.name !== ".github") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(entry.name) && !existsSync(join(full, ".git"))) stack.push(full);
+      } else if (entry.isFile()) {
+        files.push(relative(root, full));
+      }
+    }
+  }
+  return files.sort();
+}
+
+function isTestPath(file) {
+  return file.split(sep).some((seg) => TEST_DIRS.has(seg)) || TEST_FILE_PATTERN.test(file);
+}
+
+function extensionOf(file) {
+  const dot = file.lastIndexOf(".");
+  return dot === -1 ? "" : file.slice(dot);
+}
+
+function readJson(path) {
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+}
+
+function readText(path) {
+  try { return readFileSync(path, "utf8"); } catch { return ""; }
+}
+
+function kebab(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+}
+
+function titleCase(text) {
+  return text.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const { repo, outDir } = parseArguments(process.argv.slice(2));
+mkdirSync(outDir, { recursive: true });
+
+// --- 1. Inventory --------------------------------------------------------------
+
+const allFiles = inventory(repo);
+const sourceFiles = allFiles.filter(
+  (f) => SOURCE_EXTENSIONS.has(extensionOf(f)) && !isTestPath(f),
+);
+
+// --- 2. Packages ----------------------------------------------------------------
+
+const packageDirs = allFiles
+  .filter((f) => basename(f) === "package.json")
+  .map((f) => dirname(f));
+
+const packages = packageDirs.map((dir) => {
+  const json = readJson(join(repo, dir === "." ? "" : dir, "package.json")) ?? {};
+  const deps = { ...json.dependencies, ...json.devDependencies };
+  const hasBin = json.bin && Object.keys(json.bin).length > 0;
+  const isWebApp = ["react", "next", "vinext", "vue", "svelte"].some((d) => deps[d]);
+  return {
+    dir,
+    name: json.name ?? (dir === "." ? basename(repo) : basename(dir)),
+    deps,
+    role: hasBin ? "cli" : isWebApp ? "web" : "package",
+    id: kebab(json.name ?? basename(dir === "." ? repo : dir)),
+  };
+});
+
+function owningPackage(file) {
+  let best = null;
+  for (const pkg of packages) {
+    if (pkg.dir === "." || file === pkg.dir || file.startsWith(pkg.dir + sep)) {
+      if (!best || pkg.dir.length > best.dir.length) best = pkg;
+    }
+  }
+  return best;
+}
+
+// --- 3. Rooms -------------------------------------------------------------------
+// Room key = first path segment within the package; a dominant segment holding
+// most of the package's files (e.g. src/) is expanded one level deeper.
+
+function segmentsFor(pkg) {
+  const locals = sourceFiles
+    .filter((f) => owningPackage(f) === pkg)
+    .map((f) => (pkg.dir === "." ? f : relative(pkg.dir, f)));
+  const byFirst = new Map();
+  for (const local of locals) {
+    const first = local.includes(sep) ? local.split(sep)[0] : "(root)";
+    byFirst.set(first, (byFirst.get(first) ?? 0) + 1);
+  }
+  const dominant = [...byFirst.entries()].find(([seg, count]) =>
+    seg !== "(root)" && count / locals.length > 0.6 &&
+    locals.some((l) => l.startsWith(seg + sep) && l.split(sep).length > 2));
+  return { dominant: dominant?.[0] ?? null };
+}
+
+const packageSegmentation = new Map(packages.map((pkg) => [pkg, segmentsFor(pkg)]));
+
+const rooms = new Map(); // roomId -> { id, pkg, segment, files, loc }
+function roomFor(file) {
+  const pkg = owningPackage(file);
+  if (!pkg) return null;
+  const local = pkg.dir === "." ? file : relative(pkg.dir, file);
+  const parts = local.split(sep);
+  const { dominant } = packageSegmentation.get(pkg);
+  let segment;
+  if (parts.length === 1) segment = "(root)";
+  else if (parts[0] === dominant && parts.length > 2) segment = join(parts[0], parts[1]);
+  else segment = parts[0];
+  const id = `${pkg.id}-${kebab(segment)}`;
+  if (!rooms.has(id)) rooms.set(id, { id, pkg, segment, files: [], loc: 0 });
+  return rooms.get(id);
+}
+
+for (const file of sourceFiles) {
+  const room = roomFor(file);
+  if (!room) continue;
+  room.files.push(file);
+  room.loc += readText(join(repo, file)).split("\n").length;
+}
+
+// --- 4. Import scan ---------------------------------------------------------------
+
+const fileToRoom = new Map();
+for (const room of rooms.values()) for (const f of room.files) fileToRoom.set(f, room);
+
+function resolveImport(fromFile, specifier) {
+  const tryFile = (raw) => {
+    const candidates = [raw, `${raw}.ts`, `${raw}.tsx`, `${raw}.js`, `${raw}.mjs`,
+      join(raw, "index.ts"), join(raw, "index.js")];
+    // NodeNext style: "./foo.js" in source resolves to "./foo.ts" on disk.
+    if (/\.m?js$/.test(raw)) candidates.push(raw.replace(/\.m?js$/, ".ts"), raw.replace(/\.m?js$/, ".tsx"));
+    for (const candidate of candidates) {
+      if (fileToRoom.has(candidate)) return candidate;
+    }
+    return null;
+  };
+  if (specifier.startsWith(".")) {
+    const hit = tryFile(join(dirname(fromFile), specifier));
+    return hit ? { file: hit } : null;
+  }
+  if (specifier.startsWith("@/")) {
+    const pkg = owningPackage(fromFile);
+    const hit = tryFile(pkg.dir === "." ? specifier.slice(2) : join(pkg.dir, specifier.slice(2)));
+    return hit ? { file: hit } : null;
+  }
+  const local = packages.find((p) => specifier === p.name || specifier.startsWith(`${p.name}/`));
+  if (local) return { pkg: local };
+  return { bare: specifier };
+}
+
+const IMPORT_PATTERN = /(?:from\s+|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
+const fileEdges = []; // { from, to } file-level
+const packageEdges = new Map();
+const bareImports = new Map();
+
+for (const file of sourceFiles) {
+  const fromRoom = fileToRoom.get(file);
+  if (!fromRoom) continue;
+  const text = readText(join(repo, file));
+  for (const match of text.matchAll(IMPORT_PATTERN)) {
+    const target = resolveImport(file, match[1]);
+    if (!target) continue;
+    if (target.file) fileEdges.push({ from: file, to: target.file });
+    else if (target.pkg && target.pkg !== fromRoom.pkg) {
+      packageEdges.set(`${fromRoom.pkg.id}->${target.pkg.id}`, true);
+    } else if (target.bare) {
+      if (!bareImports.has(target.bare)) bareImports.set(target.bare, new Set());
+      bareImports.get(target.bare).add(fromRoom.pkg.id);
+    }
+  }
+}
+
+const roomEdges = new Map(); // "fromRoom->toRoom" -> count
+for (const { from, to } of fileEdges) {
+  const a = fileToRoom.get(from);
+  const b = fileToRoom.get(to);
+  if (a && b && a !== b) {
+    const key = `${a.id}->${b.id}`;
+    roomEdges.set(key, (roomEdges.get(key) ?? 0) + 1);
+  }
+}
+
+// --- 4b. Coupling metrics (archunitts-style fan-in/fan-out/instability) -----------
+// Utility modules (high fan-in, low fan-out, instability -> 0) are shared
+// lib-like leaves: eliminated from the map so buildings keep only their
+// coordinator/composer rooms. Coordinators (low in, high out) are retained.
+
+const UTILITY_MIN_FAN_IN = 3;
+const UTILITY_MAX_INSTABILITY = 0.25;
+const OTLP_PATTERN = /@opentelemetry\/|otlp|OTEL_EXPORTER/i;
+
+function couplingFromEdges(pairs) {
+  const stats = new Map();
+  const ensure = (id) => {
+    if (!stats.has(id)) stats.set(id, { in: new Set(), out: new Set() });
+    return stats.get(id);
+  };
+  for (const [from, to] of pairs) {
+    ensure(from).out.add(to);
+    ensure(to).in.add(from);
+  }
+  return new Map([...stats.entries()].map(([id, s]) => {
+    const fanIn = s.in.size;
+    const fanOut = s.out.size;
+    const instability = fanIn + fanOut === 0 ? 1 : fanOut / (fanIn + fanOut);
+    return [id, { in: fanIn, out: fanOut, instability }];
+  }));
+}
+
+const fileCoupling = couplingFromEdges(fileEdges.map(({ from, to }) => [from, to]));
+const roomCoupling = couplingFromEdges([...roomEdges.keys()].map((k) => k.split("->")));
+
+// A significantly coupled file in the middle band (neither leaf nor composer,
+// e.g. an annotation-store with in=7 out=4) anchors its module: a room
+// containing one is retained even when the room aggregates as a utility.
+const MID_MIN_DEGREE = 5;
+const MID_INSTABILITY = [0.25, 0.8];
+
+function isMidFile(file) {
+  const c = fileCoupling.get(file);
+  return Boolean(c && c.in + c.out >= MID_MIN_DEGREE
+    && c.instability > MID_INSTABILITY[0] && c.instability < MID_INSTABILITY[1]);
+}
+
+function isUtilityRoom(roomId) {
+  const c = roomCoupling.get(roomId);
+  if (!c || c.in < UTILITY_MIN_FAN_IN || c.instability > UTILITY_MAX_INSTABILITY) return false;
+  const room = rooms.get(roomId);
+  return !room || !room.files.some(isMidFile);
+}
+
+const eliminatedRooms = [...rooms.values()]
+  .filter((room) => room.files.length && isUtilityRoom(room.id))
+  .map((room) => ({ id: room.id, segment: room.segment, ...roomCoupling.get(room.id) }));
+const eliminatedRoomIds = new Set(eliminatedRooms.map((r) => r.id));
+
+// --- 5. Deployment shape -----------------------------------------------------------
+
+// Minimal indentation-based parse of a compose file's services block.
+function parseComposeServices(text) {
+  const lines = text.split("\n");
+  const services = [];
+  let inServices = false;
+  let current = null;
+  let servicesIndent = -1;
+  for (const line of lines) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const indent = line.length - line.trimStart().length;
+    const key = line.trim();
+    if (/^services:\s*$/.test(key) && indent === 0) { inServices = true; servicesIndent = 0; continue; }
+    if (inServices && indent === servicesIndent && /^\S/.test(line)) { inServices = false; current = null; }
+    if (!inServices) continue;
+    const serviceMatch = /^([a-zA-Z0-9_-]+):\s*$/.exec(key);
+    if (indent === servicesIndent + 2 && serviceMatch) {
+      current = { name: serviceMatch[1] };
+      services.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const image = /^image:\s*(.+)$/.exec(key);
+    if (image) current.image = image[1].trim();
+    const dockerfile = /^dockerfile:\s*(.+)$/.exec(key);
+    if (dockerfile) current.dockerfile = dockerfile[1].trim();
+    if (/^ports:\s*$/.test(key)) current.hasPorts = true;
+    if (/^depends_on:\s*$/.test(key)) { current.dependsOnIndent = indent; current.dependsOn ??= []; continue; }
+    if (current.dependsOnIndent !== undefined && indent > current.dependsOnIndent) {
+      const dep = /^-\s*([a-zA-Z0-9_-]+)\s*$/.exec(key) ?? /^([a-zA-Z0-9_-]+):\s*$/.exec(key);
+      if (dep) current.dependsOn.push(dep[1]);
+    } else if (current.dependsOnIndent !== undefined && indent <= current.dependsOnIndent) {
+      current.dependsOnIndent = undefined;
+    }
+  }
+  return services;
+}
+
+function parseDockerfile(path) {
+  const text = readText(join(repo, path));
+  const copies = [...text.matchAll(/^COPY\s+([^\s]+)\s/gm)]
+    .map((m) => m[1])
+    .filter((p) => !p.startsWith("--") && allFiles.some((f) => f === p || f.startsWith(p.replace(/\/$/, "") + "/")));
+  const entryMatch = /^(?:ENTRYPOINT|CMD)\s+(\[.*\]|.+)$/m.exec(text);
+  let entryFile = null;
+  if (entryMatch) {
+    const tokens = entryMatch[1].startsWith("[")
+      ? (readJsonSafe(entryMatch[1]) ?? [])
+      : entryMatch[1].split(/\s+/);
+    entryFile = tokens.find((t) => typeof t === "string" && fileExists(t)) ?? null;
+  }
+  return { copies, entryFile };
+}
+
+function readJsonSafe(text) { try { return JSON.parse(text); } catch { return undefined; } }
+function fileExists(p) { return allFiles.includes(p); }
+
+const composeFiles = allFiles.filter((f) => /docker-compose[^/]*\.(yml|yaml)$/.test(basename(f)));
+const crontabFiles = allFiles.filter((f) => /^crontab/.test(basename(f)));
+
+// Schedules: service name (from `compose run <svc>`) -> cron expression.
+const schedules = new Map();
+for (const crontab of crontabFiles) {
+  for (const line of readText(join(repo, crontab)).split("\n")) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const runMatch = /run\s+(?:--rm\s+)?([a-zA-Z0-9_-]+)/.exec(line);
+    const schedule = line.trim().split(/\s+/).slice(0, 5).join(" ");
+    if (runMatch) schedules.set(runMatch[1], { schedule, crontab });
+  }
+}
+
+// Hosts: one per compose file, excluding partial overlays (override/build).
+// Name from informative path segments; env variants deduped below, preferring
+// prod > uat > example > unqualified > dev.
+const GENERIC_SEGMENTS = new Set(["deploy", "deployment", "deployments", "docker", "compose", "infra"]);
+const ENV_RANK = [
+  [/prod/, 5], [/uat|stag/, 4], [/example/, 3], [/dev/, 1],
+];
+
+function hostNameParts(file) {
+  const qualifiers = basename(file)
+    .replace(/\.ya?ml$/, "")
+    .split(".")
+    .filter((part) => part && part !== "docker-compose" && part !== "compose");
+  const dirParts = dirname(file).split(sep).filter((seg) => seg !== "." && !GENERIC_SEGMENTS.has(seg));
+  return [...dirParts, ...qualifiers.filter((q) => !dirParts.includes(q))];
+}
+
+function envRank(file) {
+  for (const [pattern, rank] of ENV_RANK) if (pattern.test(file)) return rank;
+  return 2;
+}
+
+const candidateHosts = composeFiles
+  .filter((file) => !/\.(override|build)\.ya?ml$/.test(basename(file)))
+  .map((file) => {
+  const dir = dirname(file);
+  const parts = hostNameParts(file).filter((p) => p !== "example");
+  const name = parts.join(" ") || "host";
+  const services = parseComposeServices(readText(join(repo, file))).map((service) => {
+    // Bind service to a Dockerfile: explicit build.dockerfile, or images/<name>.Dockerfile convention.
+    let dockerfile = service.dockerfile;
+    if (dockerfile && !fileExists(dockerfile)) {
+      const relToCompose = join(dir, dockerfile);
+      dockerfile = fileExists(relToCompose) ? relToCompose : dockerfile;
+    }
+    if (!dockerfile) {
+      dockerfile = allFiles.find((f) => basename(f) === `${service.name}.Dockerfile`);
+    }
+    const built = dockerfile && fileExists(dockerfile) ? parseDockerfile(dockerfile) : null;
+    const imageClass =
+      (service.image && IMAGE_CLASSES.find(({ pattern }) => pattern.test(service.image))?.archetype)
+      ?? (/database|postgres|mysql|db$/.test(service.name) ? "database"
+        : /redis|queue|broker|kafka/.test(service.name) ? "queue"
+        : /proxy|nginx|ingress/.test(service.name) ? "gateway"
+        : undefined);
+    return {
+      ...service,
+      dockerfile: built ? dockerfile : undefined,
+      copies: built?.copies ?? [],
+      entryFile: built?.entryFile ?? null,
+      schedule: schedules.get(service.name)?.schedule,
+      imageClass,
+    };
+  });
+  return { file, name, id: kebab(`host-${name}`), services, rank: envRank(file) };
+});
+
+// Service-level depends_on harvested across ALL compose variants by service
+// name, so wiring declared only in a deduped variant (e.g. development) still
+// informs the surviving host's edges.
+const serviceDependsOn = new Map();
+for (const host of candidateHosts) {
+  for (const service of host.services) {
+    if (!service.dependsOn?.length) continue;
+    if (!serviceDependsOn.has(service.name)) serviceDependsOn.set(service.name, new Set());
+    for (const dep of service.dependsOn) serviceDependsOn.get(service.name).add(dep);
+  }
+}
+
+// Dedup environment variants: drop a host when a higher-ranked host covers
+// >=50% of its services (same host, different environment projection).
+function serviceNames(host) { return new Set(host.services.map((s) => s.name)); }
+const hosts = candidateHosts.filter((host) => {
+  const names = serviceNames(host);
+  return !candidateHosts.some((other) => {
+    if (other === host) return false;
+    const otherNames = serviceNames(other);
+    const shared = [...names].filter((n) => otherNames.has(n)).length;
+    const covered = names.size > 0 && shared / names.size >= 0.5;
+    if (!covered) return false;
+    if (other.rank !== host.rank) return other.rank > host.rank;
+    return other.file < host.file; // stable tie-break
+  });
+});
+
+// Wrangler -> an edge host.
+const wranglerFile = allFiles.find((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));
+let edgeHost = null;
+if (wranglerFile) {
+  const text = readText(join(repo, wranglerFile)).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const config = readJsonSafe(text) ?? {};
+  const mainMatch = config.main ?? /main\s*=\s*["']([^"']+)["']/.exec(text)?.[1];
+  edgeHost = {
+    file: wranglerFile,
+    name: config.name ?? "worker",
+    main: mainMatch ? mainMatch.replace(/^\.\//, "") : null,
+    d1: config.d1_databases ?? [],
+  };
+}
+
+const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
+
+// --- 6. Flow layering helper --------------------------------------------------------
+
+function layerByLongestPath(ids, edges, entries) {
+  const layers = new Map();
+  for (const id of entries.length ? entries : ids) layers.set(id, 0);
+  for (let pass = 0; pass < ids.length + 1; pass += 1) {
+    let changed = false;
+    for (const key of edges.keys()) {
+      const [from, to] = key.split("->");
+      if (!layers.has(from) || !ids.includes(to)) continue;
+      const proposed = layers.get(from) + 1;
+      if ((!layers.has(to) || layers.get(to) < proposed) && proposed <= ids.length) {
+        layers.set(to, proposed);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  for (const id of ids) if (!layers.has(id)) layers.set(id, 0);
+  return layers;
+}
+
+// --- 6b. Dev-tooling detection by reachability ----------------------------------------
+// Deployed roots: files baked into service images, Dockerfile entry points,
+// the wrangler worker entry, package bin/main files, and web-app entry dirs.
+// Script roots: files referenced from package.json scripts commands.
+// A room whose files are reachable only from script roots is dev tooling.
+
+function reachableFrom(roots) {
+  const importsOf = new Map();
+  for (const { from, to } of fileEdges) {
+    importsOf.set(from, [...(importsOf.get(from) ?? []), to]);
+  }
+  const seen = new Set(roots);
+  const queue = [...roots];
+  while (queue.length) {
+    for (const next of importsOf.get(queue.pop()) ?? []) {
+      if (!seen.has(next)) { seen.add(next); queue.push(next); }
+    }
+  }
+  return seen;
+}
+
+function resolvePathToken(pkgDir, token) {
+  const clean = token.replace(/^["']|["']$/g, "");
+  if (!/[./]/.test(clean) || clean.startsWith("-")) return null;
+  const candidate = join(pkgDir === "." ? "" : pkgDir, clean);
+  return fileToRoom.has(candidate) ? candidate : null;
+}
+
+// package.json script entries split by naming convention: QA/codebase
+// utilities (checks, linting, tests, packaging, doc indexes) versus
+// operational tooling (bootstrap, certificates, backfill, deploys).
+const QA_SCRIPT_PATTERN = /^(check|lint|test|typecheck|coverage|knip|audit|format|fmt|quality|adr|rfc|docs?|prepare|prepack|postinstall|release|clean|proof|prove|uat|spike|poc|bench(mark)?)([:._-]|$)/i;
+
+const deployRoots = new Set();
+const scriptRoots = new Set();
+const operationalRoots = new Set();
+
+for (const host of hosts) {
+  for (const service of host.services) {
+    if (service.entryFile) deployRoots.add(service.entryFile);
+    for (const copy of service.copies) {
+      for (const f of sourceFiles) if (f.startsWith(copy.replace(/\/$/, "") + "/")) deployRoots.add(f);
+    }
+  }
+}
+if (edgeHost?.main && fileToRoom.has(edgeHost.main)) deployRoots.add(edgeHost.main);
+
+for (const pkg of packages) {
+  const json = readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {};
+  for (const binPath of Object.values(json.bin ?? {})) {
+    const resolved = resolvePathToken(pkg.dir, String(binPath));
+    if (resolved) deployRoots.add(resolved);
+  }
+  for (const field of ["main", "module"]) {
+    const resolved = json[field] && resolvePathToken(pkg.dir, String(json[field]));
+    if (resolved) deployRoots.add(resolved);
+  }
+  if (pkg.role === "web") {
+    for (const entryDir of ["app", "pages", "src/app", "src/pages"]) {
+      const prefix = pkg.dir === "." ? entryDir : join(pkg.dir, entryDir);
+      for (const f of sourceFiles) if (f.startsWith(prefix + "/")) deployRoots.add(f);
+    }
+  }
+  for (const [scriptName, command] of Object.entries(json.scripts ?? {})) {
+    const qa = QA_SCRIPT_PATTERN.test(scriptName);
+    for (const token of String(command).split(/\s+/)) {
+      const resolved = resolvePathToken(pkg.dir, token);
+      if (!resolved) continue;
+      scriptRoots.add(resolved);
+      if (!qa) operationalRoots.add(resolved);
+    }
+  }
+}
+
+const deployReachable = reachableFrom(deployRoots);
+const scriptReachable = reachableFrom(scriptRoots);
+const operationalReachable = reachableFrom(operationalRoots);
+
+// Dev tooling, at file granularity: reachable only from QA-named package.json
+// scripts and imported by nothing that deploys. Stripped from rooms before
+// assembly so one operational CLI does not shield a directory of QA scripts;
+// rooms emptied entirely disappear from the map.
+const devToolingWarnings = [];
+function isDevToolingFile(f) {
+  return !deployReachable.has(f) && scriptReachable.has(f) && !operationalReachable.has(f);
+}
+for (const room of rooms.values()) {
+  const excluded = room.files.filter(isDevToolingFile);
+  if (!excluded.length) continue;
+  room.files = room.files.filter((f) => !isDevToolingFile(f));
+  room.loc = room.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+  devToolingWarnings.push(room.files.length
+    ? `Dev tooling stripped from ${room.segment}: ${excluded.length} QA-script file${excluded.length === 1 ? "" : "s"} (kept ${room.files.length} operational).`
+    : `Dev tooling excluded (reachable only from QA package.json scripts): ${room.segment} (${excluded.length} files).`);
+}
+
+// --- 6c. Cross-package path references --------------------------------------------
+// A string literal in one package's code that resolves into another area's
+// directory (e.g. the CLI bundling "../../skills/map-codebase") is a declared
+// dependency: the referenced area is reassigned to the referencing package's
+// district.
+const pathReassignments = new Map(); // roomId -> { pkg, fromFile }
+for (const file of sourceFiles) {
+  const text = readText(join(repo, file));
+  const fromPkg = owningPackage(file);
+  for (const match of text.matchAll(/["']((?:\.\.\/)+[^"'\n]+)["']/g)) {
+    // The literal may be relative to the file's directory or to the package
+    // root (the `resolve(packageRoot, "...")` idiom): try both bases.
+    const bases = [dirname(file), fromPkg?.dir ?? "."];
+    for (const base of bases) {
+      const resolved = join(base === "." ? "" : base, match[1]);
+      if (resolved.startsWith("..")) continue;
+      for (const room of rooms.values()) {
+        if (room.pkg === fromPkg || room.segment === "(root)") continue;
+        const segDir = room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
+        if ((resolved === segDir || resolved.startsWith(segDir + sep)) && !pathReassignments.has(room.id)) {
+          pathReassignments.set(room.id, { pkg: fromPkg, fromFile: file });
+        }
+      }
+    }
+  }
+}
+
+// --- 7. Assemble the map --------------------------------------------------------------
+
+const nodes = [];
+const edges = [];
+const warnings = [
+  "Generated by the deterministic prototype: names and descriptions are mechanical, not semantic.",
+  "Test directories and *.test/*.spec files are excluded.",
+  `Shared utility modules (fan-in >= ${UTILITY_MIN_FAN_IN}, instability <= ${UTILITY_MAX_INSTABILITY}) are eliminated: ${eliminatedRooms.map((r) => r.segment).join(", ") || "none"}.`,
+  ...devToolingWarnings,
+];
+const claimedSegments = new Set(); // source dirs claimed by a deployed service
+const serviceClaimedDirs = new Set(); // subset claimed by compose services (not wrangler)
+const fileNodeOwner = new Map(); // source file -> emitted campus node id (for shared-lib edges)
+
+function addEdge(edge) {
+  if (edges.some((e) => e.id === edge.id)) return;
+  edges.push(edge);
+}
+
+// 7a. Host districts from deployment shape.
+for (const host of hosts) {
+  nodes.push({
+    id: host.id, label: `${titleCase(host.name)} host`, kind: "scope", archetype: "district",
+    description: `Deployment host projected from ${host.file}.`,
+  });
+  for (const service of host.services) {
+    const serviceId = kebab(`${host.id}-${service.name}`);
+    const allCopiedSegments = service.copies
+      .map((copy) => copy.replace(/\/$/, ""))
+      .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`));
+    // Coupling filter: drop shared lib-like dirs (high fan-in, low fan-out).
+    const roomIdForCopy = (copy) => {
+      const sample = sourceFiles.find((f) => f.startsWith(copy + "/"));
+      return sample ? fileToRoom.get(sample)?.id : null;
+    };
+    const copiedSegments = allCopiedSegments.filter((copy) => {
+      const roomId = roomIdForCopy(copy);
+      return !(roomId && isUtilityRoom(roomId));
+    });
+    for (const copy of allCopiedSegments) { claimedSegments.add(copy); serviceClaimedDirs.add(copy); }
+    for (const copy of copiedSegments) {
+      for (const f of sourceFiles) if (f.startsWith(copy + "/")) fileNodeOwner.set(f, serviceId);
+    }
+    const isScheduled = Boolean(service.schedule);
+    const roomsForService = copiedSegments.length >= 2;
+    const archetype = roomsForService
+      ? "building"
+      : service.imageClass ?? (isScheduled ? "worker" : service.hasPorts ? "gateway" : "worker");
+    const flowLayer = service.imageClass === "database" || service.imageClass === "queue"
+      || service.imageClass === "storage" ? 2 : service.hasPorts && !service.dockerfile ? 0
+      : isScheduled ? 1 : service.dockerfile ? 1 : 1;
+    nodes.push({
+      id: serviceId,
+      label: titleCase(service.name),
+      kind: service.dockerfile ? "deployable" : "infra",
+      archetype,
+      parentId: host.id,
+      description: [
+        service.dockerfile ? `Service built from ${service.dockerfile}.` : `Container image ${service.image ?? "unknown"}.`,
+        service.schedule ? `Scheduled job (${service.schedule}).` : null,
+        service.entryFile ? `Entry point ${service.entryFile}.` : null,
+      ].filter(Boolean).join(" "),
+      sourceRefs: [{ path: service.dockerfile ?? host.file }],
+      tags: [
+        isScheduled ? "cron" : null,
+        service.hasPorts ? "listens" : null,
+      ].filter(Boolean),
+      display: { flowLayer },
+    });
+    // Rooms: one per source directory the image copies in.
+    if (roomsForService) {
+      const roomIds = [];
+      const localEdges = new Map();
+      for (const copy of copiedSegments) {
+        const roomId = kebab(`${serviceId}-${copy}`);
+        roomIds.push(roomId);
+        const loc = sourceFiles.filter((f) => f.startsWith(copy + "/")).length;
+        nodes.push({
+          id: roomId, label: titleCase(basename(copy)), kind: "module", archetype: "room",
+          parentId: serviceId,
+          description: `Source copied from ${copy}/ into the ${service.name} image.`,
+          sourceRefs: [{ path: copy }],
+          metrics: { loc },
+        });
+      }
+      // Local flow: entry dir first, then longest path over dir-level imports.
+      for (const { from, to } of fileEdges) {
+        const a = copiedSegments.find((c) => from.startsWith(c + "/"));
+        const b = copiedSegments.find((c) => to.startsWith(c + "/"));
+        if (a && b && a !== b) localEdges.set(`${kebab(`${serviceId}-${a}`)}->${kebab(`${serviceId}-${b}`)}`, true);
+      }
+      const entryDir = service.entryFile
+        ? copiedSegments.find((c) => service.entryFile.startsWith(c + "/"))
+        : null;
+      const layers = layerByLongestPath(
+        roomIds, localEdges, entryDir ? [kebab(`${serviceId}-${entryDir}`)] : []);
+      for (const roomId of roomIds) {
+        nodes.find((n) => n.id === roomId).display = { flowLayer: layers.get(roomId) ?? 0 };
+      }
+      for (const key of localEdges.keys()) {
+        const [from, to] = key.split("->");
+        addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
+      }
+    }
+  }
+}
+
+// 7a-ii. Service wiring from depends_on (harvested across compose variants).
+// A dependency that only exists in a deduped variant (e.g. the development
+// compose runs the database locally) is carried onto the surviving host as
+// infra when its image classifies as one.
+const variantServices = new Map();
+for (const candidate of candidateHosts) {
+  for (const service of candidate.services) {
+    if (service.imageClass && !variantServices.has(service.name)) variantServices.set(service.name, service);
+  }
+}
+for (const host of hosts) {
+  for (const service of host.services) {
+    const deps = serviceDependsOn.get(service.name);
+    if (!deps) continue;
+    const fromId = kebab(`${host.id}-${service.name}`);
+    if (!nodes.some((n) => n.id === fromId)) continue;
+    for (const dep of deps) {
+      const toId = kebab(`${host.id}-${dep}`);
+      if (!nodes.some((n) => n.id === toId)) {
+        const variant = variantServices.get(dep);
+        if (!variant) continue;
+        nodes.push({
+          id: toId, label: titleCase(dep), kind: "infra", archetype: variant.imageClass,
+          parentId: host.id,
+          description: `Backing service (image ${variant.image}) declared in a compose variant; the deployed host provides it via configuration.`,
+          sourceRefs: [{ path: host.file }],
+          display: { flowLayer: 2 },
+        });
+      }
+      addEdge({ id: `${fromId}--${toId}`, from: fromId, to: toId,
+        kind: "depends_on", evidence: "declared", label: "compose depends_on" });
+    }
+  }
+}
+
+// 7b. Cloudflare edge district.
+if (edgeHost) {
+  const districtId = "edge-delivery";
+  nodes.push({
+    id: districtId, label: "Cloudflare edge", kind: "scope", archetype: "district",
+    description: `Edge deployment declared in ${edgeHost.file}.`,
+  });
+  nodes.push({
+    id: "edge-worker", label: titleCase(edgeHost.name), kind: "deployable", archetype: "worker",
+    parentId: districtId,
+    description: `Cloudflare Worker${edgeHost.main ? ` with entry point ${edgeHost.main}` : ""}.`,
+    sourceRefs: [{ path: edgeHost.main ?? edgeHost.file }],
+    display: { flowLayer: 0 },
+  });
+  if (edgeHost.main) claimedSegments.add(edgeHost.main.split("/")[0]);
+  for (const binding of edgeHost.d1) {
+    const id = kebab(`d1-${binding.database_name ?? binding.binding}`);
+    nodes.push({
+      id, label: binding.database_name ?? binding.binding, kind: "infra", archetype: "database",
+      parentId: districtId, sourceRefs: [{ path: edgeHost.file }], display: { flowLayer: 1 },
+    });
+    addEdge({ id: `edge-worker--${id}`, from: "edge-worker", to: id, kind: "depends_on", evidence: "declared" });
+  }
+}
+
+// 7c. Package districts for code not claimed by a deployed service.
+// A real runnable package (CLI, web app) keeps its building. A generic
+// package (role "package") would produce one synthetic building holding
+// everything, so it is flattened: its rooms are promoted to campus-level
+// structures, each expandable into a building when its directory has
+// internal structure.
+function childRoomsOf(room) {
+  const prefix = room.segment === "(root)"
+    ? null
+    : room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
+  if (!prefix) return [];
+  const groups = new Map();
+  for (const file of room.files) {
+    const rest = relative(prefix, file);
+    let seg;
+    if (rest.includes(sep)) {
+      seg = rest.split(sep)[0];
+    } else if ((fileCoupling.get(file)?.in ?? 0) === 0) {
+      // A loose file nothing imports is its own module (a CLI, an installer),
+      // not filing material: give it its own room named after the file.
+      seg = rest.replace(/\.[a-z]+$/, "");
+    } else {
+      seg = "(files)"; // loose files imported by the entries: support code
+    }
+    groups.set(seg, [...(groups.get(seg) ?? []), file]);
+  }
+  return [...groups.entries()].map(([seg, files]) => ({ seg, files }));
+}
+
+// Interior structure: two subdirs, or one subdir plus loose files.
+function hasInteriorStructure(room) {
+  const allChildren = childRoomsOf(room);
+  const dirChildren = allChildren.filter(({ seg }) => seg !== "(files)");
+  return dirChildren.length >= 2 || (dirChildren.length >= 1 && allChildren.length >= 2);
+}
+
+const promotedNodes = []; // district-less / own-district residual nodes
+for (const pkg of packages) {
+  const pkgRooms = [...rooms.values()].filter((room) => {
+    if (room.pkg !== pkg || room.files.length === 0) return false;
+    if (claimedSegments.has(pkg.dir === "." ? room.segment : join(pkg.dir, room.segment))) return false;
+    if (isUtilityRoom(room.id)) return false;
+    // Orphans: imported by nothing, reachable from nothing, no OTLP coupling,
+    // not an entry dir, not referenced by path from another package. Sample
+    // and demo material (examples/) falls out here.
+    if (!pathReassignments.has(room.id)
+      && (roomCoupling.get(room.id)?.in ?? 0) === 0
+      && !ENTRY_DIR_NAMES.has(basename(room.segment))
+      && room.files.every((f) => !deployReachable.has(f) && !scriptReachable.has(f))
+      && !room.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f))))) {
+      warnings.push(`Orphan area excluded (unreferenced, undeployed): ${room.segment} (${room.files.length} files).`);
+      return false;
+    }
+    return true;
+  });
+  if (!pkgRooms.length) continue;
+  const scopeId = `${pkg.id}-area`;
+  // Residual: compose services already claimed part of this package, so the
+  // remaining code is operator tooling rather than the deployable itself.
+  const residual = [...serviceClaimedDirs].some((dir) => owningPackage(dir) === pkg);
+
+  const entries = pkgRooms
+    .filter((r) => ENTRY_DIR_NAMES.has(basename(r.segment)) || r.segment === "(root)")
+    .map((r) => r.id);
+  const layers = layerByLongestPath(pkgRooms.map((r) => r.id), roomEdges, entries);
+
+  // A district never wraps a single synthetic building: rooms are promoted to
+  // campus structures directly. Non-residual packages keep a package district
+  // as the grouping; residual leftovers get a district per structured dir
+  // (devstack, bootstrap) and district-less nodes for flat dirs.
+  if (!residual) {
+    nodes.push({
+      id: scopeId, label: titleCase(pkg.name), kind: "scope", archetype: "district",
+      description: `Package ${pkg.name}, rooted at ${pkg.dir === "." ? "the repository root" : pkg.dir + "/"}.`,
+    });
+  }
+  for (const room of pkgRooms) {
+    const expandable = hasInteriorStructure(room);
+    const children = expandable ? childRoomsOf(room) : [];
+    const label = room.segment === "(root)" ? "Top-level files" : titleCase(room.segment.split(sep).join(" / "));
+    let parentId;
+    const reassigned = pathReassignments.get(room.id);
+    if (reassigned) {
+      parentId = `${reassigned.pkg.id}-area`;
+      const fromRoom = fileToRoom.get(reassigned.fromFile);
+      if (fromRoom) {
+        addEdge({ id: `${fromRoom.id}--${room.id}`, from: fromRoom.id, to: room.id,
+          kind: "depends_on", evidence: "declared", label: "path reference",
+          sourceRefs: [{ path: reassigned.fromFile }] });
+      }
+    } else if (!residual) {
+      parentId = scopeId;
+    } else if (expandable) {
+      parentId = `${room.id}-district`;
+      nodes.push({
+        id: parentId, label, kind: "scope", archetype: "district",
+        description: `Standalone area: ${room.segment}/.`,
+      });
+    }
+    const isEntry = ENTRY_DIR_NAMES.has(basename(room.segment));
+    nodes.push({
+      id: room.id,
+      label,
+      kind: "module", archetype: expandable ? "building" : isEntry ? "gateway" : "worker",
+      ...(parentId ? { parentId } : {}),
+      description: `${room.files.length} source file${room.files.length === 1 ? "" : "s"} under ${room.segment === "(root)" ? "the package root" : room.segment + "/"}.`,
+      sourceRefs: [{ path: room.files[0] }],
+      metrics: { loc: room.loc },
+      display: { flowLayer: layers.get(room.id) ?? 0 },
+    });
+    for (const f of room.files) fileNodeOwner.set(f, room.id);
+    promotedNodes.push({ id: room.id, files: room.files });
+    if (expandable) {
+      for (const child of children) {
+        nodes.push({
+          id: kebab(`${room.id}-${child.seg}`),
+          label: child.seg === "(files)" ? "Top-level files" : titleCase(child.seg),
+          kind: "module", archetype: "room",
+          parentId: room.id,
+          description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"}.`,
+          sourceRefs: [{ path: child.files[0] }],
+        });
+      }
+    }
+  }
+}
+
+// 7c-i. The web entry deploys to the edge worker: wrangler builds and serves
+// the owning package's app, so the app entry carries a deploys edge.
+if (edgeHost && nodes.some((n) => n.id === "edge-worker")) {
+  const ownerPkg = owningPackage(edgeHost.file);
+  const entryRoom = [...rooms.values()].find((r) =>
+    r.pkg === ownerPkg && ENTRY_DIR_NAMES.has(basename(r.segment)) && nodes.some((n) => n.id === r.id));
+  if (entryRoom) {
+    addEdge({ id: `${entryRoom.id}--edge-worker`, from: entryRoom.id, to: "edge-worker",
+      kind: "deploys", evidence: "declared", label: "wrangler deploy",
+      sourceRefs: [{ path: edgeHost.file }] });
+  }
+}
+
+// 7c-ii. OTLP producers: residual nodes whose source configures OpenTelemetry
+// export get a data_flow edge into the OTLP-receiving collector, pulling data
+// generators and agent plugins toward the ingress host they feed.
+const collectorTarget =
+  nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id) && /gateway/.test(n.id))
+  ?? nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id));
+if (collectorTarget) {
+  for (const promoted of promotedNodes) {
+    const emitsOtlp = promoted.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f))));
+    if (!emitsOtlp) continue;
+    addEdge({ id: `${promoted.id}--${collectorTarget.id}`, from: promoted.id, to: collectorTarget.id,
+      kind: "data_flow", evidence: "inferred", confidence: 0.7, label: "OTLP export" });
+  }
+}
+
+// 7c-iii. Shared-library nodes: eliminated utility modules reappear once per
+// package as a single library structure, with aggregated depends_on edges
+// from every campus node that imports them.
+const packagesWithEliminations = [...new Set(
+  eliminatedRooms.map((r) => rooms.get(r.id).pkg))];
+for (const pkg of packagesWithEliminations) {
+  const pkgEliminated = eliminatedRooms.filter((r) => rooms.get(r.id).pkg === pkg);
+  // District-less: the shared-library structure floats in the implicit
+  // "System" neighbourhood (requires the patched viewer in viewer/).
+  const sharedId = `${pkg.id}-shared-libraries`;
+  const totalLoc = pkgEliminated.reduce((sum, r) => sum + rooms.get(r.id).loc, 0);
+  const asBuilding = pkgEliminated.length >= 2;
+  nodes.push({
+    id: sharedId, label: "Shared libraries", kind: "module",
+    archetype: asBuilding ? "building" : "storage",
+    description: `Utility modules with high fan-in and low fan-out, folded into one structure: ${pkgEliminated.map((r) => r.segment).join(", ")}.`,
+    sourceRefs: [{ path: rooms.get(pkgEliminated[0].id).files[0] }],
+    metrics: { loc: totalLoc },
+    display: { flowLayer: 3 },
+  });
+  if (asBuilding) {
+    for (const r of pkgEliminated) {
+      const room = rooms.get(r.id);
+      nodes.push({
+        id: `${sharedId}-${kebab(r.segment)}`,
+        label: titleCase(r.segment.split(sep).join(" / ")),
+        kind: "module", archetype: "room", parentId: sharedId,
+        description: `Fan-in ${r.in}, fan-out ${r.out}, instability ${r.instability.toFixed(2)}.`,
+        sourceRefs: [{ path: room.files[0] }],
+        metrics: { loc: room.loc },
+      });
+    }
+  }
+  // Aggregated import edges into the shared node.
+  const importCounts = new Map();
+  for (const { from, to } of fileEdges) {
+    const targetRoom = fileToRoom.get(to);
+    if (!targetRoom || targetRoom.pkg !== pkg || !eliminatedRoomIds.has(targetRoom.id)) continue;
+    const owner = fileNodeOwner.get(from);
+    if (!owner || owner === sharedId) continue;
+    importCounts.set(owner, (importCounts.get(owner) ?? 0) + 1);
+  }
+  for (const [owner, count] of importCounts) {
+    addEdge({ id: `${owner}--${sharedId}`, from: owner, to: sharedId,
+      kind: "depends_on", evidence: "declared",
+      label: `${count} import${count === 1 ? "" : "s"}` });
+  }
+}
+
+// 7d. Room-level and package-level import edges (only between nodes that exist).
+const nodeIds = new Set(nodes.map((n) => n.id));
+for (const [key, count] of roomEdges) {
+  const [from, to] = key.split("->");
+  if (!nodeIds.has(from) || !nodeIds.has(to)) continue;
+  addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared",
+    label: `${count} import${count === 1 ? "" : "s"}` });
+}
+for (const key of packageEdges.keys()) {
+  const [from, to] = key.split("->");
+  if (nodeIds.has(from) && nodeIds.has(to)) {
+    addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
+  }
+}
+
+// 7e. Drizzle database when no D1 binding declared it already.
+if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
+  const dialect = /dialect:\s*["'](\w+)["']/.exec(readText(join(repo, drizzleConfig)))?.[1];
+  const owner = owningPackage(drizzleConfig);
+  const parent = edgeHost ? "edge-delivery" : owner ? `${owner.id}-area` : undefined;
+  if (parent && nodeIds.has(parent)) {
+    nodes.push({
+      id: "drizzle-database", label: `Database (${dialect ?? "sql"})`, kind: "infra",
+      archetype: "database", parentId: parent,
+      description: `Drizzle ORM schema declared in ${drizzleConfig}.`,
+      sourceRefs: [{ path: drizzleConfig }], display: { flowLayer: 1 },
+    });
+    const from = edgeHost ? "edge-worker" : owner?.id;
+    if (from && nodeIds.has(from) || nodes.some((n) => n.id === from)) {
+      addEdge({ id: `${from}--drizzle-database`, from, to: "drizzle-database", kind: "depends_on", evidence: "declared" });
+    }
+  }
+}
+
+// --- 8. Emit map and intermediate artefacts ----------------------------------------
+
+const map = {
+  schemaVersion: 1,
+  id: kebab(basename(repo)),
+  name: titleCase(basename(repo)),
+  summary: "Deterministic draft map generated without an agent (prototype).",
+  generatedAt: new Date().toISOString(),
+  nodes,
+  edges,
+  warnings,
+};
+
+const deployShape = {
+  hosts: hosts.map((h) => ({
+    file: h.file, name: h.name,
+    services: h.services.map(({ name, image, dockerfile, entryFile, copies, schedule, hasPorts, imageClass }) =>
+      ({ name, image, dockerfile, entryFile, copies, schedule, hasPorts, imageClass })),
+  })),
+  crontabs: crontabFiles,
+  wrangler: edgeHost,
+  drizzle: drizzleConfig ?? null,
+};
+
+const roomEdgeList = [...roomEdges.entries()].map(([key, count]) => {
+  const [from, to] = key.split("->");
+  return { from, to, imports: count };
+});
+const dot = [
+  "digraph rooms {",
+  "  rankdir=LR; node [shape=box, fontname=\"Helvetica\"];",
+  ...[...rooms.values()].filter((r) => r.files.length)
+    .map((r) => `  "${r.id}" [label="${r.pkg.id}\\n${r.segment} (${r.files.length}f)"];`),
+  ...roomEdgeList.map((e) => `  "${e.from}" -> "${e.to}" [label="${e.imports}"];`),
+  "}",
+].join("\n");
+
+const coupling = {
+  thresholds: { utilityMinFanIn: UTILITY_MIN_FAN_IN, utilityMaxInstability: UTILITY_MAX_INSTABILITY },
+  eliminatedRooms,
+  rooms: [...roomCoupling.entries()]
+    .map(([id, c]) => ({ id, ...c, instability: Number(c.instability.toFixed(2)) }))
+    .sort((a, b) => (b.in + b.out) - (a.in + a.out)),
+  files: [...fileCoupling.entries()]
+    .map(([file, c]) => ({ file, ...c, instability: Number(c.instability.toFixed(2)) }))
+    .sort((a, b) => (b.in + b.out) - (a.in + a.out))
+    .slice(0, 200),
+};
+
+await Promise.all([
+  writeFile(join(outDir, "map.json"), `${JSON.stringify(map, null, 2)}\n`),
+  writeFile(join(outDir, "deploy-shape.json"), `${JSON.stringify(deployShape, null, 2)}\n`),
+  writeFile(join(outDir, "deps-files.json"), `${JSON.stringify(fileEdges, null, 2)}\n`),
+  writeFile(join(outDir, "deps-rooms.json"), `${JSON.stringify(roomEdgeList, null, 2)}\n`),
+  writeFile(join(outDir, "deps-rooms.dot"), `${dot}\n`),
+  writeFile(join(outDir, "coupling.json"), `${JSON.stringify(coupling, null, 2)}\n`),
+]);
+
+console.log(`Wrote ${outDir}/{map,deploy-shape,deps-files,deps-rooms,coupling}.json + deps-rooms.dot`);
+console.log(`nodes=${nodes.length} edges=${edges.length} hosts=${hosts.length} scheduled=${schedules.size} eliminated=${eliminatedRooms.length}`);
