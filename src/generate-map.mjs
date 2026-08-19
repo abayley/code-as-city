@@ -906,11 +906,29 @@ for (const pkg of packages) {
     } else if (!residual) {
       parentId = scopeId;
     } else if (expandable) {
-      parentId = `${room.id}-district`;
+      // A residual structured dir never wraps a single building either: the
+      // district holds the dir's parts directly as campus structures.
+      const districtId = `${room.id}-district`;
       nodes.push({
-        id: parentId, label, kind: "scope", archetype: "district",
+        id: districtId, label, kind: "scope", archetype: "district",
         description: `Standalone area: ${room.segment}/.`,
       });
+      for (const child of children) {
+        const childId = kebab(`${room.id}-${child.seg}`);
+        const childLoc = child.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+        nodes.push({
+          id: childId,
+          label: child.seg === "(files)" ? "Support files" : titleCase(child.seg),
+          kind: "module", archetype: "worker",
+          parentId: districtId,
+          description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
+          sourceRefs: [{ path: child.files[0] }],
+          metrics: { loc: childLoc },
+        });
+        for (const f of child.files) fileNodeOwner.set(f, childId);
+        promotedNodes.push({ id: childId, files: child.files });
+      }
+      continue;
     }
     const isEntry = ENTRY_DIR_NAMES.has(basename(room.segment));
     nodes.push({
@@ -1034,6 +1052,23 @@ for (const key of packageEdges.keys()) {
   if (nodeIds.has(from) && nodeIds.has(to)) {
     addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
   }
+}
+
+// 7d-ii. Owner-level import edges: aggregate file imports by emitted campus
+// node. Covers flattened district children, which the room-level pass above
+// cannot see; addEdge's id dedup keeps existing pairs untouched.
+const ownerEdgeCounts = new Map();
+for (const { from, to } of fileEdges) {
+  const a = fileNodeOwner.get(from);
+  const b = fileNodeOwner.get(to);
+  if (!a || !b || a === b || !nodeIds.has(a) || !nodeIds.has(b)) continue;
+  const key = `${a}->${b}`;
+  ownerEdgeCounts.set(key, (ownerEdgeCounts.get(key) ?? 0) + 1);
+}
+for (const [key, count] of ownerEdgeCounts) {
+  const [from, to] = key.split("->");
+  addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared",
+    label: `${count} import${count === 1 ? "" : "s"}` });
 }
 
 // 7e. Drizzle database when no D1 binding declared it already.

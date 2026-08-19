@@ -94,14 +94,41 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   const scopes = allNodes.filter((node) => node.kind === "scope");
   const scopeById = new Map(scopes.map((scope) => [scope.id, scope]));
   const scopeOrder = new Map(scopes.map((scope, index) => [scope.id, index]));
-  const neighborhoodFor = (node: CityNode) => node.parentId && scopeById.has(node.parentId) ? node.parentId : "__system";
+  // Local change: a district-less node with edges is placed in a satellite
+  // strip adjacent to the district it is most connected to, instead of a
+  // single far-away "System" strip. Nodes with no affinity keep "__system".
+  const scopeOfNode = new Map<string, string>();
+  nodes.forEach((node) => {
+    if (node.parentId && scopeById.has(node.parentId)) scopeOfNode.set(node.id, node.parentId);
+  });
+  const affinity = new Map<string, string>();
+  nodes.forEach((node) => {
+    if (node.parentId && scopeById.has(node.parentId)) return;
+    const counts = new Map<string, number>();
+    relevantEdges.forEach((edge) => {
+      const other = edge.from === node.id ? edge.to : edge.to === node.id ? edge.from : null;
+      if (!other) return;
+      const scope = scopeOfNode.get(other);
+      if (scope) counts.set(scope, (counts.get(scope) ?? 0) + 1);
+    });
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (best) affinity.set(node.id, best[0]);
+  });
+  const neighborhoodFor = (node: CityNode) => node.parentId && scopeById.has(node.parentId)
+    ? node.parentId
+    : affinity.has(node.id) ? `__near:${affinity.get(node.id)}` : "__system";
+  const neighborhoodRank = (id: string) => {
+    if (scopeOrder.has(id)) return scopeOrder.get(id)! * 2;
+    if (id.startsWith("__near:")) return (scopeOrder.get(id.slice(7)) ?? Number.MAX_SAFE_INTEGER / 4) * 2 + 1;
+    return Number.MAX_SAFE_INTEGER;
+  };
   const groupedNodes = new Map<string, CityNode[]>();
   nodes.forEach((node) => {
     const neighborhoodId = neighborhoodFor(node);
     groupedNodes.set(neighborhoodId, [...(groupedNodes.get(neighborhoodId) ?? []), node]);
   });
   const neighborhoodEntries = [...groupedNodes].sort(([left], [right]) =>
-    (scopeOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (scopeOrder.get(right) ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right),
+    neighborhoodRank(left) - neighborhoodRank(right) || left.localeCompare(right),
   );
   const nodeStepX = 4.4;
   const nodeStepZ = 2.7;
@@ -166,9 +193,10 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       };
     });
     const scope = scopeById.get(id);
+    const nearScope = id.startsWith("__near:") ? scopeById.get(id.slice(7)) : undefined;
     return {
       id,
-      label: scope?.label ?? "System",
+      label: scope?.label ?? (nearScope ? `Near ${nearScope.label}` : "System"),
       description: scope?.description,
       nodeIds: neighborhoodNodes.map((node) => node.id),
       bounds: {

@@ -227,16 +227,16 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds }: { edges
         <Line
           points={points}
           color={EVIDENCE_COLORS[edge.evidence]}
-          lineWidth={emphasized ? 2.6 : focused ? 1.1 : 0.55}
+          lineWidth={emphasized ? 2.6 : focused ? 1.1 : 0.9}
           dashed={edge.evidence === "inferred"}
           dashSize={0.17}
           gapSize={0.1}
           transparent
-          opacity={emphasized ? 0.98 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.1}
+          opacity={emphasized ? 0.98 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
         />
         <mesh position={arrowPosition} quaternion={quaternion}>
           <coneGeometry args={[emphasized ? 0.105 : 0.07, emphasized ? 0.26 : 0.18, 4]} />
-          <meshBasicMaterial color={EVIDENCE_COLORS[edge.evidence]} transparent opacity={emphasized ? 0.98 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.13} />
+          <meshBasicMaterial color={EVIDENCE_COLORS[edge.evidence]} transparent opacity={emphasized ? 0.98 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
         </mesh>
       </group>
     );
