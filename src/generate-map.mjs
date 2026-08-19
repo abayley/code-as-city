@@ -1051,6 +1051,7 @@ const map = {
   schemaVersion: 1,
   id: kebab(basename(repo)),
   name: titleCase(basename(repo)),
+  repository: repo,
   summary: "Deterministic draft map generated without an agent (prototype).",
   generatedAt: new Date().toISOString(),
   nodes,

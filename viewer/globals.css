@@ -11,7 +11,8 @@
 
 * { box-sizing: border-box; }
 html { margin: 0; min-height: 100%; scroll-behavior: smooth; background: var(--paper); color: var(--ink); }
-body { --font-geist-sans: var(--font-jetbrains-mono); --font-geist-mono: var(--font-jetbrains-mono); margin: 0; min-height: 100%; background: var(--paper); color: var(--ink); font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; overflow-wrap: anywhere; }
+body { --font-geist-sans: "Roboto"; --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; min-height: 100%; background: var(--paper); color: var(--ink); font-family: "Roboto", system-ui, sans-serif; font-size: 15px; overflow-wrap: anywhere; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 button, input { font: inherit; color: inherit; }
 button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 a { color: inherit; text-decoration: none; }
@@ -252,3 +253,23 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
   .viewport-help { display: none; }
   .inspector { min-height: 34vh; }
 }
+
+/* Local additions: top-bar map selector and clickable map-file path. */
+.map-select { appearance: none; -webkit-appearance: none; border: 0; border-right: 1px solid var(--rule); background: var(--panel); padding: 0 18px; font: inherit; font-weight: 600; font-size: 13px; letter-spacing: .02em; cursor: pointer; color: var(--ink); }
+.map-select:hover { background: var(--paper-deep); }
+.stat-action { cursor: pointer; }
+.stat-action:hover strong { text-decoration: underline; }
+.stat strong { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Local additions: empty state shown before any map is opened. */
+.empty-shell { display: flex; flex-direction: column; min-height: 100vh; background: var(--paper); }
+.empty-shell .topbar { display: flex; justify-content: space-between; height: 44px; }
+.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 40px; }
+.empty-open { width: auto; flex: 0 0 auto; align-self: center; padding: 14px 34px; font-size: 13px; }
+.empty-or { margin: 0; text-transform: uppercase; letter-spacing: .14em; font-size: 10px; color: rgba(20,32,43,.55); }
+.showcase-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 240px)); gap: 14px; justify-content: center; max-width: 900px; }
+.showcase-card { --card-accent: #81afa6; display: flex; flex-direction: column; gap: 8px; padding: 18px; border: 1px solid var(--rule); background: var(--panel); text-align: left; cursor: pointer; transition: background .15s ease; }
+.showcase-card:hover { background: var(--card-accent); }
+.showcase-card strong { font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
+.showcase-card span { text-transform: uppercase; letter-spacing: .1em; font-size: 10px; color: rgba(20,32,43,.6); }
+.showcase-card small { font-size: 12px; line-height: 1.45; color: rgba(20,32,43,.72); }

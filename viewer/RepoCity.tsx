@@ -8,15 +8,12 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, type FlowLayout } from "./lib/flow-layout";
-import { defaultShowcase, showcases, type Showcase } from "./lib/local-showcases";
+import { showcases, type Showcase } from "./lib/local-showcases";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
 // Main-thread typesetting keeps labels functional without the broken worker.
 configureTextBuilder({ useWorker: false });
 
-type Surface = "home" | "viewer";
-
-const INSTALL_COMMAND = "npm install -g functionary-cli";
 const SCENE_INK = "#14202b";
 const SCENE_PAPER = "#dbe5e7";
 const SCENE_PANEL = "#edf3f2";
@@ -627,87 +624,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   );
 }
 
-function Landing({ onOpen, onImport }: { onOpen: (showcase: Showcase) => void; onImport: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copyInstall() {
-    await navigator.clipboard.writeText(`${INSTALL_COMMAND}\nfunctionary map .`);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }
-
-  return (
-    <main className="home-shell">
-      <nav className="home-nav" aria-label="Primary navigation">
-        <a className="wordmark" href="#top"><span>F</span>functionary.dev</a>
-        <div><a href="#atlas">Atlas</a><a href="#install">CLI</a><button type="button" onClick={onImport}>Open a map</button></div>
-      </nav>
-
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="kicker">A system atlas generated from source</p>
-          <h1>See how the whole repository <em>actually flows.</em></h1>
-          <p className="hero-lede">Functionary turns any codebase into a navigable city: entry points at the front, execution through the middle, infrastructure and external systems behind it.</p>
-          <div className="hero-actions">
-            <button className="button-dark" type="button" onClick={() => onOpen(showcases[0])}>Explore React <span>↗</span></button>
-            <a className="button-light" href="#install">Map your repository <span>↓</span></a>
-          </div>
-        </div>
-        <div className="hero-diagram" aria-label="Front-to-back repository flow illustration">
-          <p>Request / event / import</p>
-          <div className="flow-row flow-row-one"><span>01</span><b>Entry points</b><i /><i /></div>
-          <div className="flow-arrow">↓ &nbsp; calls · routes · emits</div>
-          <div className="flow-row flow-row-two"><span>02</span><b>Core compute</b><i /><i /><i /></div>
-          <div className="flow-arrow">↓ &nbsp; reads · writes · deploys</div>
-          <div className="flow-row flow-row-three"><span>03</span><b>State & runtime</b><i /><i /><i /><i /></div>
-          <small>Large systems open into rooms. Smaller components stay single-purpose. Arrows show how work moves.</small>
-        </div>
-      </section>
-
-      <section className="principles" aria-label="Product principles">
-        <div><span>01</span><strong>Repository agnostic</strong><p>Applications, libraries, CLIs, infrastructure, compilers, data systems, and monorepos.</p></div>
-        <div><span>02</span><strong>Semantic, not mechanical</strong><p>The agent finds boundaries and flow instead of mirroring every directory.</p></div>
-        <div><span>03</span><strong>Evidence on every claim</strong><p>Trace a structure back to manifests, code, config, infrastructure, or runtime facts.</p></div>
-      </section>
-
-      <section className="atlas" id="atlas">
-        <div className="section-heading"><p className="kicker">The open-source atlas</p><h2>Famous systems,<br />made legible.</h2><p>Start with a familiar repository. Follow its public boundary through the machinery behind it.</p></div>
-        <div className="repo-grid">
-          {showcases.map((showcase, index) => {
-            const scopeIds = new Set(showcase.map.nodes.filter((node) => node.kind === "scope").map((node) => node.id));
-            const structures = showcase.map.nodes.filter((node) => node.parentId && scopeIds.has(node.parentId));
-            const stages = new Set(structures.map((node) => node.display?.flowLayer ?? 0)).size;
-            return (
-              <button className="repo-card" key={showcase.slug} type="button" onClick={() => onOpen(showcase)} style={{ "--repo-accent": showcase.accent } as React.CSSProperties}>
-                <div className="repo-card-top"><span>{String(index + 1).padStart(2, "0")}</span><span>View map ↗</span></div>
-                <h3>{showcase.map.name}</h3>
-                <p>{showcase.map.summary}</p>
-                <div className="mini-flow">{Array.from({ length: stages }, (_, stage) => <i key={stage} style={{ width: `${Math.min(88, 34 + stage * 17)}%` }} />)}</div>
-                <div className="repo-meta"><span>{showcase.language}</span><span>{showcase.shape}</span><span>{structures.length} structures</span></div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="install" id="install">
-        <div><p className="kicker">Map your own</p><h2>One command.<br />A whole-system view.</h2><p>The Functionary CLI bundles an agent-neutral mapping skill and validator. Use the built-in Codex adapter or connect any coding agent that can inspect a repository and return JSON.</p></div>
-        <div className="terminal-card">
-          <div><span>CLI launch package</span><span>● ● ●</span></div>
-          <code><b>$</b> {INSTALL_COMMAND}</code>
-          <code><b>$</b> functionary map .</code>
-          <p>✓ .functionary/map.json</p>
-          <button type="button" onClick={copyInstall}>{copied ? "Copied" : "Copy commands"}</button>
-        </div>
-        <div className="install-actions"><button className="button-dark" type="button" onClick={onImport}>Open generated map <span>↑</span></button><a href="#atlas">Explore example maps ↑</a></div>
-      </section>
-
-      <footer><a className="wordmark" href="#top"><span>F</span>functionary.dev</a><p>Understand the system before changing it.</p><span>Built for unfamiliar code.</span></footer>
-    </main>
-  );
-}
-
-function MapViewer({ map, notice, onDismissNotice, onHome, onImport }: { map: CityMap; notice?: string | null; onDismissNotice: () => void; onHome: () => void; onImport: () => void }) {
+function MapViewer({ map, slug, jsonPath, notice, onDismissNotice, onSelectShowcase, onImport }: { map: CityMap; slug: string | null; jsonPath: string | null; notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void }) {
   const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
   // Local change: campus structures may be district-less (no parentId).
   const isCampusNode = (node: CityNode) =>
@@ -873,19 +790,20 @@ function MapViewer({ map, notice, onDismissNotice, onHome, onImport }: { map: Ci
   return (
     <main className="shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={onHome}><span className="brand-mark">F</span><span>functionary.dev</span></button>
-        <div className="stat repository-stat"><span>Repository</span><strong>{map.repository ?? map.id}</strong></div>
-        <div className="stat"><span>Neighborhoods</span><strong>{layout.neighborhoods.length}</strong></div>
-        <div className="stat"><span>Relationships</span><strong>{visibleEdges.length}</strong></div>
-        <div className="header-actions"><button className="secondary-action" type="button" onClick={onHome}>Atlas</button><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
+        <select className="map-select" aria-label="Choose a map" value={slug ?? ""} onChange={(event) => {
+          const next = showcases.find((candidate) => candidate.slug === event.target.value);
+          if (next) onSelectShowcase(next);
+        }}>
+          {!slug && <option value="">(opened file)</option>}
+          {showcases.map((candidate) => <option key={candidate.slug} value={candidate.slug}>{candidate.map.name}</option>)}
+        </select>
+        <div className="stat"><span>Repository</span><strong>{map.name}</strong></div>
+        {!slug && map.repository && <div className="stat"><span>Repo path</span><strong>{map.repository}</strong></div>}
+        {!slug && jsonPath && <button className="stat stat-action" type="button" onClick={onImport} title="Open another map file"><span>Map file</span><strong>{jsonPath}</strong></button>}
+        <div className="header-actions"><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
       </header>
 
       <aside className="rail">
-        <div className="rail-heading">
-          <p className="eyebrow">Flow map</p>
-          <h1>{map.name}</h1>
-          <p className="rail-copy">{map.summary ?? "A semantic repository map."}</p>
-        </div>
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a component" /></label>
         <div className="component-list" aria-label="Mapped components">
           {layout.neighborhoods.map((neighborhood, neighborhoodIndex) => {
@@ -940,16 +858,15 @@ function MapViewer({ map, notice, onDismissNotice, onHome, onImport }: { map: Ci
 }
 
 export default function Functionary() {
-  const [surface, setSurface] = useState<Surface>("home");
-  const [map, setMap] = useState<CityMap>(defaultShowcase.map);
+  const [current, setCurrent] = useState<{ map: CityMap | null; slug: string | null; jsonPath: string | null }>(
+    { map: null, slug: null, jsonPath: null });
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const dismissNotice = useCallback(() => setNotice(null), []);
 
   function openShowcase(showcase: Showcase) {
-    setMap(showcase.map);
-    setNotice(`Opened curated ${showcase.map.name} map · ${showcase.map.nodes.length} nodes · ${showcase.map.edges.length} relationships.`);
-    setSurface("viewer");
+    setCurrent({ map: showcase.map, slug: showcase.slug, jsonPath: null });
+    setNotice(`Opened ${showcase.map.name} · ${showcase.map.nodes.length} nodes · ${showcase.map.edges.length} relationships.`);
   }
 
   async function importMap(event: ChangeEvent<HTMLInputElement>) {
@@ -960,9 +877,8 @@ export default function Functionary() {
       const errors = validateCityMap(parsed);
       if (errors.length) throw new Error(errors.slice(0, 3).join(" "));
       const nextMap = parsed as CityMap;
-      setMap(nextMap);
+      setCurrent({ map: nextMap, slug: null, jsonPath: file.name });
       setNotice(`Loaded ${nextMap.name} · ${nextMap.nodes.length} nodes · ${nextMap.edges.length} relationships.`);
-      setSurface("viewer");
     } catch (error) {
       setNotice(error instanceof Error ? `Map rejected: ${error.message}` : "Map rejected: invalid JSON.");
     } finally {
@@ -973,8 +889,41 @@ export default function Functionary() {
   return (
     <>
       <input ref={fileInput} className="sr-only" type="file" accept="application/json,.json" onChange={importMap} />
-      {surface === "home" ? <Landing onOpen={openShowcase} onImport={() => fileInput.current?.click()} /> : <MapViewer key={map.id} map={map} notice={notice} onDismissNotice={dismissNotice} onHome={() => setSurface("home")} onImport={() => fileInput.current?.click()} />}
+      {current.map
+        ? <MapViewer key={current.map.id} map={current.map} slug={current.slug} jsonPath={current.jsonPath} notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} />
+        : <EmptyShell notice={notice} onDismissNotice={dismissNotice} onSelectShowcase={openShowcase} onImport={() => fileInput.current?.click()} />}
     </>
+  );
+}
+
+function EmptyShell({ notice, onDismissNotice, onSelectShowcase, onImport }: { notice?: string | null; onDismissNotice: () => void; onSelectShowcase: (showcase: Showcase) => void; onImport: () => void }) {
+  return (
+    <main className="empty-shell">
+      <header className="topbar">
+        <select className="map-select" aria-label="Choose a map" value="" onChange={(event) => {
+          const next = showcases.find((candidate) => candidate.slug === event.target.value);
+          if (next) onSelectShowcase(next);
+        }}>
+          <option value="" disabled>Choose a map</option>
+          {showcases.map((candidate) => <option key={candidate.slug} value={candidate.slug}>{candidate.map.name}</option>)}
+        </select>
+        <div className="header-actions"><button className="map-action" type="button" onClick={onImport}>Open map</button></div>
+      </header>
+      <section className="empty-state">
+        <button className="map-action empty-open" type="button" onClick={onImport}>Open map</button>
+        <p className="empty-or">or explore a showcase</p>
+        <div className="showcase-cards">
+          {showcases.map((candidate) => (
+            <button className="showcase-card" key={candidate.slug} type="button" onClick={() => onSelectShowcase(candidate)} style={{ "--card-accent": candidate.accent } as React.CSSProperties}>
+              <strong>{candidate.map.name}</strong>
+              <span>{candidate.language} · {candidate.shape}</span>
+              <small>{candidate.map.summary}</small>
+            </button>
+          ))}
+        </div>
+        {notice && <button className="notice" type="button" key={notice} aria-live="polite" onClick={onDismissNotice}>{notice}<span>×</span><i aria-hidden="true" /></button>}
+      </section>
+    </main>
   );
 }
 
