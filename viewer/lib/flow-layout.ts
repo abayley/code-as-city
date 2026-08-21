@@ -185,22 +185,49 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   });
   const maxDistrictLayer = Math.max(...districtLayer.values(), 0);
 
-  const rowPitch = (maxLayer + 1) * layerStepZ + 4.5;
   const rowMembers = new Map<number, number[]>();
   neighborhoodEntries.forEach((entry, index) => {
     const rowLayer = districtLayer.get(entry[0]) ?? maxDistrictLayer;
     rowMembers.set(rowLayer, [...(rowMembers.get(rowLayer) ?? []), index]);
   });
 
+  // Local change: compact packing. Each district uses its OWN compacted layer
+  // sequence for depth (global alignment wasted space once districts moved to
+  // rows), and each row is only as deep as its deepest district.
+  const localInfo = new Map<number, { layerIndex: Map<number, number>; depth: number }>();
+  neighborhoodEntries.forEach(([, neighborhoodNodes], index) => {
+    const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))].sort((a, b) => a - b);
+    const layerIndex = new Map(uniqueLayers.map((layer, position) => [layer, position]));
+    let maxStack = 1;
+    for (const layer of uniqueLayers) {
+      const count = neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length;
+      maxStack = Math.max(maxStack, Math.ceil(count / Math.min(2, count)));
+    }
+    const depth = (uniqueLayers.length - 1) * layerStepZ + (maxStack - 1) * nodeStepZ;
+    localInfo.set(index, { layerIndex, depth });
+  });
+
+  const sortedRows = [...rowMembers.entries()].sort((a, b) => a[0] - b[0]);
+  const rowGap = 6.4;
+  const rowBases = new Map<number, number>();
+  let zCursor = 0;
+  sortedRows.forEach(([rowLayer, entryIndexes]) => {
+    rowBases.set(rowLayer, zCursor);
+    const rowDepth = Math.max(...entryIndexes.map((index) => localInfo.get(index)!.depth), 0);
+    zCursor -= rowDepth + rowGap;
+  });
+  const zShift = (-zCursor - rowGap) / 2;
+
   const positions = new Map<string, [number, number]>();
-  for (const [rowLayer, entryIndexes] of rowMembers) {
+  for (const [rowLayer, entryIndexes] of sortedRows) {
     const rowWidth = entryIndexes.reduce((total, index) => total + neighborhoodWidths[index], 0)
       + neighborhoodGap * Math.max(0, entryIndexes.length - 1);
-    const rowZ = (maxDistrictLayer / 2 - rowLayer) * rowPitch;
+    const rowZ = rowBases.get(rowLayer)! + zShift;
     let neighborhoodCursor = -rowWidth / 2;
     for (const neighborhoodIndex of entryIndexes) {
       const [, neighborhoodNodes] = neighborhoodEntries[neighborhoodIndex];
       const neighborhoodWidth = neighborhoodWidths[neighborhoodIndex];
+      const { layerIndex } = localInfo.get(neighborhoodIndex)!;
       const centerX = neighborhoodCursor + neighborhoodWidth / 2;
       const localLayers = new Map<number, CityNode[]>();
       neighborhoodNodes.forEach((node) => {
@@ -212,13 +239,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
           (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) || a.label.localeCompare(b.label),
         );
         const columnCount = Math.min(2, layerNodes.length);
-        const rowCount = Math.ceil(layerNodes.length / columnCount);
         layerNodes.forEach((node, index) => {
           const row = Math.floor(index / columnCount);
           const column = index % columnCount;
           const nodesInRow = Math.min(columnCount, layerNodes.length - row * columnCount);
           const x = centerX + (column - (nodesInRow - 1) / 2) * nodeStepX;
-          const z = rowZ + (maxLayer / 2 - layer) * layerStepZ + (row - (rowCount - 1) / 2) * nodeStepZ;
+          const z = rowZ - (layerIndex.get(layer) ?? 0) * layerStepZ - row * nodeStepZ;
           positions.set(node.id, [x, z]);
         });
       }

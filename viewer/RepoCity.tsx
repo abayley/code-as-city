@@ -211,6 +211,9 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds }: { edges
     if (!from || !to) return null;
     const emphasized = edge.id === activeEdgeId;
     const focused = focusedEdgeIds?.has(edge.id) ?? false;
+    // Local change: dependency edges are structural plumbing, not flow — draw
+    // them only when selected or in focus mode, so resting lines are data flow.
+    if (edge.kind === "depends_on" && !emphasized && !focused) return null;
     const middleZ = from[1] + (to[1] - from[1]) * 0.52;
     const points: [number, number, number][] = [
       [from[0], 0.045, from[1]],
@@ -622,7 +625,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
           <MapMarker node={node} index={index} position={interiorModel.positions.get(node.id)!} selected={node.id === selectedId} hasInterior={allNodes.some((candidate) => candidate.parentId === node.id)} interior onSelect={() => onSelect(node.id)} onEnter={() => onEnter(node.id)} />
         </group>
       ))}
-      <MapControls makeDefault enableRotate={false} enableDamping dampingFactor={0.08} minZoom={12} maxZoom={110} screenSpacePanning />
+      <MapControls makeDefault enableRotate enableDamping dampingFactor={0.08} minZoom={12} maxZoom={110} screenSpacePanning />
     </Canvas>
   );
 }

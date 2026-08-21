@@ -670,6 +670,7 @@ const warnings = [
 ];
 const claimedSegments = new Set(); // source dirs claimed by a deployed service
 const serviceClaimedDirs = new Set(); // subset claimed by compose services (not wrangler)
+const campusFileSets = []; // campus node id -> the source files it runs (for I/O classification)
 const fileNodeOwner = new Map(); // source file -> emitted campus node id (for shared-lib edges)
 
 function addEdge(edge) {
@@ -698,9 +699,11 @@ for (const host of hosts) {
       return !(roomId && isUtilityRoom(roomId));
     });
     for (const copy of allCopiedSegments) { claimedSegments.add(copy); serviceClaimedDirs.add(copy); }
+    const serviceSourceFiles = [];
     for (const copy of copiedSegments) {
-      for (const f of sourceFiles) if (f.startsWith(copy + "/")) fileNodeOwner.set(f, serviceId);
+      for (const f of sourceFiles) if (f.startsWith(copy + "/")) { fileNodeOwner.set(f, serviceId); serviceSourceFiles.push(f); }
     }
+    campusFileSets.push({ id: serviceId, files: serviceSourceFiles });
     const isScheduled = Boolean(service.schedule);
     const roomsForService = copiedSegments.length >= 2;
     const archetype = roomsForService
@@ -846,6 +849,38 @@ for (const host of hosts) {
         }
       }
     }
+    // Exporter endpoints whose env token names nothing internal are external
+    // systems: LANGFUSE_OTLP_ENDPOINT -> a Langfuse external node.
+    const internalNames = new Set([
+      ...hosts.flatMap((h) => h.name.split(" ")),
+      ...hosts.flatMap((h) => h.services.map((s) => s.name)),
+    ].map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
+    const rawLines = readText(join(repo, config)).split("\n");
+    rawLines.forEach((line, index) => {
+      const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
+      if (!envToken) return;
+      // Skip when the surrounding exporter block names something internal
+      // (the span store exporter carries a SPAN_INGEST bearer header).
+      const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ")
+        .toLowerCase().replace(/[^a-z0-9]/g, "");
+      if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
+      const candidate = envToken.split("_")
+        .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
+        .join(" ").toLowerCase();
+      if (candidate.length < 4) return;
+      const externalId = kebab(candidate);
+      if (!nodes.some((n) => n.id === externalId)) {
+        nodes.push({
+          id: externalId, label: titleCase(candidate), kind: "external", archetype: "cloud",
+          parentId: host.id,
+          description: `External receiver declared by the ${host.name} host's exporter configuration (${envToken}).`,
+          sourceRefs: [{ path: config }],
+          display: { flowLayer: 4 },
+        });
+      }
+      addEdge({ id: `${from}--${externalId}`, from, to: externalId,
+        kind: "data_flow", evidence: "declared", label: "OTLP export", sourceRefs: [{ path: config }] });
+    });
   }
 }
 
@@ -1185,6 +1220,57 @@ if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
     if (from && nodeIds.has(from) || nodes.some((n) => n.id === from)) {
       addEdge({ id: `${from}--drizzle-database`, from, to: "drizzle-database", kind: "depends_on", evidence: "declared" });
     }
+  }
+}
+
+// 7f. Static I/O classification (data flow from code, no runtime evidence).
+// Declared boundary roles become tags: a module that starts a server listens;
+// one that constructs HTTP clients calls out. Database sinks/sources become
+// directional data_flow edges: SQL/ORM writes flow node -> database, reads
+// flow database -> node. Inferred evidence, because the *binding* to a
+// specific database node is not stated in the code.
+const LISTEN_PATTERN = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|express\s*\(\)/;
+const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
+// Method-call forms require a database-ish receiver: bare .delete()/.update()
+// would match every JavaScript Map and Set.
+const DB_WRITE_PATTERN = /insert\s+into\s|delete\s+from\s|\bupdate\s+\w+\s+set\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.(?:insert|update|delete|upsert)\s*\(/i;
+const DB_READ_PATTERN = /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.select\s*\(/i;
+
+const classificationSets = [
+  ...campusFileSets,
+  ...promotedNodes.map(({ id, files }) => ({ id, files })),
+];
+const districtLookup = new Map(nodes
+  .filter((n) => n.parentId && nodes.some((s) => s.id === n.parentId && s.kind === "scope"))
+  .map((n) => [n.id, n.parentId]));
+const databaseNodes = nodes.filter((n) => n.archetype === "database");
+
+for (const { id, files } of classificationSets) {
+  const node = nodes.find((n) => n.id === id);
+  if (!node || !files.length) continue;
+  let listens = false, callsOut = false, writes = false, reads = false;
+  for (const file of files) {
+    const text = readText(join(repo, file));
+    listens ||= LISTEN_PATTERN.test(text);
+    callsOut ||= HTTP_CLIENT_PATTERN.test(text);
+    writes ||= DB_WRITE_PATTERN.test(text);
+    reads ||= DB_READ_PATTERN.test(text);
+  }
+  const tags = new Set(node.tags ?? []);
+  if (listens) tags.add("listens");
+  if (callsOut) tags.add("http-client");
+  if (tags.size) node.tags = [...tags];
+  if (!writes && !reads) continue;
+  const database = databaseNodes.find((db) => districtLookup.get(db.id) === districtLookup.get(id))
+    ?? databaseNodes[0];
+  if (!database || database.id === id) continue;
+  if (writes) {
+    addEdge({ id: `${id}--${database.id}-w`, from: id, to: database.id,
+      kind: "data_flow", evidence: "inferred", confidence: 0.75, label: "writes" });
+  }
+  if (reads) {
+    addEdge({ id: `${database.id}--${id}-r`, from: database.id, to: id,
+      kind: "data_flow", evidence: "inferred", confidence: 0.75, label: "reads" });
   }
 }
 
