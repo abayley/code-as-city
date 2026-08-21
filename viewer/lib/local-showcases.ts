@@ -3,10 +3,12 @@
 import type { CityMap } from "./city-map";
 import { showcases as upstreamShowcases, type Showcase } from "./showcase-maps";
 import ariaEvalsMap from "../../out/aria-evals/map.json";
+import ariaEvalsOverviewMap from "../../out/aria-evals-overview/map.json";
 import functionaryMap from "../../out/functionary.dev/map.json";
 
 const localShowcases: Showcase[] = [
   { slug: "aria-evals", map: ariaEvalsMap as unknown as CityMap, language: "TypeScript", shape: "Deterministic draft", accent: "#376f71" },
+  { slug: "aria-evals-overview", map: ariaEvalsOverviewMap as unknown as CityMap, language: "TypeScript", shape: "Module overview", accent: "#8f7da8" },
   { slug: "functionary-dev", map: functionaryMap as unknown as CityMap, language: "TypeScript", shape: "Deterministic draft", accent: "#8a6fae" },
 ];
 

@@ -41,9 +41,11 @@ function parseArguments(argv) {
   const positionals = [];
   let outDir;
   let modulesAsBuildings = false;
+  let overview = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--out-dir") { outDir = argv[i + 1]; i += 1; }
     else if (argv[i] === "--modules-as-buildings") modulesAsBuildings = true;
+    else if (argv[i] === "--overview") overview = true;
     else positionals.push(argv[i]);
   }
   if (!positionals[0]) {
@@ -51,7 +53,12 @@ function parseArguments(argv) {
     process.exit(2);
   }
   const repo = resolve(positionals[0]);
-  return { repo, outDir: resolve(outDir ?? join("out", basename(repo))), modulesAsBuildings };
+  return {
+    repo,
+    outDir: resolve(outDir ?? join("out", overview ? `${basename(repo)}-overview` : basename(repo))),
+    modulesAsBuildings,
+    overview,
+  };
 }
 
 // Inventory: prefer `git ls-files` (respects .gitignore, excludes vendored
@@ -123,7 +130,7 @@ function titleCase(text) {
   return text.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const { repo, outDir, modulesAsBuildings } = parseArguments(process.argv.slice(2));
+const { repo, outDir, modulesAsBuildings, overview } = parseArguments(process.argv.slice(2));
 
 // Experimental (--modules-as-buildings): every module node with >=2 files
 // becomes a building whose rooms are its files — a preview of "buildings
@@ -145,8 +152,11 @@ mkdirSync(outDir, { recursive: true });
 // --- 1. Inventory --------------------------------------------------------------
 
 const allFiles = inventory(repo);
+// Tool configuration written in a code extension is config, not code:
+// vite.config.ts, marp.config.mjs, vitest-setup.ts, .eslintrc.js, ...
+const CONFIG_FILE_PATTERN = /(?:^|\/)(?:[\w.-]*\.config\.(?:ts|js|mjs|cjs)|[\w.-]*-setup\.(?:ts|js|mjs)|\.\w+rc\.(?:js|cjs))$/;
 const sourceFiles = allFiles.filter(
-  (f) => SOURCE_EXTENSIONS.has(extensionOf(f)) && !isTestPath(f),
+  (f) => SOURCE_EXTENSIONS.has(extensionOf(f)) && !isTestPath(f) && !CONFIG_FILE_PATTERN.test(f),
 );
 
 // --- 2. Packages ----------------------------------------------------------------
@@ -293,6 +303,56 @@ for (const { from, to } of fileEdges) {
 const UTILITY_MIN_FAN_IN = 3;
 const UTILITY_MAX_INSTABILITY = 0.25;
 const OTLP_PATTERN = /@opentelemetry\/|otlp|OTEL_EXPORTER/i;
+// Method-call forms require a database-ish receiver: bare .delete()/.update()
+// would match every JavaScript Map and Set.
+const DB_WRITE_PATTERN = /insert\s+into\s|delete\s+from\s|\bupdate\s+\w+\s+set\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.(?:insert|update|delete|upsert)\s*\(/i;
+const DB_READ_PATTERN = /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.select\s*\(/i;
+const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
+
+// McCabe cyclomatic complexity from the TypeScript compiler API when it is
+// installed (per function: 1 + decision points, logical operators and
+// non-default switch cases included, nested functions counted separately;
+// file complexity is the sum). Falls back to a decision-point regex when the
+// typescript package is unavailable.
+let ts = null;
+try { ts = (await import("typescript")).default; } catch { /* fall back below */ }
+const COMPLEXITY_FALLBACK_PATTERN = /\bif\s*\(|\bfor\s*(?:\(|await)|\bwhile\s*\(|\bcase\s|\bcatch\b|&&|\|\||\?\?/g;
+const complexityCache = new Map();
+function fileComplexity(file) {
+  if (complexityCache.has(file)) return complexityCache.get(file);
+  const text = readText(join(repo, file));
+  let complexity;
+  if (ts) {
+    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const functionKinds = new Set([
+      ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.FunctionExpression,
+      ts.SyntaxKind.ArrowFunction, ts.SyntaxKind.MethodDeclaration,
+      ts.SyntaxKind.Constructor, ts.SyntaxKind.GetAccessor, ts.SyntaxKind.SetAccessor,
+    ]);
+    const decisionKinds = new Set([
+      ts.SyntaxKind.IfStatement, ts.SyntaxKind.ForStatement, ts.SyntaxKind.ForInStatement,
+      ts.SyntaxKind.ForOfStatement, ts.SyntaxKind.WhileStatement, ts.SyntaxKind.DoStatement,
+      ts.SyntaxKind.ConditionalExpression, ts.SyntaxKind.CatchClause, ts.SyntaxKind.CaseClause,
+    ]);
+    const logicalOperators = new Set([
+      ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken,
+    ]);
+    let functions = 0;
+    let decisions = 0;
+    const visit = (node) => {
+      if (functionKinds.has(node.kind)) functions += 1;
+      else if (decisionKinds.has(node.kind)) decisions += 1;
+      else if (node.kind === ts.SyntaxKind.BinaryExpression && logicalOperators.has(node.operatorToken?.kind)) decisions += 1;
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    complexity = Math.max(1, functions) + decisions;
+  } else {
+    complexity = 1 + (text.match(COMPLEXITY_FALLBACK_PATTERN)?.length ?? 0);
+  }
+  complexityCache.set(file, complexity);
+  return complexity;
+}
 
 function couplingFromEdges(pairs) {
   const stats = new Map();
@@ -338,6 +398,7 @@ const eliminatedRooms = [...rooms.values()]
   .filter((room) => room.files.length && isUtilityRoom(room.id))
   .map((room) => ({ id: room.id, segment: room.segment, ...roomCoupling.get(room.id) }));
 const eliminatedRoomIds = new Set(eliminatedRooms.map((r) => r.id));
+
 
 // --- 5. Deployment shape -----------------------------------------------------------
 
@@ -512,6 +573,320 @@ if (wranglerFile) {
 }
 
 const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
+
+// --- Overview mode (--overview) ------------------------------------------------
+// A whole-codebase module overview: districts are directories (or packages in
+// a multi-package repo), every module is a structure, no edges. Composer
+// modules (fan-in 0: CLIs, entries) stand in the front row; supporting
+// modules sit behind, smaller, tagged "support". Migrations collapse to one
+// leaf. Deployment infra and config-declared externals get one district.
+// Height scales with lines of code (unclamped above the minimum); footprint
+// scales with a cyclomatic-complexity approximation (decision-point count).
+if (overview) {
+  const OVERVIEW_APP_COLOR = "#6d9da5";
+  const OVERVIEW_SHARED_COLOR = "#8f7da8";
+  const OVERVIEW_INFRA_COLOR = "#b77f8b";
+  const activeRooms = [...rooms.values()].filter((r) => r.files.length > 0);
+  const pkgsWithRooms = [...new Set(activeRooms.map((r) => r.pkg))];
+  const multiPkg = pkgsWithRooms.length > 1;
+
+  const linesOf = (files) => files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+  const complexityOf = (files) => files.reduce((sum, f) => sum + fileComplexity(f), 0);
+  const externalFanIn = (files) => {
+    const set = new Set(files);
+    return fileEdges.filter(({ from, to }) => set.has(to) && !set.has(from)).length;
+  };
+  const externalFanOut = (files) => {
+    const set = new Set(files);
+    return fileEdges.filter(({ from, to }) => set.has(from) && !set.has(to)).length;
+  };
+  const moduleIsUtility = (files) => {
+    const fanIn = externalFanIn(files);
+    const fanOut = externalFanOut(files);
+    return fanIn >= 2 && fanOut / (fanIn + fanOut) <= 0.33;
+  };
+  const roomLabel = (room) => room.segment === "(root)"
+    ? "Top-level files"
+    : titleCase(room.segment.split(sep).join(" / "));
+  const fileModuleName = (file) => basename(file).replace(/\.[a-z]+$/, "");
+
+  // A module: { id, label, files, path, support, collapsed }
+  const modulesForRoom = (room) => {
+    const entries = [];
+    // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
+    // migrations directory, wherever they sit in the tree.
+    const migrationFiles = room.files.filter((f) => MIGRATION_FILE_PATTERN.test(f));
+    const migrationDirs = new Map();
+    for (const file of migrationFiles) {
+      const dir = dirname(file);
+      migrationDirs.set(dir, [...(migrationDirs.get(dir) ?? []), file]);
+    }
+    for (const [dir, files] of migrationDirs) {
+      entries.push({
+        id: kebab(`${room.id}-${relative(roomDir(room), dir)}`),
+        label: `Migrations (${files.length})`,
+        files, path: dir, support: true, collapsed: true,
+      });
+    }
+    const strippedRoom = { ...room, files: room.files.filter((f) => !MIGRATION_FILE_PATTERN.test(f)) };
+    const children = childRoomsOf(strippedRoom);
+    const pushFileModule = (file) => entries.push({
+      id: kebab(`${room.id}-${fileModuleName(file)}`),
+      label: titleCase(fileModuleName(file)),
+      files: [file], path: file,
+      support: (fileCoupling.get(file)?.in ?? 0) > 0,
+    });
+    if (!children.length) {
+      strippedRoom.files.forEach(pushFileModule);
+      return entries;
+    }
+    for (const child of children) {
+      if (child.seg === "(files)") {
+        child.files.forEach(pushFileModule); // dissolve the support bucket
+      } else if (child.files.length === 1) {
+        pushFileModule(child.files[0]);
+      } else {
+        entries.push({
+          id: kebab(`${room.id}-${child.seg}`), label: titleCase(child.seg),
+          files: child.files, path: join(roomDir(room), child.seg),
+          support: externalFanIn(child.files) > 0,
+        });
+      }
+    }
+    return entries;
+  };
+
+  const districts = multiPkg
+    ? pkgsWithRooms.map((pkg) => ({
+        id: kebab(`${pkg.id}-district`), label: titleCase(pkg.name), path: pkg.dir,
+        modules: activeRooms.filter((r) => r.pkg === pkg).flatMap((room) =>
+          activeRooms.filter((x) => x.pkg === pkg).length > 4
+            ? [{ id: room.id, label: roomLabel(room), files: room.files, path: roomDir(room),
+                support: externalFanIn(room.files) > 0 }]
+            : modulesForRoom(room)),
+      }))
+    : activeRooms.map((room) => ({
+        id: kebab(`${room.id}-district`), label: roomLabel(room), path: roomDir(room),
+        modules: modulesForRoom(room),
+      }));
+
+  const overviewNodes = [];
+  const allModules = []; // { id, files } for flow-edge classification
+  const fileToModule = new Map(); // source file -> module node id (for flow edges)
+  for (const district of districts) {
+    if (!district.modules.length) continue;
+    const utilityShare = district.modules.filter((m) => moduleIsUtility(m.files)).length / district.modules.length;
+    const shared = utilityShare >= 0.6;
+    const color = shared ? OVERVIEW_SHARED_COLOR : OVERVIEW_APP_COLOR;
+    overviewNodes.push({
+      id: district.id, label: district.label, kind: "scope", archetype: "district",
+      description: `${shared ? "Shared code" : "Function area"}: ${district.path === "." ? "repository root" : district.path + "/"} — ${district.modules.length} module${district.modules.length === 1 ? "" : "s"}.`,
+      display: { color },
+    });
+    for (const m of district.modules) {
+      const loc = linesOf(m.files);
+      const complexity = complexityOf(m.files);
+      const height = Math.max(0.6, 0.55 + loc / 320);
+      const footprint = Math.min(3.4, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 7));
+      const scale = m.support ? 0.72 : 1;
+      const asBuilding = m.files.length >= 2 && !m.collapsed;
+      overviewNodes.push({
+        id: m.id, label: m.label, kind: "module",
+        archetype: asBuilding ? "building" : "worker",
+        parentId: district.id,
+        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, complexity ~${complexity}.`,
+        sourceRefs: [{ path: m.path }],
+        metrics: { loc, complexity, files: m.files.length },
+        tags: m.support ? ["support"] : ["composer"],
+        display: {
+          size: [footprint * scale, height * (m.support ? 0.85 : 1), footprint * 0.85 * scale],
+          color,
+          flowLayer: m.support ? 1 : 0,
+        },
+      });
+      for (const file of m.files) fileToModule.set(file, m.id);
+      allModules.push({ id: m.id, files: m.files });
+      if (asBuilding) {
+        for (const file of m.files) {
+          const fileLoc = linesOf([file]);
+          overviewNodes.push({
+            id: kebab(`${m.id}-${fileModuleName(file)}`), label: titleCase(fileModuleName(file)),
+            kind: "module", archetype: "room", parentId: m.id,
+            description: `Source file ${file}: ${fileLoc} lines, complexity ${fileComplexity(file)}.`,
+            sourceRefs: [{ path: file }],
+            metrics: { loc: fileLoc, complexity: fileComplexity(file) },
+          });
+        }
+      }
+    }
+  }
+
+  // Infrastructure & external systems: image-only compose services (databases,
+  // collectors), config-declared external receivers, wrangler, drizzle.
+  const infraMembers = [];
+  const overviewEdges = [];
+  const addOverviewEdge = (edge) => { if (!overviewEdges.some((e) => e.id === edge.id)) overviewEdges.push(edge); };
+  const infraCollectorFor = (host) => {
+    const candidates = host.services.filter((s) => !s.dockerfile);
+    const pick = candidates.find((s) => /collector|gateway|ingest/.test(s.name)) ?? candidates[0];
+    return pick ? kebab(`infra-${host.name}-${pick.name}`) : null;
+  };
+  const internalNames = new Set([
+    ...hosts.flatMap((h) => h.name.split(" ")),
+    ...hosts.flatMap((h) => h.services.map((s) => s.name)),
+  ].map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
+  for (const host of hosts) {
+    for (const service of host.services) {
+      if (service.dockerfile) continue; // built from this repo's modules
+      infraMembers.push({
+        id: kebab(`infra-${host.name}-${service.name}`), label: titleCase(service.name),
+        archetype: service.imageClass ?? "cloud", kind: "infra",
+        description: `${service.image ?? "container"} on the ${host.name} host.`,
+        path: host.file,
+      });
+    }
+    const hostDir = dirname(host.file);
+    const hostQualifiers = host.name.split(" ").filter(Boolean);
+    for (const config of allFiles.filter((f) => dirname(f) === hostDir && /\.ya?ml$/.test(f) && !/docker-compose/.test(basename(f))
+      && hostQualifiers.some((token) => basename(f).includes(token)))) {
+      const rawLines = readText(join(repo, config)).split("\n");
+      rawLines.forEach((line, index) => {
+        const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
+        if (!envToken) return;
+        const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
+        const candidate = envToken.split("_")
+          .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
+          .join(" ").toLowerCase();
+        if (candidate.length < 4) return;
+        infraMembers.push({
+          id: kebab(`external-${candidate}`), label: titleCase(candidate),
+          archetype: "cloud", kind: "external",
+          description: `External receiver declared in ${config}.`, path: config,
+        });
+        const exporterId = infraCollectorFor(host);
+        if (exporterId) {
+          addOverviewEdge({ id: `${exporterId}--${kebab(`external-${candidate}`)}`, from: exporterId, to: kebab(`external-${candidate}`),
+            kind: "data_flow", evidence: "declared", label: "OTLP export", sourceRefs: [{ path: config }] });
+        }
+      });
+      // Config-declared forwarding: another host's name or service name in
+      // this config's exporter lines links the collectors / target module.
+      const exportLines = rawLines.filter((l) => /endpoint:|\$\{env:/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
+      const hostTokens = host.name.split(" ").filter(Boolean);
+      const from = infraCollectorFor(host);
+      if (!from) continue;
+      for (const other of hosts) {
+        if (other === host) continue;
+        const distinct = other.name.split(" ").filter((t) => t && !hostTokens.includes(t)).map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
+          const to = infraCollectorFor(other);
+          if (to) addOverviewEdge({ id: `${from}--${to}`, from, to, kind: "data_flow", evidence: "declared", label: "OTLP forward", sourceRefs: [{ path: config }] });
+        }
+        for (const service of other.services) {
+          const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (normalised.length < 6 || !exportLines.some((l) => l.includes(normalised))) continue;
+          const targetModule = service.entryFile ? fileToModule.get(service.entryFile) : null;
+          if (targetModule) addOverviewEdge({ id: `${from}--${targetModule}`, from, to: targetModule, kind: "data_flow", evidence: "declared", label: "OTLP forward", sourceRefs: [{ path: config }] });
+        }
+      }
+    }
+  }
+  // Backing stores that only exist in deduped compose variants (the dev
+  // compose's postgres container) still represent real infrastructure.
+  for (const candidate of candidateHosts) {
+    for (const service of candidate.services) {
+      if (["database", "queue", "storage"].includes(service.imageClass) && !service.dockerfile) {
+        infraMembers.push({
+          id: kebab(`infra-${service.name}`), label: titleCase(service.name),
+          archetype: service.imageClass, kind: "infra",
+          description: `${service.image ?? "container"} declared in ${candidate.file}.`,
+          path: candidate.file,
+        });
+      }
+    }
+  }
+  if (edgeHost) infraMembers.push({ id: "infra-cloudflare-worker", label: "Cloudflare Worker", archetype: "worker", kind: "infra", description: `Declared in ${edgeHost.file}.`, path: edgeHost.file });
+  if (drizzleConfig) infraMembers.push({ id: "infra-drizzle-database", label: "Database", archetype: "database", kind: "infra", description: `Declared in ${drizzleConfig}.`, path: drizzleConfig });
+  const seenInfra = new Set();
+  const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
+  if (uniqueInfra.length) {
+    overviewNodes.push({
+      id: "infrastructure-district", label: "Infrastructure & external", kind: "scope", archetype: "district",
+      description: `Deployed infrastructure and external systems — ${uniqueInfra.length} node${uniqueInfra.length === 1 ? "" : "s"}.`,
+      display: { color: OVERVIEW_INFRA_COLOR },
+    });
+    for (const m of uniqueInfra) {
+      overviewNodes.push({
+        id: m.id, label: m.label, kind: m.kind, archetype: m.archetype,
+        parentId: "infrastructure-district",
+        description: m.description, sourceRefs: [{ path: m.path }],
+        display: { color: OVERVIEW_INFRA_COLOR },
+      });
+    }
+  }
+
+  // Remaining data-flow edges: OTLP producers into the gateway collector, and
+  // database reads/writes.
+  const otlpTarget = uniqueInfra.find((m) => /collector/.test(m.id) && /gateway/.test(m.id))
+    ?? uniqueInfra.find((m) => /collector/.test(m.id));
+  const databaseTarget = uniqueInfra.find((m) => m.archetype === "database");
+  for (const m of allModules) {
+    const texts = m.files.map((f) => readText(join(repo, f)));
+    if (otlpTarget && texts.some((t) => OTLP_PATTERN.test(t))) {
+      addOverviewEdge({ id: `${m.id}--${otlpTarget.id}`, from: m.id, to: otlpTarget.id,
+        kind: "data_flow", evidence: "inferred", confidence: 0.7, label: "OTLP export" });
+    }
+    if (databaseTarget && m.id !== databaseTarget.id) {
+      if (texts.some((t) => DB_WRITE_PATTERN.test(t))) {
+        addOverviewEdge({ id: `${m.id}--${databaseTarget.id}-w`, from: m.id, to: databaseTarget.id,
+          kind: "data_flow", evidence: "inferred", confidence: 0.75, label: "writes" });
+      }
+      if (texts.some((t) => DB_READ_PATTERN.test(t))) {
+        addOverviewEdge({ id: `${databaseTarget.id}--${m.id}-r`, from: databaseTarget.id, to: m.id,
+          kind: "data_flow", evidence: "inferred", confidence: 0.75, label: "reads" });
+      }
+    }
+  }
+  const emittedOverviewIds = new Set(overviewNodes.map((n) => n.id));
+  const finalOverviewEdges = overviewEdges.filter((e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to));
+
+  const overviewMap = {
+    schemaVersion: 1,
+    id: kebab(`${basename(repo)}-overview`),
+    name: `${titleCase(basename(repo))} overview`,
+    repository: repo,
+    summary: "Module overview: every module as a structure, grouped by directory; no dependency edges.",
+    generatedAt: new Date().toISOString(),
+    nodes: overviewNodes,
+    edges: finalOverviewEdges,
+    warnings: [
+      "Overview mode: dev-tooling/orphan exclusion is intentionally skipped.",
+      "Only data-flow edges are shown; import dependencies are omitted by design.",
+      "Shared-code districts (>=60% high fan-in / low fan-out modules) are coloured differently.",
+      "Complexity is a decision-point count (if/for/while/case/catch/&&/||/??), not exact cyclomatic complexity.",
+    ],
+  };
+  const overviewMermaidId = (id) => id.replace(/[^a-zA-Z0-9_]/g, "_");
+  const overviewMermaid = [
+    `# ${overviewMap.name}`,
+    "",
+    "```mermaid",
+    "flowchart TB",
+    ...overviewNodes.filter((n) => n.kind === "scope").flatMap((scope) => [
+      `  subgraph ${overviewMermaidId(scope.id)}["${scope.label}${scope.description.startsWith("Shared") ? " (shared code)" : ""}"]`,
+      ...overviewNodes.filter((n) => n.parentId === scope.id)
+        .map((n) => `    ${overviewMermaidId(n.id)}["${n.label}<br/><i>${n.metrics ? `${n.metrics.loc} loc, cx ${n.metrics.complexity}` : n.archetype}</i><br/>${(n.sourceRefs?.[0]?.path ?? "").replace(/"/g, "'")}"]`),
+      "  end",
+    ]),
+    "```",
+  ].join("\n");
+  await writeFile(join(outDir, "map.json"), `${JSON.stringify(overviewMap, null, 2)}\n`);
+  await writeFile(join(outDir, "map.md"), `${overviewMermaid}\n`);
+  console.log(`Wrote ${outDir}/map.json + map.md (overview mode)`);
+  console.log(`districts=${districts.length + (uniqueInfra.length ? 1 : 0)} nodes=${overviewNodes.length}`);
+  process.exit(0);
+}
 
 // --- 6. Flow layering helper --------------------------------------------------------
 
@@ -1231,10 +1606,6 @@ if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
 // specific database node is not stated in the code.
 const LISTEN_PATTERN = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|express\s*\(\)/;
 const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
-// Method-call forms require a database-ish receiver: bare .delete()/.update()
-// would match every JavaScript Map and Set.
-const DB_WRITE_PATTERN = /insert\s+into\s|delete\s+from\s|\bupdate\s+\w+\s+set\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.(?:insert|update|delete|upsert)\s*\(/i;
-const DB_READ_PATTERN = /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.select\s*\(/i;
 
 const classificationSets = [
   ...campusFileSets,

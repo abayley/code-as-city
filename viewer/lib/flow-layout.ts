@@ -6,6 +6,7 @@ export type FlowLayout = {
   neighborhoods: Array<{
     id: string;
     label: string;
+    color?: string;
     description?: string;
     nodeIds: string[];
     bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -207,7 +208,27 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     localInfo.set(index, { layerIndex, depth });
   });
 
-  const sortedRows = [...rowMembers.entries()].sort((a, b) => a[0] - b[0]);
+  // Local change: wrap over-wide rows (a map with no cross-district edges
+  // would otherwise be one endless ribbon).
+  const MAX_ROW_WIDTH = 64;
+  const sortedRows: Array<[number, number[]]> = [];
+  [...rowMembers.entries()].sort((a, b) => a[0] - b[0]).forEach(([rowLayer, entryIndexes]) => {
+    let chunk: number[] = [];
+    let width = 0;
+    let part = 0;
+    for (const index of entryIndexes) {
+      const step = neighborhoodWidths[index] + (chunk.length ? neighborhoodGap : 0);
+      if (chunk.length && width + step > MAX_ROW_WIDTH) {
+        sortedRows.push([rowLayer + part * 1e-3, chunk]);
+        part += 1;
+        chunk = [];
+        width = 0;
+      }
+      chunk.push(index);
+      width += neighborhoodWidths[index] + (chunk.length > 1 ? neighborhoodGap : 0);
+    }
+    if (chunk.length) sortedRows.push([rowLayer + part * 1e-3, chunk]);
+  });
   const rowGap = 6.4;
   const rowBases = new Map<number, number>();
   let zCursor = 0;
@@ -278,6 +299,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     return {
       id,
       label: scope?.label ?? (nearScope ? `Near ${nearScope.label}` : "System"),
+      color: scope?.display?.color,
       description: scope?.description,
       nodeIds: neighborhoodNodes.map((node) => node.id),
       bounds: {

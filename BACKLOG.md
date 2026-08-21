@@ -2,15 +2,6 @@
 
 Ideas agreed in discussion, not yet built.
 
-## Module overview mode
-
-A whole-codebase overview with every module as a building, grouped by
-directory into districts (src/providers, src/lib, src/core each a district),
-no dependency edges drawn. Districts that contain mostly or entirely leaf
-modules (high fan-in, low fan-out) get a distinct colour, so shared-code
-districts read differently from app-function districts. Probably a generator
-mode (extending --modules-as-buildings) plus a viewer edge toggle.
-
 ## Archetype shapes
 
 Additional three.js geometries so module roles are visually distinct: leaf
@@ -31,4 +22,10 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
 
 ## Done since listed
 
-- Viewer rotation around the vertical axis (MapControls enableRotate).
+- Viewer rotation around the vertical axis (MapControls enableRotate), with
+  the polar angle locked so the ground plane never tilts.
+- Module overview mode (`--overview`): districts per directory (per package in
+  multi-package repos), every module a structure, height scaled by lines of
+  code, shared-code districts coloured purple, zero edges. The viewer wraps
+  edge-less district rows into a grid and honours district colours from the
+  map. Height ∝ loc is a first slice of the stats-driven dimensions item.

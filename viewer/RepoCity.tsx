@@ -148,7 +148,7 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
     return <group key={neighborhood.id}>
       <mesh position={[centerX, -0.027, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[width, depth]} />
-        <meshBasicMaterial color={colors[index % colors.length]} transparent opacity={dimmed ? 0.1 : active ? 0.5 : 0.34} depthWrite={false} />
+        <meshBasicMaterial color={neighborhood.color ?? colors[index % colors.length]} transparent opacity={dimmed ? 0.1 : active ? 0.5 : 0.34} depthWrite={false} />
       </mesh>
       <Line points={outline} color={active ? SCENE_INK : "#70878c"} lineWidth={active ? 1.55 : 0.9} transparent opacity={dimmed ? 0.16 : active ? 0.9 : 0.62} />
       {!hideLabels && <group position={[centerX, 0.048, signZ]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -313,7 +313,12 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
     : requestedSize;
   const [width, height, depth] = size;
   const visualArchetype = node.archetype === "building" && !hasInterior ? "room" : node.archetype;
-  const geometry = useMemo(() => geometryFor(visualArchetype, width, height, depth), [depth, height, visualArchetype, width]);
+  // Local change: support modules (overview mode) render as four-sided
+  // pyramids so they read differently from the composer buildings.
+  const isSupportShape = node.archetype === "worker" && (node.tags ?? []).includes("support");
+  const geometry = useMemo(() => isSupportShape
+    ? new THREE.ConeGeometry(width * 0.62, height, 4)
+    : geometryFor(visualArchetype, width, height, depth), [depth, height, isSupportShape, visualArchetype, width]);
   const outline = useMemo(() => new THREE.EdgesGeometry(geometry), [geometry]);
   const color = node.display?.color ?? (node.kind === "infra" ? "#b17f9f" : node.kind === "external" ? "#cf8278" : "#81afa6");
   const floorCount = hasInterior ? Math.max(0, Math.min(4, Math.round(height * 1.2) - 1)) : 0;
@@ -505,7 +510,7 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
   </group>;
 }
 
-function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, viewKey }: {
+function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, onHover, viewKey }: {
   nodes: CityNode[];
   allNodes: CityNode[];
   edges: CityEdge[];
@@ -518,6 +523,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   neighborhoodId: string | null;
   onSelect: (id: string) => void;
   onEnter: (id: string) => void;
+  onHover: (node: CityNode | null, x: number, y: number) => void;
   viewKey: string;
 }) {
   const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
@@ -597,7 +603,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   return (
     <Canvas
       orthographic
-      camera={{ position: [10, 13, 15], zoom: 48, near: 0.1, far: 160 }}
+      camera={{ position: [10, 13, 15], zoom: 48, near: -300, far: 500 }}
       shadows
       dpr={[1, 1.7]}
     >
@@ -614,18 +620,24 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
         <Connections edges={interiorModel.childEdges} positions={interiorModel.positions} activeEdgeId={interiorActiveEdgeId} />
       </>}
       {nodes.map((node, index) => (
-        <group key={node.id}>
+        <group key={node.id}
+          onPointerMove={(event) => { event.stopPropagation(); onHover(node, event.nativeEvent.clientX, event.nativeEvent.clientY); }}
+          onPointerOut={() => onHover(null, 0, 0)}>
           <Structure node={node} position={layout.positions.get(node.id)!} selected={node.id === selectedId} hasInterior={allNodes.some((candidate) => candidate.parentId === node.id)} expanded={node.id === expandedId} dimmed={interiorModel ? node.id !== expandedId : neighborhoodModel ? !neighborhoodModel.nodeIds.has(node.id) : !!focusModel && !focusModel.nodeIds.has(node.id)} onSelect={() => onSelect(node.id)} onEnter={() => onEnter(node.id)} />
           {(!interiorModel || node.id === expandedId) && <MapMarker node={node} index={index} position={layout.positions.get(node.id)!} selected={node.id === selectedId} hasInterior={allNodes.some((candidate) => candidate.parentId === node.id)} expanded={node.id === expandedId} exploring={node.id === focusId} dimmed={neighborhoodModel ? !neighborhoodModel.nodeIds.has(node.id) : !!focusModel && !focusModel.nodeIds.has(node.id)} onSelect={() => onSelect(node.id)} onEnter={() => onEnter(node.id)} />}
         </group>
       ))}
       {interiorModel?.children.map((node, index) => (
-        <group key={node.id}>
+        <group key={node.id}
+          onPointerMove={(event) => { event.stopPropagation(); onHover(node, event.nativeEvent.clientX, event.nativeEvent.clientY); }}
+          onPointerOut={() => onHover(null, 0, 0)}>
           <Structure node={node} position={interiorModel.positions.get(node.id)!} selected={node.id === selectedId} hasInterior={allNodes.some((candidate) => candidate.parentId === node.id)} interior onSelect={() => onSelect(node.id)} onEnter={() => onEnter(node.id)} />
           <MapMarker node={node} index={index} position={interiorModel.positions.get(node.id)!} selected={node.id === selectedId} hasInterior={allNodes.some((candidate) => candidate.parentId === node.id)} interior onSelect={() => onSelect(node.id)} onEnter={() => onEnter(node.id)} />
         </group>
       ))}
-      <MapControls makeDefault enableRotate enableDamping dampingFactor={0.08} minZoom={12} maxZoom={110} screenSpacePanning />
+      {/* Polar angle locked to the initial camera elevation: rotation orbits
+          the vertical axis only, so the ground plane never tilts. */}
+      <MapControls makeDefault enableRotate enableDamping dampingFactor={0.08} minZoom={12} maxZoom={110} screenSpacePanning minPolarAngle={0} maxPolarAngle={Math.PI / 2} />
     </Canvas>
   );
 }
@@ -644,6 +656,10 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
   const [focusId, setFocusId] = useState<string | null>(null);
   const [neighborhoodId, setNeighborhoodId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
+  const handleHover = useCallback((node: CityNode | null, x: number, y: number) => {
+    setHoverCard(node ? { node, x, y } : null);
+  }, []);
 
   const campusNodes = useMemo(() => map.nodes.filter(isCampusNode), [map.nodes, nodeById]);
   const visibleNodes = campusNodes;
@@ -822,7 +838,23 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       </aside>
 
       <section className="viewport" aria-label="Interactive repository city">
-        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
+        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
+        {hoverCard && (() => {
+          const roomCount = map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length;
+          // A many-room building's aggregate complexity is meaningless; its
+          // rooms carry their own numbers. Total lines stay accurate.
+          const metricEntries = Object.entries(hoverCard.node.metrics ?? {})
+            .filter(([key]) => roomCount === 0 || key !== "complexity");
+          return <div className="stats-card" style={{ left: hoverCard.x + 18, top: hoverCard.y - 12 }}>
+            <strong>{hoverCard.node.label}</strong>
+            {hoverCard.node.sourceRefs?.slice(0, 3).map((ref) => <code key={ref.path ?? ref.url}>{ref.path ?? ref.url}</code>)}
+            <dl>
+              {metricEntries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
+              <div><dt>type</dt><dd>{plainType(hoverCard.node, roomCount).toLowerCase()}</dd></div>
+              {!!hoverCard.node.tags?.length && <div><dt>tags</dt><dd>{hoverCard.node.tags.join(", ")}</dd></div>}
+            </dl>
+          </div>;
+        })()}
         <div className="viewport-location">
           {activeExpandedId
             ? <button type="button" onClick={closeBuilding}>Back to city</button>
