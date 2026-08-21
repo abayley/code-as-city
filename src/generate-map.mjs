@@ -40,16 +40,18 @@ const IMAGE_CLASSES = [
 function parseArguments(argv) {
   const positionals = [];
   let outDir;
+  let modulesAsBuildings = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--out-dir") { outDir = argv[i + 1]; i += 1; }
+    else if (argv[i] === "--modules-as-buildings") modulesAsBuildings = true;
     else positionals.push(argv[i]);
   }
   if (!positionals[0]) {
-    console.error("Usage: generate-map.mjs <target-repo> [--out-dir path]");
+    console.error("Usage: generate-map.mjs <target-repo> [--out-dir path] [--modules-as-buildings]");
     process.exit(2);
   }
   const repo = resolve(positionals[0]);
-  return { repo, outDir: resolve(outDir ?? join("out", basename(repo))) };
+  return { repo, outDir: resolve(outDir ?? join("out", basename(repo))), modulesAsBuildings };
 }
 
 // Inventory: prefer `git ls-files` (respects .gitignore, excludes vendored
@@ -121,7 +123,23 @@ function titleCase(text) {
   return text.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const { repo, outDir } = parseArguments(process.argv.slice(2));
+const { repo, outDir, modulesAsBuildings } = parseArguments(process.argv.slice(2));
+
+// Experimental (--modules-as-buildings): every module node with >=2 files
+// becomes a building whose rooms are its files — a preview of "buildings
+// depict modules" while the room semantics are still undecided.
+function pushFileRooms(parentId, files) {
+  for (const file of files) {
+    const name = basename(file).replace(/\.[a-z]+$/, "");
+    nodes.push({
+      id: kebab(`${parentId}-${name}`),
+      label: titleCase(name),
+      kind: "module", archetype: "room", parentId,
+      description: `Source file ${file}.`,
+      sourceRefs: [{ path: file }],
+    });
+  }
+}
 mkdirSync(outDir, { recursive: true });
 
 // --- 1. Inventory --------------------------------------------------------------
@@ -782,6 +800,55 @@ for (const host of hosts) {
   }
 }
 
+// 7a-iii. Host forwarding: a host's own config file declaring an exporter
+// endpoint that names another host (e.g. the collector gateway's
+// STACK_OTLP_ENDPOINT) links the two hosts' primary services with data_flow.
+function primaryServiceId(host) {
+  const preferred = host.services.find((s) => /collector|gateway|ingest/.test(s.name)) ?? host.services[0];
+  return preferred ? kebab(`${host.id}-${preferred.name}`) : null;
+}
+for (const host of hosts) {
+  const hostDir = dirname(host.file);
+  const hostTokens = host.name.split(" ").filter(Boolean);
+  const ownConfigs = allFiles.filter((f) =>
+    dirname(f) === hostDir && /\.ya?ml$/.test(f) && !/docker-compose/.test(basename(f))
+    && hostTokens.some((token) => basename(f).includes(token)));
+  for (const config of ownConfigs) {
+    // Exporter-ish lines only: endpoints and env-var references.
+    const exportLines = readText(join(repo, config)).split("\n")
+      .filter((line) => /endpoint:|\$\{env:/.test(line))
+      .map((line) => line.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    const from = primaryServiceId(host);
+    if (!from || !nodes.some((n) => n.id === from)) continue;
+    for (const other of hosts) {
+      if (other === host) continue;
+      // Host-name match (the gateway's STACK_OTLP_ENDPOINT names the stack).
+      const distinct = other.name.split(" ")
+        .filter((token) => token && !hostTokens.includes(token))
+        .map((token) => token.toLowerCase().replace(/[^a-z0-9]/g, ""));
+      if (distinct.length && exportLines.some((line) => distinct.some((token) => line.includes(token)))) {
+        const to = primaryServiceId(other);
+        if (to && nodes.some((n) => n.id === to)) {
+          addEdge({ id: `${from}--${to}`, from, to, kind: "data_flow", evidence: "declared",
+            label: "OTLP forward", sourceRefs: [{ path: config }] });
+        }
+      }
+      // Service-name match (the stack's SPAN_INGEST_BEARER_TOKEN names the
+      // span-ingest service on the evaluation host).
+      for (const service of other.services) {
+        const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (normalised.length < 6) continue;
+        if (!exportLines.some((line) => line.includes(normalised))) continue;
+        const to = kebab(`${other.id}-${service.name}`);
+        if (nodes.some((n) => n.id === to)) {
+          addEdge({ id: `${from}--${to}`, from, to, kind: "data_flow", evidence: "declared",
+            label: "OTLP forward", sourceRefs: [{ path: config }] });
+        }
+      }
+    }
+  }
+}
+
 // 7b. Cloudflare edge district.
 if (edgeHost) {
   const districtId = "edge-delivery";
@@ -834,6 +901,23 @@ function childRoomsOf(room) {
     groups.set(seg, [...(groups.get(seg) ?? []), file]);
   }
   return [...groups.entries()].map(([seg, files]) => ({ seg, files }));
+}
+
+// The repository-relative directory a room represents ("(root)" -> package dir).
+function roomDir(room) {
+  if (room.segment === "(root)") return room.pkg.dir === "." ? "." : room.pkg.dir;
+  return room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
+}
+
+// Source refs for a child of a room: the subdirectory when dir-backed, the
+// concrete files (capped) when it is a loose-file group.
+function childSourceRefs(room, child) {
+  const dir = roomDir(room);
+  if (child.files.length === 1) return [{ path: child.files[0] }];
+  if (child.seg !== "(files)" && child.files.every((f) => f.startsWith(join(dir, child.seg) + sep))) {
+    return [{ path: join(dir, child.seg) }];
+  }
+  return child.files.slice(0, 5).map((path) => ({ path }));
 }
 
 // Interior structure: two subdirs, or one subdir plus loose files.
@@ -916,33 +1000,39 @@ for (const pkg of packages) {
       for (const child of children) {
         const childId = kebab(`${room.id}-${child.seg}`);
         const childLoc = child.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+        const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
         nodes.push({
           id: childId,
           label: child.seg === "(files)" ? "Support files" : titleCase(child.seg),
-          kind: "module", archetype: "worker",
+          kind: "module", archetype: childAsBuilding ? "building" : "worker",
           parentId: districtId,
           description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
-          sourceRefs: [{ path: child.files[0] }],
+          sourceRefs: childSourceRefs(room, child),
           metrics: { loc: childLoc },
         });
+        if (childAsBuilding) pushFileRooms(childId, child.files);
         for (const f of child.files) fileNodeOwner.set(f, childId);
         promotedNodes.push({ id: childId, files: child.files });
       }
       continue;
     }
     const isEntry = ENTRY_DIR_NAMES.has(basename(room.segment));
+    const leafAsBuilding = modulesAsBuildings && !expandable && room.files.length >= 2;
     nodes.push({
       id: room.id,
       label,
-      kind: "module", archetype: expandable ? "building" : isEntry ? "gateway" : "worker",
+      kind: "module", archetype: expandable || leafAsBuilding ? "building" : isEntry ? "gateway" : "worker",
       ...(parentId ? { parentId } : {}),
       description: `${room.files.length} source file${room.files.length === 1 ? "" : "s"} under ${room.segment === "(root)" ? "the package root" : room.segment + "/"}.`,
-      sourceRefs: [{ path: room.files[0] }],
+      sourceRefs: room.segment === "(root)"
+        ? room.files.slice(0, 5).map((path) => ({ path }))
+        : [{ path: roomDir(room) }],
       metrics: { loc: room.loc },
       display: { flowLayer: layers.get(room.id) ?? 0 },
     });
     for (const f of room.files) fileNodeOwner.set(f, room.id);
     promotedNodes.push({ id: room.id, files: room.files });
+    if (leafAsBuilding) pushFileRooms(room.id, room.files);
     if (expandable) {
       for (const child of children) {
         nodes.push({
@@ -951,7 +1041,7 @@ for (const pkg of packages) {
           kind: "module", archetype: "room",
           parentId: room.id,
           description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"}.`,
-          sourceRefs: [{ path: child.files[0] }],
+          sourceRefs: childSourceRefs(room, child),
         });
       }
     }
@@ -986,56 +1076,64 @@ if (collectorTarget) {
   }
 }
 
-// 7c-iii. Shared-library nodes: eliminated utility modules reappear once per
-// package as a single library structure, with aggregated depends_on edges
-// from every campus node that imports them.
+// 7c-iii. Shared libraries: each district keeps its own copy. This is the
+// deployment truth (every service image bakes in the shared modules it
+// imports) and keeps the edges short. Importers without a district share one
+// floating copy in the implicit System neighbourhood.
+const scopeIdSet = new Set(nodes.filter((n) => n.kind === "scope").map((n) => n.id));
+const districtOfNode = new Map(nodes
+  .filter((n) => n.parentId && scopeIdSet.has(n.parentId))
+  .map((n) => [n.id, n.parentId]));
 const packagesWithEliminations = [...new Set(
   eliminatedRooms.map((r) => rooms.get(r.id).pkg))];
 for (const pkg of packagesWithEliminations) {
   const pkgEliminated = eliminatedRooms.filter((r) => rooms.get(r.id).pkg === pkg);
-  // Parent the shared-library structure to the package's own district when it
-  // has one (a self-contained tool keeps its lib inside its district); only
-  // float it district-less, in the implicit "System" neighbourhood, when the
-  // package's district does not exist (e.g. flattened into hosts).
-  const sharedId = `${pkg.id}-shared-libraries`;
-  const homeDistrict = nodes.some((n) => n.id === `${pkg.id}-area`) ? `${pkg.id}-area` : undefined;
   const totalLoc = pkgEliminated.reduce((sum, r) => sum + rooms.get(r.id).loc, 0);
-  const asBuilding = pkgEliminated.length >= 2;
-  nodes.push({
-    id: sharedId, label: "Shared libraries", kind: "module",
-    archetype: asBuilding ? "building" : "storage",
-    ...(homeDistrict ? { parentId: homeDistrict } : {}),
-    description: `Utility modules with high fan-in and low fan-out, folded into one structure: ${pkgEliminated.map((r) => r.segment).join(", ")}.`,
-    sourceRefs: [{ path: rooms.get(pkgEliminated[0].id).files[0] }],
-    metrics: { loc: totalLoc },
-    display: { flowLayer: 3 },
-  });
-  if (asBuilding) {
-    for (const r of pkgEliminated) {
-      const room = rooms.get(r.id);
-      nodes.push({
-        id: `${sharedId}-${kebab(r.segment)}`,
-        label: titleCase(r.segment.split(sep).join(" / ")),
-        kind: "module", archetype: "room", parentId: sharedId,
-        description: `Fan-in ${r.in}, fan-out ${r.out}, instability ${r.instability.toFixed(2)}.`,
-        sourceRefs: [{ path: room.files[0] }],
-        metrics: { loc: room.loc },
-      });
-    }
-  }
-  // Aggregated import edges into the shared node.
-  const importCounts = new Map();
+  const modules = pkgEliminated.map((r) => r.segment).join(", ");
+  // Importer counts, grouped by the importer's district.
+  const importsByDistrict = new Map(); // districtId|"" -> Map(owner -> count)
   for (const { from, to } of fileEdges) {
     const targetRoom = fileToRoom.get(to);
     if (!targetRoom || targetRoom.pkg !== pkg || !eliminatedRoomIds.has(targetRoom.id)) continue;
     const owner = fileNodeOwner.get(from);
-    if (!owner || owner === sharedId) continue;
-    importCounts.set(owner, (importCounts.get(owner) ?? 0) + 1);
+    if (!owner || !nodes.some((n) => n.id === owner)) continue;
+    const district = districtOfNode.get(owner) ?? "";
+    if (!importsByDistrict.has(district)) importsByDistrict.set(district, new Map());
+    const counts = importsByDistrict.get(district);
+    counts.set(owner, (counts.get(owner) ?? 0) + 1);
   }
-  for (const [owner, count] of importCounts) {
-    addEdge({ id: `${owner}--${sharedId}`, from: owner, to: sharedId,
-      kind: "depends_on", evidence: "declared",
-      label: `${count} import${count === 1 ? "" : "s"}` });
+  for (const [district, counts] of importsByDistrict) {
+    const copyId = kebab(`${district || pkg.id}-shared-libraries`);
+    const copyAsBuilding = modulesAsBuildings && pkgEliminated.length >= 2;
+    if (!nodes.some((n) => n.id === copyId)) {
+      nodes.push({
+        id: copyId, label: "Shared libraries", kind: "module",
+        archetype: copyAsBuilding ? "building" : "storage",
+        ...(district ? { parentId: district } : {}),
+        description: `This district's copy of the shared utility modules (high fan-in, low fan-out): ${modules}.`,
+        sourceRefs: pkgEliminated.map((r) => ({ path: roomDir(rooms.get(r.id)) })),
+        metrics: { loc: totalLoc },
+        display: { flowLayer: 3 },
+      });
+      if (copyAsBuilding) {
+        for (const r of pkgEliminated) {
+          const moduleRoom = rooms.get(r.id);
+          nodes.push({
+            id: kebab(`${copyId}-${r.segment}`),
+            label: titleCase(r.segment.split(sep).join(" / ")),
+            kind: "module", archetype: "room", parentId: copyId,
+            description: `Fan-in ${r.in}, fan-out ${r.out}, instability ${r.instability.toFixed(2)}.`,
+            sourceRefs: [{ path: roomDir(moduleRoom) }],
+          });
+        }
+      }
+    }
+    for (const [owner, count] of counts) {
+      if (owner === copyId) continue;
+      addEdge({ id: `${owner}--${copyId}`, from: owner, to: copyId,
+        kind: "depends_on", evidence: "declared",
+        label: `${count} import${count === 1 ? "" : "s"}` });
+    }
   }
 }
 
@@ -1133,6 +1231,111 @@ const dot = [
   "}",
 ].join("\n");
 
+// Mermaid views of the result, for following the mapping rules by eye.
+function mermaidId(id) {
+  return id.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+function mermaidLabel(text) {
+  return text.replace(/"/g, "'");
+}
+const isCampus = (n) => n.kind !== "scope" && (!n.parentId || nodes.some((s) => s.id === n.parentId && s.kind === "scope"));
+const campusIds = new Set(nodes.filter(isCampus).map((n) => n.id));
+const nodePath = (n) => {
+  const paths = (n.sourceRefs ?? []).map((ref) => ref.path).filter(Boolean);
+  return paths.length ? paths.slice(0, 2).join(", ") + (paths.length > 2 ? ", …" : "") : undefined;
+};
+const campusNodeLine = (n, indent, extra = "") => {
+  const path = nodePath(n);
+  return `${indent}${mermaidId(n.id)}["${mermaidLabel(n.label)}<br/><i>${n.archetype}${extra}</i>${path ? `<br/>${mermaidLabel(path)}` : ""}"]`;
+};
+// A building with rooms renders as a nested subgraph so interiors are visible.
+const campusNodeLines = (n, indent, extra = "") => {
+  const roomsOf = nodes.filter((r) => r.parentId === n.id);
+  if (!roomsOf.length) return [campusNodeLine(n, indent, extra)];
+  const path = nodePath(n);
+  return [
+    `${indent}subgraph ${mermaidId(n.id)}["${mermaidLabel(n.label)} <i>(${n.archetype}${extra})</i>${path ? `<br/>${mermaidLabel(path)}` : ""}"]`,
+    ...roomsOf.map((r) => campusNodeLine(r, `${indent}  `)),
+    `${indent}end`,
+  ];
+};
+const renderedIds = new Set(nodes.filter((n) => n.kind !== "scope").map((n) => n.id));
+const mapMermaid = [
+  "```mermaid",
+  "flowchart TB",
+  ...nodes.filter((n) => n.kind === "scope").flatMap((scope) => [
+    `  subgraph ${mermaidId(scope.id)}["${mermaidLabel(scope.label)}"]`,
+    ...nodes.filter((n) => n.parentId === scope.id).flatMap((n) => campusNodeLines(n, "    ")),
+    "  end",
+  ]),
+  ...nodes.filter((n) => isCampus(n) && !n.parentId).flatMap((n) => campusNodeLines(n, "  ", ", no district")),
+  ...finalEdges.filter((e) => renderedIds.has(e.from) && renderedIds.has(e.to))
+    .map((e) => {
+      const label = mermaidLabel(e.label ?? e.kind);
+      const arrow = e.kind === "data_flow" ? `-. "${label}" .->` : e.kind === "deploys" ? `== "${label}" ==>` : `-- "${label}" -->`;
+      return `  ${mermaidId(e.from)} ${arrow} ${mermaidId(e.to)}`;
+    }),
+  "```",
+].join("\n");
+
+// Breakdown of the eliminated shared utility dirs: the modules inside each
+// (subdirs and standalone files), with per-module coupling and the import
+// edges among them.
+let sharedBreakdown = null;
+if (eliminatedRooms.length) {
+  const memberFiles = new Set(eliminatedRooms.flatMap((r) => rooms.get(r.id).files));
+  const fileLine = (room, file) => {
+    const local = relative(roomDir(room), file).replace(/\.[a-z]+$/, "");
+    const c = fileCoupling.get(file);
+    return `    ${mermaidId(file)}["${mermaidLabel(local)}<br/><i>in=${c?.in ?? 0} out=${c?.out ?? 0}</i>"]`;
+  };
+  const interiorEdges = fileEdges.filter(({ from, to }) => memberFiles.has(from) && memberFiles.has(to));
+  sharedBreakdown = [
+    "# Shared utility modules: interior breakdown",
+    "",
+    "Every file in the eliminated shared dirs is a module here; in/out counts",
+    "are repository-wide file coupling. Edges are imports within/between the",
+    "shared dirs.",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    ...eliminatedRooms.flatMap((r) => {
+      const room = rooms.get(r.id);
+      return [
+        `  subgraph ${mermaidId(r.id)}["${mermaidLabel(roomDir(room))}/"]`,
+        ...room.files.map((file) => fileLine(room, file)),
+        "  end",
+      ];
+    }),
+    ...interiorEdges.map(({ from, to }) => `  ${mermaidId(from)} --> ${mermaidId(to)}`),
+    "```",
+  ].join("\n");
+}
+
+const roomsMermaid = [
+  "```mermaid",
+  "flowchart LR",
+  ...packages.flatMap((pkg) => {
+    const pkgRoomList = [...rooms.values()].filter((r) => r.pkg === pkg && r.files.length);
+    if (!pkgRoomList.length) return [];
+    const pkgPath = pkg.dir === "." ? "(repository root)" : `${pkg.dir}/`;
+    return [
+      `  subgraph ${mermaidId(pkg.id)}["${mermaidLabel(pkg.name)}<br/>${mermaidLabel(pkgPath)}"]`,
+      ...pkgRoomList.map((r) => {
+        const c = roomCoupling.get(r.id);
+        const coupled = c ? ` in=${c.in} out=${c.out}` : "";
+        const roomPath = r.segment === "(root)"
+          ? pkgPath
+          : `${pkg.dir === "." ? "" : pkg.dir + "/"}${r.segment}/`;
+        return `    ${mermaidId(r.id)}["${mermaidLabel(roomPath)}<br/><i>${r.files.length} files${coupled}</i>"]`;
+      }),
+      "  end",
+    ];
+  }),
+  ...roomEdgeList.map((e) => `  ${mermaidId(e.from)} -- "${e.imports}" --> ${mermaidId(e.to)}`),
+  "```",
+].join("\n");
+
 const coupling = {
   thresholds: { utilityMinFanIn: UTILITY_MIN_FAN_IN, utilityMaxInstability: UTILITY_MAX_INSTABILITY },
   eliminatedRooms,
@@ -1151,8 +1354,11 @@ await Promise.all([
   writeFile(join(outDir, "deps-files.json"), `${JSON.stringify(fileEdges, null, 2)}\n`),
   writeFile(join(outDir, "deps-rooms.json"), `${JSON.stringify(roomEdgeList, null, 2)}\n`),
   writeFile(join(outDir, "deps-rooms.dot"), `${dot}\n`),
+  writeFile(join(outDir, "map.md"), `# ${map.name}: generated map\n\n${mapMermaid}\n`),
+  ...(sharedBreakdown ? [writeFile(join(outDir, "shared-libraries.md"), `${sharedBreakdown}\n`)] : []),
+  writeFile(join(outDir, "deps-rooms.md"), `# ${map.name}: room-level import graph\n\n${roomsMermaid}\n`),
   writeFile(join(outDir, "coupling.json"), `${JSON.stringify(coupling, null, 2)}\n`),
 ]);
 
-console.log(`Wrote ${outDir}/{map,deploy-shape,deps-files,deps-rooms,coupling}.json + deps-rooms.dot`);
+console.log(`Wrote ${outDir}/{map,deploy-shape,deps-files,deps-rooms,coupling}.json + deps-rooms.dot + {map,deps-rooms}.md`);
 console.log(`nodes=${nodes.length} edges=${edges.length} hosts=${hosts.length} scheduled=${schedules.size} eliminated=${eliminatedRooms.length}`);

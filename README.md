@@ -5,6 +5,12 @@ Prototype answering one question: **how useful is a fully deterministic
 
 Throwaway code. No tests, minimal error handling, mechanical naming by design.
 
+## Inspiration
+
+- <https://x.com/fleetingbits/status/2088016749849682120>
+- <https://functionary.dev/>
+- <https://brcforecast.corbett.vc/system>
+
 ## Layout
 
 - `HEURISTICS.md` — the catalogue of every rule the generator applies, with

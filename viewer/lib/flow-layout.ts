@@ -142,34 +142,89 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       .map((layer) => neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length), 1);
     return Math.max(4.6, Math.min(2, largestCell) * nodeStepX + 1.8);
   });
-  const totalWidth = neighborhoodWidths.reduce((total, width) => total + width, 0) + neighborhoodGap * Math.max(0, neighborhoodWidths.length - 1);
-  const positions = new Map<string, [number, number]>();
-  let neighborhoodCursor = -totalWidth / 2;
-  neighborhoodEntries.forEach(([, neighborhoodNodes], neighborhoodIndex) => {
-    const neighborhoodWidth = neighborhoodWidths[neighborhoodIndex];
-    const centerX = neighborhoodCursor + neighborhoodWidth / 2;
-    const localLayers = new Map<number, CityNode[]>();
-    neighborhoodNodes.forEach((node) => {
-      const layer = layers.get(node.id)!;
-      localLayers.set(layer, [...(localLayers.get(layer) ?? []), node]);
-    });
-    for (const [layer, layerNodes] of localLayers) {
-      layerNodes.sort((a, b) =>
-        (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) || a.label.localeCompare(b.label),
-      );
-      const columnCount = Math.min(2, layerNodes.length);
-      const rowCount = Math.ceil(layerNodes.length / columnCount);
-      layerNodes.forEach((node, index) => {
-        const row = Math.floor(index / columnCount);
-        const column = index % columnCount;
-        const nodesInRow = Math.min(columnCount, layerNodes.length - row * columnCount);
-        const x = centerX + (column - (nodesInRow - 1) / 2) * nodeStepX;
-        const z = (maxLayer / 2 - layer) * layerStepZ + (row - (rowCount - 1) / 2) * nodeStepZ;
-        positions.set(node.id, [x, z]);
-      });
-    }
-    neighborhoodCursor += neighborhoodWidth + neighborhoodGap;
+
+  // Local change: district-level flow layering. Districts themselves are
+  // layered by their cross-district edges (producers in front, consumers
+  // behind) and laid out in rows instead of one long ribbon. Groups with no
+  // cross-district edges at all go to the back row.
+  const neighborhoodOf = new Map<string, string>();
+  nodes.forEach((node) => neighborhoodOf.set(node.id, neighborhoodFor(node)));
+  const quotientEdges = new Set<string>();
+  relevantEdges.forEach((edge) => {
+    const from = neighborhoodOf.get(edge.from);
+    const to = neighborhoodOf.get(edge.to);
+    if (from && to && from !== to) quotientEdges.add(`${from}=>${to}`);
   });
+  const groupIds = neighborhoodEntries.map(([id]) => id);
+  const hasQuotientEdge = new Set([...quotientEdges].flatMap((key) => key.split("=>")));
+  const incomingCount = new Map(groupIds.map((id) => [id, 0]));
+  quotientEdges.forEach((key) => {
+    const to = key.split("=>")[1];
+    incomingCount.set(to, (incomingCount.get(to) ?? 0) + 1);
+  });
+  const districtLayer = new Map<string, number>();
+  groupIds.forEach((id) => {
+    if (hasQuotientEdge.has(id) && (incomingCount.get(id) ?? 0) === 0) districtLayer.set(id, 0);
+  });
+  for (let pass = 0; pass <= groupIds.length; pass += 1) {
+    let changed = false;
+    quotientEdges.forEach((key) => {
+      const [from, to] = key.split("=>");
+      if (!districtLayer.has(from)) return;
+      const proposed = districtLayer.get(from)! + 1;
+      if ((districtLayer.get(to) ?? -1) < proposed && proposed <= groupIds.length) {
+        districtLayer.set(to, proposed);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  const connectedMax = Math.max(0, ...districtLayer.values());
+  groupIds.forEach((id) => {
+    if (!districtLayer.has(id)) districtLayer.set(id, hasQuotientEdge.has(id) ? 0 : connectedMax + (connectedMax > 0 ? 1 : 0));
+  });
+  const maxDistrictLayer = Math.max(...districtLayer.values(), 0);
+
+  const rowPitch = (maxLayer + 1) * layerStepZ + 4.5;
+  const rowMembers = new Map<number, number[]>();
+  neighborhoodEntries.forEach((entry, index) => {
+    const rowLayer = districtLayer.get(entry[0]) ?? maxDistrictLayer;
+    rowMembers.set(rowLayer, [...(rowMembers.get(rowLayer) ?? []), index]);
+  });
+
+  const positions = new Map<string, [number, number]>();
+  for (const [rowLayer, entryIndexes] of rowMembers) {
+    const rowWidth = entryIndexes.reduce((total, index) => total + neighborhoodWidths[index], 0)
+      + neighborhoodGap * Math.max(0, entryIndexes.length - 1);
+    const rowZ = (maxDistrictLayer / 2 - rowLayer) * rowPitch;
+    let neighborhoodCursor = -rowWidth / 2;
+    for (const neighborhoodIndex of entryIndexes) {
+      const [, neighborhoodNodes] = neighborhoodEntries[neighborhoodIndex];
+      const neighborhoodWidth = neighborhoodWidths[neighborhoodIndex];
+      const centerX = neighborhoodCursor + neighborhoodWidth / 2;
+      const localLayers = new Map<number, CityNode[]>();
+      neighborhoodNodes.forEach((node) => {
+        const layer = layers.get(node.id)!;
+        localLayers.set(layer, [...(localLayers.get(layer) ?? []), node]);
+      });
+      for (const [layer, layerNodes] of localLayers) {
+        layerNodes.sort((a, b) =>
+          (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) || a.label.localeCompare(b.label),
+        );
+        const columnCount = Math.min(2, layerNodes.length);
+        const rowCount = Math.ceil(layerNodes.length / columnCount);
+        layerNodes.forEach((node, index) => {
+          const row = Math.floor(index / columnCount);
+          const column = index % columnCount;
+          const nodesInRow = Math.min(columnCount, layerNodes.length - row * columnCount);
+          const x = centerX + (column - (nodesInRow - 1) / 2) * nodeStepX;
+          const z = rowZ + (maxLayer / 2 - layer) * layerStepZ + (row - (rowCount - 1) / 2) * nodeStepZ;
+          positions.set(node.id, [x, z]);
+        });
+      }
+      neighborhoodCursor += neighborhoodWidth + neighborhoodGap;
+    }
+  }
 
   const neighborhoods = neighborhoodEntries.map(([id, neighborhoodNodes]) => {
     const neighborhoodExtents = neighborhoodNodes.map((node) => {

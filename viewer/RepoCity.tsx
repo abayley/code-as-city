@@ -122,6 +122,9 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
   const colors = ["#c8dfe2", "#cddbcf", "#d7d2e5", "#e2cfd7", "#c9d7e6"];
 
   return layout.neighborhoods.map((neighborhood, index) => {
+    // Local change: implicit groups (satellites of a district, the System
+    // fallback) are placement-only — no plot, no label; their nodes float.
+    if (neighborhood.id.startsWith("__")) return null;
     const { minX, maxX, minZ, maxZ } = neighborhood.bounds;
     const width = maxX - minX;
     const depth = maxZ - minZ;
