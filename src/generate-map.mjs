@@ -18,7 +18,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 const IGNORED_DIRS = new Set([
   "node_modules", ".git", ".next", "dist", "build", "coverage", ".wrangler",
   ".turbo", "out", "vendor", ".venv", "__pycache__", ".functionary", ".repo-city",
-  "generated", "docs",
+  "generated", "docs", "examples",
 ]);
 // Codebase/dev utilities are detected by reachability, not by name: code
 // reachable only from package.json scripts and imported by nothing that
@@ -770,16 +770,24 @@ if (overview) {
   const districts = multiPkg
     ? pkgsWithRooms.map((pkg) => ({
         id: kebab(`${pkg.id}-district`), label: titleCase(pkg.name), path: pkg.dir,
-        modules: activeRooms.filter((r) => r.pkg === pkg).flatMap((room) =>
-          activeRooms.filter((x) => x.pkg === pkg).length > 4
-            ? [{ id: room.id, label: roomLabel(room), files: room.files, path: roomDir(room),
-                support: externalFanIn(room.files) > 0 }]
-            : modulesForRoom(room)),
+        modules: activeRooms.filter((r) => r.pkg === pkg).flatMap((room) => modulesForRoom(room)),
       }))
     : activeRooms.map((room) => ({
         id: kebab(`${room.id}-district`), label: roomLabel(room), path: roomDir(room),
         modules: modulesForRoom(room),
       }));
+
+  // Kebab-casing can flatten distinct paths onto one id (src/local/config vs
+  // src-local/config); suffix later collisions rather than emit invalid maps.
+  const usedModuleIds = new Set();
+  for (const district of districts) {
+    for (const m of district.modules) {
+      let candidate = m.id;
+      for (let n = 2; usedModuleIds.has(candidate); n += 1) candidate = `${m.id}-${n}`;
+      m.id = candidate;
+      usedModuleIds.add(candidate);
+    }
+  }
 
   const overviewNodes = [];
   const allModules = []; // { id, files } for flow-edge classification
@@ -811,8 +819,12 @@ if (overview) {
     for (const m of district.modules) {
       const moduleHostTags = [...filesHosts(m.files)].map((name) => `host:${name}`);
       const loc = linesOf(m.files);
-      const complexity = complexityOf(m.files);
-      const height = Math.max(0.6, 0.55 + loc / 320);
+      // Summed complexity is meaningless across files; a multi-file module
+      // reports the worst contained file instead.
+      const complexity = m.files.length > 1
+        ? Math.max(...m.files.map((f) => fileComplexity(f)))
+        : complexityOf(m.files);
+      const height = Math.max(0.6, 0.55 + Math.min(loc, 1500) / 320);
       const footprint = Math.min(3.4, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 7));
       const scale = m.support ? 0.72 : 1;
       const asBuilding = m.files.length >= 2 && !m.collapsed;
@@ -820,7 +832,7 @@ if (overview) {
         id: m.id, label: m.label, kind: "module",
         archetype: asBuilding ? "building" : "worker",
         parentId: district.id,
-        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, complexity ~${complexity}.`,
+        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, ${m.files.length > 1 ? `max file complexity ~${complexity}` : `complexity ~${complexity}`}.`,
         sourceRefs: [{ path: m.path }],
         metrics: { loc, complexity, files: m.files.length },
         tags: [m.support ? "support" : "composer", ...moduleHostTags],
@@ -836,7 +848,7 @@ if (overview) {
         for (const file of m.files) {
           const fileLoc = linesOf([file]);
           overviewNodes.push({
-            id: kebab(`${m.id}-${fileModuleName(file)}`), label: titleCase(fileModuleName(file)),
+            id: kebab(`${m.id}-${relative(m.path, file).replace(/\.[a-z]+$/, "")}`), label: titleCase(fileModuleName(file)),
             kind: "module", archetype: "room", parentId: m.id,
             description: `Source file ${file}: ${fileLoc} lines, complexity ${fileComplexity(file)}.`,
             sourceRefs: [{ path: file }],
@@ -920,6 +932,31 @@ if (overview) {
   }
   if (edgeHost) infraMembers.push({ id: "infra-cloudflare-worker", label: "Cloudflare Worker", archetype: "worker", kind: "infra", description: `Declared in ${edgeHost.file}.`, path: edgeHost.file });
   if (drizzleConfig) infraMembers.push({ id: "infra-drizzle-database", label: "Database", archetype: "database", kind: "infra", description: `Declared in ${drizzleConfig}.`, path: drizzleConfig });
+  // Embedded databases declared as package dependencies (LanceDB, SQLite,
+  // DuckDB, Chroma) become database nodes even with no compose or ORM config.
+  const EMBEDDED_DB_DEPS = [
+    [/^@lancedb\//, "LanceDB vector database"],
+    [/^chromadb$/, "Chroma vector database"],
+    [/^(better-sqlite3|sqlite3)$/, "SQLite database"],
+    [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
+  ];
+  const embeddedDbMembers = [];
+  for (const pkg of packages) {
+    for (const dep of Object.keys(pkg.deps ?? {})) {
+      const match = EMBEDDED_DB_DEPS.find(([pattern]) => pattern.test(dep));
+      if (!match) continue;
+      const pkgManifest = pkg.dir === "." ? "package.json" : `${pkg.dir}/package.json`;
+      // One node per dependency repo-wide: several manifests declaring the
+      // same embedded database share one store (id dedupe collapses them).
+      const member = {
+        id: kebab(`infra-${dep}`), label: match[1], archetype: "database", kind: "infra",
+        description: `Embedded database (${dep}) declared in ${pkgManifest}.`,
+        path: pkgManifest, depName: dep,
+      };
+      infraMembers.push(member);
+      embeddedDbMembers.push(member);
+    }
+  }
   const seenInfra = new Set();
   const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
   const infraDistricts = new Map();
@@ -972,6 +1009,18 @@ if (overview) {
       if (texts.some((t) => DB_READ_PATTERN.test(t))) {
         addOverviewEdge({ id: `${databaseTarget.id}--${m.id}-r`, from: databaseTarget.id, to: m.id,
           kind: "data_flow", evidence: "inferred", confidence: 0.75, label: "reads" });
+      }
+    }
+  }
+  // Modules importing an embedded database's SDK read/write that database.
+  for (const db of embeddedDbMembers) {
+    const escaped = db.depName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const importPattern = new RegExp(`(from\\s+|require\\()["']${escaped}`);
+    for (const m of allModules) {
+      if (m.files.some((f) => importPattern.test(readText(join(repo, f))))) {
+        addOverviewEdge({ id: `${m.id}--${db.id}-u`, from: m.id, to: db.id,
+          kind: "data_flow", evidence: "inferred", confidence: 0.7, label: "reads/writes",
+          sourceRefs: [{ path: db.path }] });
       }
     }
   }

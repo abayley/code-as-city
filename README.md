@@ -27,9 +27,21 @@ Throwaway code. No tests, minimal error handling, mechanical naming by design.
 ```bash
 node src/generate-map.mjs ~/git/functionary.dev
 node src/generate-map.mjs ~/git/aria-evals
+node src/generate-map.mjs ~/git/aria-evals --overview --out-dir out/aria-evals-overview
 node vendor/functionary/validate-city-map.mjs out/aria-evals/map.json
 bun run dev   # local viewer at http://localhost:5173
 ```
+
+## Two modes
+
+- **Deployment map** (default): districts are deployment hosts and packages;
+  dev tooling and orphans are stripped. Rules I/S/D/C/R/M.
+- **Module overview** (`--overview`): every file is a module, districts are
+  directories or packages, bands run front to back, only data-flow edges are
+  drawn. Rules I/S plus the O group (see HEURISTICS.md, which explains what
+  each mode shares and skips).
+
+The viewer's "Map a folder" dialog offers the same choice as a checkbox.
 
 ## Viewer
 

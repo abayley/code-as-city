@@ -26,7 +26,7 @@ const EVIDENCE_COLORS: Record<EvidenceKind, string> = {
   inferred: "#a56f46",
 };
 
-function CameraRig({ viewKey, bounds }: { viewKey: string; bounds: FlowLayout["bounds"] }) {
+function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: FlowLayout["bounds"]; overhead: boolean }) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as {
     target?: THREE.Vector3;
@@ -52,18 +52,31 @@ function CameraRig({ viewKey, bounds }: { viewKey: string; bounds: FlowLayout["b
     return () => controls?.removeEventListener?.("start", releaseCamera);
   }, [controls]);
 
+  const previousOverhead = useRef(overhead);
   useEffect(() => {
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
     const spanX = Math.max(4, bounds.maxX - bounds.minX);
     const spanZ = Math.max(4, bounds.maxZ - bounds.minZ);
-    targetPosition.current.set(centerX + 11, 14, centerZ + 15);
+    // Distance must exceed the layout's bounding radius or the orthographic
+    // near plane clips the front of a large map.
+    const boundingRadius = Math.hypot(spanX, spanZ) / 2;
+    const distance = Math.max(23.5, boundingRadius * 1.4 + 12);
+    // Overhead looks straight down; the tilt is purely along +Z so the
+    // derived screen-up is exactly -Z and floor nameplates read horizontal.
+    const direction = (overhead ? new THREE.Vector3(0, 1, 0.002) : new THREE.Vector3(11, 14, 15)).normalize();
+    targetPosition.current.set(centerX + direction.x * distance, direction.y * distance, centerZ + direction.z * distance);
     targetLookAt.current.set(centerX, 0.35, centerZ);
+    const overheadToggled = previousOverhead.current !== overhead;
+    previousOverhead.current = overhead;
     if (camera instanceof THREE.OrthographicCamera) {
-      targetZoom.current = Math.max(12, Math.min(78, Math.min(viewportSize.width / (spanX + 6), viewportSize.height / (spanZ + 7)) * 0.92));
+      // A view flip keeps the user's current zoom; only a new view/bounds refits.
+      targetZoom.current = overheadToggled
+        ? camera.zoom
+        : Math.max(4, Math.min(78, Math.min(viewportSize.width / (spanX + 6), viewportSize.height / (spanZ + 7)) * 0.92));
     }
     fitting.current = true;
-  }, [bounds, camera, viewKey, viewportSize.height, viewportSize.width]);
+  }, [bounds, camera, overhead, viewKey, viewportSize.height, viewportSize.width]);
 
   // React Three Fiber scene objects are intentionally updated inside the render loop.
   // eslint-disable-next-line react-hooks/immutability
@@ -83,7 +96,20 @@ function CameraRig({ viewKey, bounds }: { viewKey: string; bounds: FlowLayout["b
     const positionSettled = camera.position.distanceToSquared(targetPosition.current) < 0.0001;
     const targetSettled = currentTarget.current.distanceToSquared(targetLookAt.current) < 0.0001;
     const zoomSettled = !(camera instanceof THREE.OrthographicCamera) || Math.abs(camera.zoom - targetZoom.current) < 0.01;
-    if (positionSettled && targetSettled && zoomSettled) fitting.current = false;
+    if (positionSettled && targetSettled && zoomSettled) {
+      // Snap exactly: near-vertical views roll visibly from even a tiny
+      // residual horizontal offset, so finish the move rather than abandon it.
+      camera.position.copy(targetPosition.current);
+      currentTarget.current.copy(targetLookAt.current);
+      camera.lookAt(currentTarget.current);
+      if (controls?.target) controls.target.copy(currentTarget.current);
+      controls?.update?.();
+      if (camera instanceof THREE.OrthographicCamera) {
+        camera.zoom = targetZoom.current;
+        camera.updateProjectionMatrix();
+      }
+      fitting.current = false;
+    }
   });
 
   return null;
@@ -403,19 +429,22 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
   const labelLength = node.label.length + (hasInterior ? 3 : 0);
   const landmark = hasInterior && !interior;
   const quieter = node.kind === "external" && !interior;
-  const plaqueWidth = interior
+  // Local change: campus nameplates shrink to a fraction of upstream size so
+  // buildings can pack tightly; they stay on the floor in front of the building.
+  const labelScale = interior ? 1 : 0.4;
+  const plaqueWidth = (interior
     ? Math.max(1.5, Math.min(2.4, 1.08 + labelLength * 0.045))
     : landmark
       ? Math.max(3.15, Math.min(4.7, 2.1 + labelLength * 0.065))
       : quieter
         ? Math.max(2.35, Math.min(3.65, 1.75 + labelLength * 0.05))
-        : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058));
-  const plaqueHeight = interior ? 0.58 : landmark ? 1.02 : quieter ? 0.76 : 0.88;
-  const codeFontSize = interior ? 0.13 : landmark ? 0.2 : quieter ? 0.145 : 0.17;
-  const labelFontSize = interior ? 0.17 : landmark ? 0.29 : quieter ? 0.205 : 0.24;
+        : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058))) * labelScale;
+  const plaqueHeight = (interior ? 0.58 : landmark ? 1.02 : quieter ? 0.76 : 0.88) * labelScale;
+  const codeFontSize = (interior ? 0.13 : landmark ? 0.2 : quieter ? 0.145 : 0.17) * labelScale;
+  const labelFontSize = (interior ? 0.17 : landmark ? 0.29 : quieter ? 0.205 : 0.24) * labelScale;
   const plaqueColor = node.kind === "external" ? "#f0e5e5" : node.kind === "infra" ? "#ebe5ee" : "#e5efee";
   const markerY = 0.055;
-  const plaqueZ = position[1] + footprintDepth / 2 + plaqueHeight / 2 + (interior ? 0.12 : 0.18);
+  const plaqueZ = position[1] + footprintDepth / 2 + plaqueHeight / 2 + (interior ? 0.12 : 0.06);
   const plaqueNearEdgeZ = plaqueZ - plaqueHeight / 2;
   const footprint: [number, number, number][] = [
     [position[0] - footprintWidth / 2, markerY, position[1] - footprintDepth / 2],
@@ -435,15 +464,13 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
   const active = selected || expanded || exploring;
   const markerCode = interior ? `R${index + 1}` : String(index + 1).padStart(2, "0");
   const labelText = `${node.label}${canEnter ? `  ${expanded || exploring ? "×" : "↘"}` : ""}`;
-  const codeColumnWidth = interior ? 0.28 : 0.34;
+  const codeColumnWidth = (interior ? 0.28 : 0.34) * labelScale;
   const dividerX = -plaqueWidth / 2 + codeColumnWidth;
 
   return (
     <group
-      onClick={(event) => {
-        event.stopPropagation();
-        if (canEnter) onEnter(); else onSelect();
-      }}
+      onClick={(event) => { event.stopPropagation(); onSelect(); }}
+      onDoubleClick={(event) => { event.stopPropagation(); if (canEnter) onEnter(); }}
       onPointerEnter={() => { document.body.style.cursor = "pointer"; }}
       onPointerLeave={() => { document.body.style.cursor = "default"; }}
     >
@@ -460,7 +487,7 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
         </mesh>
         <Line points={plaqueOutline} color={SCENE_INK} lineWidth={active ? 1.4 : 0.85} transparent opacity={dimmed ? 0.18 : 0.9} />
         <Line
-          points={[[dividerX, -plaqueHeight / 2 + 0.07, 0.01], [dividerX, plaqueHeight / 2 - 0.07, 0.01]]}
+          points={[[dividerX, -plaqueHeight / 2 + 0.07 * labelScale, 0.01], [dividerX, plaqueHeight / 2 - 0.07 * labelScale, 0.01]]}
           color={active ? SCENE_PANEL : SCENE_INK}
           lineWidth={0.65}
           transparent
@@ -477,10 +504,10 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
           {markerCode}
         </Text>
         <Text
-          position={[dividerX + 0.1, 0, 0.014]}
+          position={[dividerX + 0.1 * labelScale, 0, 0.014]}
           color={active ? SCENE_PANEL : SCENE_INK}
           fontSize={labelFontSize}
-          maxWidth={plaqueWidth - codeColumnWidth - 0.2}
+          maxWidth={plaqueWidth - codeColumnWidth - 0.2 * labelScale}
           lineHeight={1.04}
           textAlign="left"
           anchorX="left"
@@ -516,7 +543,7 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
   </group>;
 }
 
-function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, onHover, viewKey }: {
+function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, onHover, viewKey, overheadView }: {
   nodes: CityNode[];
   allNodes: CityNode[];
   edges: CityEdge[];
@@ -531,6 +558,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   onEnter: (id: string) => void;
   onHover: (node: CityNode | null, x: number, y: number) => void;
   viewKey: string;
+  overheadView: boolean;
 }) {
   const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
   const interiorModel = useMemo(() => {
@@ -606,6 +634,13 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
     };
   }, [focusModel, interiorModel, layout, neighborhoodId]);
 
+  // Grid sized to the layout so large maps do not spill off its edge.
+  const gridSize = Math.ceil(Math.max(
+    80,
+    (layout.bounds.maxX - layout.bounds.minX) * 1.2,
+    (layout.bounds.maxZ - layout.bounds.minZ) * 1.2,
+  ) / 10) * 10;
+
   return (
     <Canvas
       orthographic
@@ -616,11 +651,14 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
       shadows
       dpr={[1, 1.7]}
     >
-      <CameraRig viewKey={viewKey} bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? neighborhoodModel?.bounds ?? layout.bounds} />
+      <CameraRig viewKey={viewKey} bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? neighborhoodModel?.bounds ?? layout.bounds} overhead={overheadView} />
       <color attach="background" args={[SCENE_PAPER]} />
       <ambientLight intensity={1.6} />
       <directionalLight position={[-6, 12, 7]} intensity={2.25} castShadow shadow-mapSize={[1024, 1024]} />
-      <gridHelper args={[80, 80, "#91a7ab", "#c1d0d2"]} position={[0, -0.035, 0]} />
+      <gridHelper
+        args={[gridSize, gridSize, "#91a7ab", "#c1d0d2"]}
+        position={[(layout.bounds.minX + layout.bounds.maxX) / 2, -0.035, (layout.bounds.minZ + layout.bounds.maxZ) / 2]}
+      />
       <NeighborhoodPlots layout={layout} selectedId={selectedId} activeNeighborhoodId={neighborhoodId} hideLabels={!!interiorModel} />
       <FlowBands layout={layout} />
       <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} />
@@ -666,6 +704,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
   const [neighborhoodId, setNeighborhoodId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
+  const [overheadView, setOverheadView] = useState(false);
   const handleHover = useCallback((node: CityNode | null, x: number, y: number) => {
     setHoverCard(node ? { node, x, y } : null);
   }, []);
@@ -854,7 +893,10 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       </aside>
 
       <section className="viewport" aria-label="Interactive repository city">
-        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
+        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} overheadView={overheadView} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
+        <div className="viewport-viewmode">
+          <button type="button" onClick={() => setOverheadView((value) => !value)}>{overheadView ? "Isometric" : "Overhead"}</button>
+        </div>
         {hoverCard && (() => {
           const roomCount = map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length;
           // A many-room building's aggregate complexity is meaningless; its
@@ -883,7 +925,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
           {activeFocusId && <span className="breadcrumb"><b>{focusedNode?.label}</b><i>/</i><span>{focusConnections.length} direct connection{focusConnections.length === 1 ? "" : "s"}{selectedConnection?.label ? ` · ${selectedConnection.label}` : ""}</span></span>}
           {activeNeighborhoodId && <span className="breadcrumb"><b>{map.name}</b><i>/</i><span>{layout.neighborhoods.find((neighborhood) => neighborhood.id === activeNeighborhoodId)?.label}</span></span>}
         </div>
-        <p className="viewport-help">{activeExpandedId ? "Select a room · Esc to return · the city remains around you" : activeFocusId ? "Click a connected structure to trace that path · Esc to return" : activeNeighborhoodId ? "Choose a building to open it · Esc to return to the whole city" : "Click any nameplate to explore · double-clicking a structure also works"}</p>
+        <p className="viewport-help">{activeExpandedId ? "Select a room · Esc to return · the city remains around you" : activeFocusId ? "Click a connected structure to trace that path · Esc to return" : activeNeighborhoodId ? "Choose a building to open it · Esc to return to the whole city" : "Click a structure or nameplate to select · double-click to open"}</p>
       </section>
 
       <aside className="inspector">
@@ -953,6 +995,7 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
   const [listing, setListing] = useState<Listing | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [overview, setOverview] = useState(true);
 
   const load = useCallback(async (path?: string) => {
     try {
@@ -975,7 +1018,7 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repoPath: listing.path }),
+        body: JSON.stringify({ repoPath: listing.path, overview }),
       });
       const data = await response.json();
       if (data.error) throw new Error(data.error);
@@ -999,6 +1042,10 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
             {listing.entries.map((entry) => <button type="button" key={entry.path} onClick={() => load(entry.path)}>{entry.name}/</button>)}
           </div>
           <footer>
+            <label className="folder-mode">
+              <input type="checkbox" checked={overview} onChange={(event) => setOverview(event.target.checked)} />
+              Module overview (unchecked: deployment map)
+            </label>
             <button className="map-action" type="button" disabled={busy} onClick={generate}>{busy ? "Generating…" : "Generate map for this folder"}</button>
           </footer>
         </>}

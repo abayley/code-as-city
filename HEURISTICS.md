@@ -11,7 +11,7 @@ and commit messages can cite them.
 | --- | --- | --- |
 | I1 | `.git` present | Inventory via `git ls-files` (respects .gitignore); fall back to a directory walk |
 | I2 | A directory contains its own `.git` | Excluded entirely (vendored third-party checkout, e.g. a langfuse clone) |
-| I3 | Directory name in the ignore set (`node_modules`, `dist`, `generated`, `docs`, ...) | Excluded entirely |
+| I3 | Directory name in the ignore set (`node_modules`, `dist`, `generated`, `docs`, `examples`, ...) | Excluded entirely |
 | I4 | Path segment in `test`/`tests`/`__tests__`/`coverage`/`test-database`, or filename matching `*.test.*`, `*.spec.*`, `*_test.*` | Excluded from source analysis |
 | I5 | Filename matching `*.config.{ts,js,mjs,cjs}`, `*-setup.*`, or `.*rc.js` | Tool configuration pretending to be code: excluded from source analysis (still visible to config-driven rules such as D7) |
 
@@ -90,22 +90,28 @@ thing keeping unreferenced-but-meaningful producers (plugins/) on the map.
 
 ## Overview mode (O)
 
-`--overview` produces a whole-codebase module map instead of the deployment
-map: dev-tooling and orphan exclusion are skipped, and import edges are
-omitted by design (only data flow is drawn).
+The generator has two modes. The default **deployment map** applies
+inventory/structure (I, S), deployment shape (D), coupling (C), reachability
+(R), and map shaping (M). `--overview` produces a whole-codebase **module
+overview** instead: it shares I, S, and the C1 coupling metrics, reuses the
+D/M scans for hosts, externals, and flow (see O7-O10), but skips coupling
+elimination (C2/C3), dev-tooling and orphan exclusion (R2/R3), and omits
+import edges by design (only data flow is drawn). The O rules below apply
+only in this mode.
 
 | ID | Signal | Action |
 | --- | --- | --- |
 | O1 | Single package | One district per top-level directory (S2 segmentation, so `src/` expands a level: src/lib, src/ingest, ...); multi-package repos get one district per package |
-| O2 | Module granularity inside a district | Every file is its own module, wherever it sits in the tree (subdirectories such as src/lib/configuration are shown as their files, disambiguated by subdirectory when names collide). Fan-in-0 modules are `composer` (front row); imported ones are `support` (row behind, 72% size, rendered as ziggurats) |
+| O2 | Module granularity inside a district | Every file is its own module, wherever it sits in the tree and in multi-package repos too (subdirectories such as src/lib/configuration are shown as their files, disambiguated by subdirectory when names collide; kebab-flattened id collisions get a numeric suffix). Fan-in-0 modules are `composer` (front row); imported ones are `support` (row behind, 72% size, rendered as ziggurats) |
 | O3 | Files matching `**/migrations/<digits>[-_.]...` | Collapse to one leaf module per migrations directory ("Migrations (N)") |
 | O4 | >=60% of a district's modules are utility (fan-in >= 2, instability <= 0.33) | District coloured as shared code (purple) instead of function area (teal) |
-| O5 | Lines of code and cyclomatic complexity | Height = 0.55 + loc/320 (floor 0.6, no ceiling); footprint = 0.85 + sqrt(complexity)/7 (clamped 0.95-3.4) |
+| O5 | Lines of code and cyclomatic complexity | Height = 0.55 + loc/320 (floor 0.6, loc capped at 1500); footprint = 0.85 + sqrt(complexity)/7 (clamped 0.95-3.4). A multi-file module (collapsed migrations) reports the max contained file complexity rather than a meaningless sum; footprint uses the same value |
 | O6 | TypeScript compiler API available | McCabe complexity per function (1 + decision points; logical operators and non-default `case` clauses count; nested functions counted separately), summed per file and module. Regex decision-point fallback otherwise |
 | O7 | Deployment shape | Per-host infrastructure districts: image-only services and backing stores (from ANY compose variant, attributed to the surviving host sharing services) sit in their host's district; env-token externals (M6 scan) get an "External systems" district |
 | O8 | Flow edges | Declared collector chain from host-own configs (host-name and service-name matching as M5; a matched service resolves to the module owning its Dockerfile ENTRYPOINT); inferred OTLP producers -> gateway collector (M1 pattern); inferred database reads/writes (M8 patterns); inferred `delivers` edges from modules referencing an external by SDK import or env prefix |
 | O9 | Deploy-host attribution | Files map to hosts via D3 COPY membership; a COPY coarser than room granularity (a dashboard image copying bare `src`) is ignored as packaging convenience. Modules carry `host:<name>` tags |
 | O10 | Bands | Districts arrange front-to-back: Shared & support (multi-host or unplaced code), Generators (undeployed OTLP producers), the host chain ordered by declared forwarding, External systems. Emitted as scope `display.flowLayer` plus a `band:<label>` tag; the viewer renders band names as rail headers and honours explicit district layers over edge inference |
+| O11 | A package.json dependency naming an embedded database SDK (`@lancedb/*`, `chromadb`, `better-sqlite3`/`sqlite3`, `duckdb`) | One database node per dependency repo-wide (several manifests share one store); modules importing the SDK get an inferred `reads/writes` data-flow edge (confidence 0.7) |
 
 Failure modes: O4's 60% cut is untuned (src/core and src/providers read as
 function areas at file granularity); O6 attributes top-level statements'
@@ -123,4 +129,4 @@ COPYing module-level dirs.
 | OTLP edge confidence                 | 0.7                                              | M1   |
 | Environment rank                     | prod 5, uat/staging 4, example 3, plain 2, dev 1 | D1   |
 | Overview shared-district cut         | >=60% utility modules (fan-in >= 2, inst <= 0.33) | O4   |
-| Overview height / footprint          | 0.55 + loc/320; 0.85 + sqrt(complexity)/7        | O5   |
+| Overview height / footprint          | 0.55 + min(loc, 1500)/320; 0.85 + sqrt(complexity)/7 | O5   |

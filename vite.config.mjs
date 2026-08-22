@@ -45,10 +45,14 @@ function mapApiPlugin() {
             res.end(JSON.stringify({ error: message }));
           };
           try {
-            const repo = resolve(String(JSON.parse(body).repoPath ?? ""));
+            const request = JSON.parse(body);
+            const repo = resolve(String(request.repoPath ?? ""));
+            const overview = Boolean(request.overview);
             if (!statSync(repo).isDirectory()) { fail(400, "Not a directory."); return; }
-            const outDir = resolve("out", basename(repo));
-            const child = spawn("node", [resolve("src/generate-map.mjs"), repo, "--out-dir", outDir], {
+            const outDir = resolve("out", `${basename(repo)}${overview ? "-overview" : ""}`);
+            const args = [resolve("src/generate-map.mjs"), repo, "--out-dir", outDir];
+            if (overview) args.push("--overview");
+            const child = spawn("node", args, {
               cwd: resolve("."),
               stdio: ["ignore", "pipe", "pipe"],
             });

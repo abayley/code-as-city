@@ -133,15 +133,15 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   const neighborhoodEntries = [...groupedNodes].sort(([left], [right]) =>
     neighborhoodRank(left) - neighborhoodRank(right) || left.localeCompare(right),
   );
-  const nodeStepX = 4.4;
-  const nodeStepZ = 3.7;
+  const nodeStepX = 2.0;
+  const nodeStepZ = 1.7;
   // Local change: districts grow roughly square instead of two fixed columns.
-  const columnsFor = (count: number) => Math.max(1, Math.min(4, Math.ceil(Math.sqrt(count))));
+  const columnsFor = (count: number) => Math.max(1, Math.ceil(Math.sqrt(count)));
   const layerStepZ = 5.5;
   // Local change: tighter packing for many-district maps. A single-structure
   // neighbourhood only needs its own footprint, and the gap between
   // neighbourhoods is decorative, not structural.
-  const neighborhoodGap = 1.8;
+  const neighborhoodGap = 0.9;
 
   // Local change: district-level flow layering. Districts themselves are
   // layered by their cross-district edges (producers in front, consumers
@@ -203,7 +203,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   const neighborhoodWidths = neighborhoodEntries.map(([, neighborhoodNodes]) => {
     const largestCell = Math.max(...[...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))]
       .map((layer) => neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length), 1);
-    return Math.max(4.6, columnsFor(largestCell) * nodeStepX + 1.8);
+    return Math.max(3.2, columnsFor(largestCell) * nodeStepX + 0.7);
   });
 
   const rowMembers = new Map<number, number[]>();
@@ -216,7 +216,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   // sequence for depth, and a layer's row stack gets real space — layers are
   // offset cumulatively by their row counts, so a deep front layer can never
   // land its rows on top of the next layer's nodes.
-  const layerGap = 2.2;
+  const layerGap = 0.2;
   const localInfo = new Map<number, { layerIndex: Map<number, number>; layerOffsets: Map<number, number>; depth: number }>();
   neighborhoodEntries.forEach(([, neighborhoodNodes], index) => {
     const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))].sort((a, b) => a - b);
@@ -254,7 +254,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     }
     if (chunk.length) sortedRows.push([rowLayer + part * 1e-3, chunk]);
   });
-  const rowGap = 6.4;
+  const rowGap = 3.6;
   const rowBases = new Map<number, number>();
   let zCursor = 0;
   sortedRows.forEach(([rowLayer, entryIndexes]) => {
@@ -304,14 +304,16 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       const [width, , depth] = node.display?.size ?? [1.65, 1.2, 1.4];
       const hasInterior = allNodes.some((candidate) => candidate.parentId === node.id);
       const labelLength = node.label.length + (hasInterior ? 3 : 0);
-      const plaqueWidth = hasInterior
+      // Matches MapMarker's labelScale: campus nameplates render at 40%.
+      const labelScale = 0.4;
+      const plaqueWidth = (hasInterior
         ? Math.max(3.15, Math.min(4.7, 2.1 + labelLength * 0.065))
         : node.kind === "external"
           ? Math.max(2.35, Math.min(3.65, 1.75 + labelLength * 0.05))
-          : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058));
-      const plaqueHeight = hasInterior ? 1.02 : node.kind === "external" ? 0.76 : 0.88;
+          : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058))) * labelScale;
+      const plaqueHeight = (hasInterior ? 1.02 : node.kind === "external" ? 0.76 : 0.88) * labelScale;
       const footprintDepth = depth + 0.24;
-      const plaqueFarZ = z + footprintDepth / 2 + plaqueHeight + 0.18;
+      const plaqueFarZ = z + footprintDepth / 2 + plaqueHeight + 0.06;
       return {
         minX: Math.min(x - width / 2, x - plaqueWidth / 2),
         maxX: Math.max(x + width / 2, x + plaqueWidth / 2),
@@ -330,10 +332,11 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       description: scope?.description,
       nodeIds: neighborhoodNodes.map((node) => node.id),
       bounds: {
-        minX: Math.min(...neighborhoodExtents.map((extent) => extent.minX)) - 1.1,
-        maxX: Math.max(...neighborhoodExtents.map((extent) => extent.maxX)) + 1.1,
-        minZ: Math.min(...neighborhoodExtents.map((extent) => extent.minZ)) - 1.25,
-        maxZ: Math.max(...neighborhoodExtents.map((extent) => extent.maxZ)) + 1.65,
+        minX: Math.min(...neighborhoodExtents.map((extent) => extent.minX)) - 0.35,
+        maxX: Math.max(...neighborhoodExtents.map((extent) => extent.maxX)) + 0.35,
+        minZ: Math.min(...neighborhoodExtents.map((extent) => extent.minZ)) - 0.45,
+        // The front edge keeps room for the district sign (0.78 + inset).
+        maxZ: Math.max(...neighborhoodExtents.map((extent) => extent.maxZ)) + 1.3,
       },
     };
   });

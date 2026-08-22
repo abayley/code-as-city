@@ -152,6 +152,9 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .viewport-location, .viewport-help { position: absolute; text-transform: uppercase; letter-spacing: .13em; font-size: 10px; }
 .viewport-location { top: 14px; left: 17px; display: flex; align-items: center; gap: 12px; }
 .viewport-location > span:first-child { display: flex; align-items: center; gap: 8px; }
+.viewport-viewmode { position: absolute; top: 14px; right: 17px; }
+.viewport-viewmode button { min-height: 34px; padding: 0 11px; border: 1px solid var(--ink); background: rgba(237,243,242,.96); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; cursor: pointer; box-shadow: 0 3px 0 rgba(20,32,43,.1); }
+.viewport-viewmode button:hover { background: var(--ink); color: var(--paper); }
 .viewport-location button { min-height: 34px; padding: 0 11px; border: 1px solid var(--ink); background: rgba(237,243,242,.96); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; cursor: pointer; box-shadow: 0 3px 0 rgba(20,32,43,.1); }
 .viewport-location button:hover { background: var(--ink); color: var(--paper); }
 .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; max-width: min(340px, calc(100vw - 210px)); padding: 8px 10px; background: rgba(219,229,231,.84); color: rgba(20,32,43,.66); }
@@ -278,6 +281,7 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .folder-list button { padding: 8px 16px; border: 0; border-bottom: 1px solid rgba(20,32,43,.12); background: none; text-align: left; font-size: 13px; cursor: pointer; }
 .folder-list button:hover { background: var(--paper-deep); }
 .folder-browser > footer { padding: 12px 16px; border-top: 1px solid var(--rule); }
+.folder-mode { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; cursor: pointer; }
 .folder-browser .map-action { width: 100%; padding: 12px; }
 .folder-error { margin: 0; padding: 10px 16px; border-top: 1px solid var(--rule); color: #8d3030; font-size: 12px; }
 .empty-actions { display: flex; gap: 12px; }
