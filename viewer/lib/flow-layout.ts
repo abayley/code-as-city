@@ -7,6 +7,8 @@ export type FlowLayout = {
     id: string;
     label: string;
     color?: string;
+    band?: number;
+    bandLabel?: string;
     description?: string;
     nodeIds: string[];
     bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -132,17 +134,14 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     neighborhoodRank(left) - neighborhoodRank(right) || left.localeCompare(right),
   );
   const nodeStepX = 4.4;
-  const nodeStepZ = 2.7;
+  const nodeStepZ = 3.7;
+  // Local change: districts grow roughly square instead of two fixed columns.
+  const columnsFor = (count: number) => Math.max(1, Math.min(4, Math.ceil(Math.sqrt(count))));
   const layerStepZ = 5.5;
   // Local change: tighter packing for many-district maps. A single-structure
   // neighbourhood only needs its own footprint, and the gap between
   // neighbourhoods is decorative, not structural.
   const neighborhoodGap = 1.8;
-  const neighborhoodWidths = neighborhoodEntries.map(([, neighborhoodNodes]) => {
-    const largestCell = Math.max(...[...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))]
-      .map((layer) => neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length), 1);
-    return Math.max(4.6, Math.min(2, largestCell) * nodeStepX + 1.8);
-  });
 
   // Local change: district-level flow layering. Districts themselves are
   // layered by their cross-district edges (producers in front, consumers
@@ -184,7 +183,28 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   groupIds.forEach((id) => {
     if (!districtLayer.has(id)) districtLayer.set(id, hasQuotientEdge.has(id) ? 0 : connectedMax + (connectedMax > 0 ? 1 : 0));
   });
+  // Local change: a district (scope node) carrying an explicit
+  // display.flowLayer overrides the quotient layering — generator-computed
+  // bands (deploy hosts, producer rows) win over edge inference.
+  groupIds.forEach((id) => {
+    const explicit = scopeById.get(id)?.display?.flowLayer;
+    if (explicit !== undefined) districtLayer.set(id, explicit);
+  });
   const maxDistrictLayer = Math.max(...districtLayer.values(), 0);
+
+  // Local change: stable, legible ordering — band (front to back), then
+  // label. Drives both the rail listing and left-to-right order within rows.
+  const groupLabel = (id: string) => scopeById.get(id)?.label
+    ?? (id.startsWith("__near:") ? `Near ${scopeById.get(id.slice(7))?.label ?? ""}` : "System");
+  neighborhoodEntries.sort(([left], [right]) =>
+    (districtLayer.get(left) ?? maxDistrictLayer) - (districtLayer.get(right) ?? maxDistrictLayer)
+    || groupLabel(left).localeCompare(groupLabel(right)));
+
+  const neighborhoodWidths = neighborhoodEntries.map(([, neighborhoodNodes]) => {
+    const largestCell = Math.max(...[...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))]
+      .map((layer) => neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length), 1);
+    return Math.max(4.6, columnsFor(largestCell) * nodeStepX + 1.8);
+  });
 
   const rowMembers = new Map<number, number[]>();
   neighborhoodEntries.forEach((entry, index) => {
@@ -193,19 +213,24 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   });
 
   // Local change: compact packing. Each district uses its OWN compacted layer
-  // sequence for depth (global alignment wasted space once districts moved to
-  // rows), and each row is only as deep as its deepest district.
-  const localInfo = new Map<number, { layerIndex: Map<number, number>; depth: number }>();
+  // sequence for depth, and a layer's row stack gets real space — layers are
+  // offset cumulatively by their row counts, so a deep front layer can never
+  // land its rows on top of the next layer's nodes.
+  const layerGap = 2.2;
+  const localInfo = new Map<number, { layerIndex: Map<number, number>; layerOffsets: Map<number, number>; depth: number }>();
   neighborhoodEntries.forEach(([, neighborhoodNodes], index) => {
     const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))].sort((a, b) => a - b);
     const layerIndex = new Map(uniqueLayers.map((layer, position) => [layer, position]));
-    let maxStack = 1;
+    const layerOffsets = new Map<number, number>();
+    let offset = 0;
     for (const layer of uniqueLayers) {
+      layerOffsets.set(layer, offset);
       const count = neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length;
-      maxStack = Math.max(maxStack, Math.ceil(count / Math.min(2, count)));
+      const rows = Math.ceil(count / columnsFor(count));
+      offset += rows * nodeStepZ + layerGap;
     }
-    const depth = (uniqueLayers.length - 1) * layerStepZ + (maxStack - 1) * nodeStepZ;
-    localInfo.set(index, { layerIndex, depth });
+    const depth = Math.max(0, offset - layerGap - nodeStepZ);
+    localInfo.set(index, { layerIndex, layerOffsets, depth });
   });
 
   // Local change: wrap over-wide rows (a map with no cross-district edges
@@ -248,7 +273,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     for (const neighborhoodIndex of entryIndexes) {
       const [, neighborhoodNodes] = neighborhoodEntries[neighborhoodIndex];
       const neighborhoodWidth = neighborhoodWidths[neighborhoodIndex];
-      const { layerIndex } = localInfo.get(neighborhoodIndex)!;
+      const { layerOffsets } = localInfo.get(neighborhoodIndex)!;
       const centerX = neighborhoodCursor + neighborhoodWidth / 2;
       const localLayers = new Map<number, CityNode[]>();
       neighborhoodNodes.forEach((node) => {
@@ -259,13 +284,13 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         layerNodes.sort((a, b) =>
           (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) || a.label.localeCompare(b.label),
         );
-        const columnCount = Math.min(2, layerNodes.length);
+        const columnCount = columnsFor(layerNodes.length);
         layerNodes.forEach((node, index) => {
           const row = Math.floor(index / columnCount);
           const column = index % columnCount;
           const nodesInRow = Math.min(columnCount, layerNodes.length - row * columnCount);
           const x = centerX + (column - (nodesInRow - 1) / 2) * nodeStepX;
-          const z = rowZ - (layerIndex.get(layer) ?? 0) * layerStepZ - row * nodeStepZ;
+          const z = rowZ - (layerOffsets.get(layer) ?? 0) - row * nodeStepZ;
           positions.set(node.id, [x, z]);
         });
       }
@@ -300,6 +325,8 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       id,
       label: scope?.label ?? (nearScope ? `Near ${nearScope.label}` : "System"),
       color: scope?.display?.color,
+      band: districtLayer.get(id) ?? 0,
+      bandLabel: scope?.tags?.find((tag) => tag.startsWith("band:"))?.slice(5),
       description: scope?.description,
       nodeIds: neighborhoodNodes.map((node) => node.id),
       bounds: {

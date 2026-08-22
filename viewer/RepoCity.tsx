@@ -3,6 +3,7 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, MapControls, Text } from "@react-three/drei";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
@@ -314,11 +315,16 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
   const [width, height, depth] = size;
   const visualArchetype = node.archetype === "building" && !hasInterior ? "room" : node.archetype;
   // Local change: support modules (overview mode) render as four-sided
-  // pyramids so they read differently from the composer buildings.
+  // ziggurats so they read differently from the composer buildings.
   const isSupportShape = node.archetype === "worker" && (node.tags ?? []).includes("support");
-  const geometry = useMemo(() => isSupportShape
-    ? new THREE.ConeGeometry(width * 0.62, height, 4)
-    : geometryFor(visualArchetype, width, height, depth), [depth, height, isSupportShape, visualArchetype, width]);
+  const geometry = useMemo(() => {
+    if (!isSupportShape) return geometryFor(visualArchetype, width, height, depth);
+    const tierScales = [1, 0.72, 0.46];
+    const tiers = tierScales.map((scale, index) =>
+      new THREE.BoxGeometry(width * scale, height / 3, depth * scale)
+        .translate(0, -height / 2 + height / 6 + (index * height) / 3, 0));
+    return mergeGeometries(tiers);
+  }, [depth, height, isSupportShape, visualArchetype, width]);
   const outline = useMemo(() => new THREE.EdgesGeometry(geometry), [geometry]);
   const color = node.display?.color ?? (node.kind === "infra" ? "#b17f9f" : node.kind === "external" ? "#cf8278" : "#81afa6");
   const floorCount = hasInterior ? Math.max(0, Math.min(4, Math.round(height * 1.2) - 1)) : 0;
@@ -603,7 +609,10 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   return (
     <Canvas
       orthographic
-      camera={{ position: [10, 13, 15], zoom: 48, near: -300, far: 500 }}
+      // Orthographic: distance does not affect size, so sit far out with a
+      // small positive near. A negative near moves the raycaster origin into
+      // the scene and makes the frontmost structures unclickable.
+      camera={{ position: [120, 156, 180], zoom: 48, near: 0.1, far: 800 }}
       shadows
       dpr={[1, 1.7]}
     >
@@ -823,17 +832,24 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       <aside className="rail">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a component" /></label>
         <div className="component-list" aria-label="Mapped components">
-          {layout.neighborhoods.map((neighborhood, neighborhoodIndex) => {
-            const neighborhoodIds = new Set(neighborhood.nodeIds);
-            const nodes = filteredRailNodes.filter((node) => neighborhoodIds.has(node.id));
-            if (!nodes.length) return null;
-            return (
-              <section className="rail-group" key={neighborhood.id} style={{ "--district-accent": NEIGHBORHOOD_ACCENTS[neighborhoodIndex % NEIGHBORHOOD_ACCENTS.length] } as React.CSSProperties}>
-                <button className="neighborhood-button" type="button" aria-pressed={activeNeighborhoodId === neighborhood.id} onClick={() => exploreNeighborhood(neighborhood.id)}><span>{`N${neighborhoodIndex + 1}`}</span><strong>{neighborhood.label}</strong></button>
-                {nodes.map((node) => <ComponentRow key={node.id} node={node} markerIndex={visibleNodes.indexOf(node)} roomCount={map.nodes.filter((candidate) => candidate.parentId === node.id).length} active={node.id === effectiveSelectedId} onSelect={() => exploreNode(node.id)} />)}
-              </section>
-            );
-          })}
+          {(() => {
+            let lastBand: number | undefined;
+            return layout.neighborhoods.map((neighborhood, neighborhoodIndex) => {
+              const neighborhoodIds = new Set(neighborhood.nodeIds);
+              const nodes = filteredRailNodes.filter((node) => neighborhoodIds.has(node.id))
+                .sort((a, b) => a.label.localeCompare(b.label));
+              if (!nodes.length) return null;
+              const showBandHeader = neighborhood.bandLabel !== undefined && neighborhood.band !== lastBand;
+              lastBand = neighborhood.band;
+              return (
+                <section className="rail-group" key={neighborhood.id} style={{ "--district-accent": NEIGHBORHOOD_ACCENTS[neighborhoodIndex % NEIGHBORHOOD_ACCENTS.length] } as React.CSSProperties}>
+                  {showBandHeader && <p className="rail-band">{neighborhood.bandLabel}</p>}
+                  <button className="neighborhood-button" type="button" aria-pressed={activeNeighborhoodId === neighborhood.id} onClick={() => exploreNeighborhood(neighborhood.id)}><span>{`N${neighborhoodIndex + 1}`}</span><strong>{neighborhood.label}</strong></button>
+                  {nodes.map((node) => <ComponentRow key={node.id} node={node} markerIndex={visibleNodes.indexOf(node)} roomCount={map.nodes.filter((candidate) => candidate.parentId === node.id).length} active={node.id === effectiveSelectedId} onSelect={() => exploreNode(node.id)} />)}
+                </section>
+              );
+            });
+          })()}
         </div>
       </aside>
 
@@ -1026,6 +1042,10 @@ function EmptyShell({ onSelectShowcase, onImport, onMapFolder }: { onSelectShowc
 }
 
 function ComponentRow({ node, markerIndex, roomCount, active, onSelect }: { node: CityNode; markerIndex: number; roomCount: number; active: boolean; onSelect: () => void }) {
+  const row = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (active) row.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [active]);
   const className = ["component-row", roomCount ? "landmark" : "", node.kind === "external" ? "quieter" : "", active ? "active" : ""].filter(Boolean).join(" ");
-  return <button className={className} aria-pressed={active} onClick={onSelect} type="button"><span className="row-index">{String(markerIndex + 1).padStart(2, "0")}</span><span><strong>{node.label}</strong><small>{plainType(node, roomCount)}</small></span></button>;
+  return <button ref={row} className={className} aria-pressed={active} onClick={onSelect} type="button"><span className="row-index">{String(markerIndex + 1).padStart(2, "0")}</span><span><strong>{node.label}</strong><small>{plainType(node, roomCount)}</small></span></button>;
 }

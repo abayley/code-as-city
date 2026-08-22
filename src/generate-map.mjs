@@ -156,7 +156,8 @@ const allFiles = inventory(repo);
 // vite.config.ts, marp.config.mjs, vitest-setup.ts, .eslintrc.js, ...
 const CONFIG_FILE_PATTERN = /(?:^|\/)(?:[\w.-]*\.config\.(?:ts|js|mjs|cjs)|[\w.-]*-setup\.(?:ts|js|mjs)|\.\w+rc\.(?:js|cjs))$/;
 const sourceFiles = allFiles.filter(
-  (f) => SOURCE_EXTENSIONS.has(extensionOf(f)) && !isTestPath(f) && !CONFIG_FILE_PATTERN.test(f),
+  (f) => SOURCE_EXTENSIONS.has(extensionOf(f)) && !isTestPath(f) && !CONFIG_FILE_PATTERN.test(f)
+    && !/\.d\.ts$/.test(f),
 );
 
 // --- 2. Packages ----------------------------------------------------------------
@@ -590,6 +591,121 @@ if (overview) {
   const pkgsWithRooms = [...new Set(activeRooms.map((r) => r.pkg))];
   const multiPkg = pkgsWithRooms.length > 1;
 
+  // Deploy-host attribution: which hosts does a file ship to (via D3 COPY
+  // membership of services built from this repo)?
+  const copyDirHosts = new Map(); // dir -> Set(host name)
+  for (const host of hosts) {
+    for (const service of host.services) {
+      if (!service.dockerfile) continue;
+      for (const copy of service.copies) {
+        const dir = copy.replace(/\/$/, "");
+        // A COPY of a whole dominant source root (the dashboard image copying
+        // bare `src` for its client bundle) is a packaging convenience, not
+        // module attribution: skip dirs coarser than the room granularity.
+        if (activeRooms.some((room) => roomDir(room).startsWith(dir + "/"))) continue;
+        if (!copyDirHosts.has(dir)) copyDirHosts.set(dir, new Set());
+        copyDirHosts.get(dir).add(host.name);
+      }
+    }
+  }
+  const fileHosts = (file) => {
+    const result = new Set();
+    for (const [dir, hostNames] of copyDirHosts) {
+      if (file === dir || file.startsWith(dir + "/")) for (const name of hostNames) result.add(name);
+    }
+    return result;
+  };
+  const filesHosts = (files) => {
+    const result = new Set();
+    for (const file of files) for (const name of fileHosts(file)) result.add(name);
+    return result;
+  };
+
+  // Host config scan: externals, host-to-host forwarding, host-to-service
+  // forwarding — computed once, used for districts, infra, and edges.
+  const hostScan = hosts.map((host) => {
+    const hostDir = dirname(host.file);
+    const hostQualifiers = host.name.split(" ").filter(Boolean);
+    const result = { host, externals: [], hostTargets: new Set(), serviceTargets: [], configs: [] };
+    const internalNames = new Set([
+      ...hosts.flatMap((h) => h.name.split(" ")),
+      ...hosts.flatMap((h) => h.services.map((s) => s.name)),
+    ].map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
+    for (const config of allFiles.filter((f) => dirname(f) === hostDir && /\.ya?ml$/.test(f)
+      && !/docker-compose/.test(basename(f)) && hostQualifiers.some((token) => basename(f).includes(token)))) {
+      result.configs.push(config);
+      const rawLines = readText(join(repo, config)).split("\n");
+      rawLines.forEach((line, index) => {
+        const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
+        if (!envToken) return;
+        const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
+        const candidate = envToken.split("_")
+          .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
+          .join(" ").toLowerCase();
+        if (candidate.length >= 4 && !result.externals.some((e) => e.candidate === candidate)) {
+          result.externals.push({ candidate, config });
+        }
+      });
+      const exportLines = rawLines.filter((l) => /endpoint:|\$\{env:/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
+      for (const other of hosts) {
+        if (other === host) continue;
+        const distinct = other.name.split(" ").filter((t) => t && !hostQualifiers.includes(t)).map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
+          result.hostTargets.add(other.name);
+        }
+        for (const service of other.services) {
+          const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (normalised.length >= 6 && exportLines.some((l) => l.includes(normalised))) {
+            result.serviceTargets.push({ service, otherHost: other.name, config });
+            result.hostTargets.add(other.name);
+          }
+        }
+      }
+    }
+    return result;
+  });
+
+  // Host flow bands from the declared forwarding chain: gateway 1, stack 2,
+  // evaluation 3, ... (band 0 is reserved for producers, externals go behind
+  // the last host, shared code behind that).
+  const hostLayer = new Map();
+  const forwardingHosts = new Set(hostScan.flatMap((scan) => scan.hostTargets.size ? [scan.host.name, ...scan.hostTargets] : []));
+  for (const scan of hostScan) {
+    if (forwardingHosts.has(scan.host.name) && ![...hostScan].some((other) => other.hostTargets.has(scan.host.name))) {
+      hostLayer.set(scan.host.name, 0);
+    }
+  }
+  for (let pass = 0; pass <= hosts.length; pass += 1) {
+    let changed = false;
+    for (const scan of hostScan) {
+      if (!hostLayer.has(scan.host.name)) continue;
+      for (const target of scan.hostTargets) {
+        const proposed = hostLayer.get(scan.host.name) + 1;
+        if ((hostLayer.get(target) ?? -1) < proposed && proposed <= hosts.length) {
+          hostLayer.set(target, proposed);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
+  // Band order: shared/support strip in front (band 0), then generators,
+  // then the host chain, externals behind the last host.
+  const SHARED_BAND = 0;
+  const PRODUCERS_BAND = 1;
+  const hostBand = (name) => 2 + (hostLayer.get(name) ?? 0);
+  const maxHostBand = 2 + Math.max(0, ...hostLayer.values());
+  const EXTERNALS_BAND = maxHostBand + 1;
+  const hostNameForBand = new Map([...hostLayer.entries()].map(([name, layer]) => [2 + layer, name]));
+  const bandLabel = (band) =>
+    band === SHARED_BAND ? "Shared & support"
+    : band === PRODUCERS_BAND ? "Generators"
+    : band === EXTERNALS_BAND ? "External systems"
+    : hostNameForBand.has(band) ? `${titleCase(hostNameForBand.get(band))} host`
+    : `Strip ${band}`;
+
   const linesOf = (files) => files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
   const complexityOf = (files) => files.reduce((sum, f) => sum + fileComplexity(f), 0);
   const externalFanIn = (files) => {
@@ -628,32 +744,27 @@ if (overview) {
         files, path: dir, support: true, collapsed: true,
       });
     }
-    const strippedRoom = { ...room, files: room.files.filter((f) => !MIGRATION_FILE_PATTERN.test(f)) };
-    const children = childRoomsOf(strippedRoom);
-    const pushFileModule = (file) => entries.push({
-      id: kebab(`${room.id}-${fileModuleName(file)}`),
-      label: titleCase(fileModuleName(file)),
-      files: [file], path: file,
-      support: (fileCoupling.get(file)?.in ?? 0) > 0,
+    // Every remaining file is a module, wherever it sits in the tree —
+    // subdirectories (src/lib/configuration, plugins/codex-otlp-traces) are
+    // shown as their files, not as buildings. Duplicate names within a
+    // district are disambiguated by their subdirectory.
+    const rest = room.files.filter((f) => !MIGRATION_FILE_PATTERN.test(f));
+    const fileEntries = rest.map((file) => {
+      const local = relative(roomDir(room), file).replace(/\.[a-z]+$/, "");
+      return {
+        id: kebab(`${room.id}-${local}`),
+        label: titleCase(basename(local)),
+        sublabel: local.includes(sep) ? dirname(local) : null,
+        files: [file], path: file,
+        support: (fileCoupling.get(file)?.in ?? 0) > 0,
+      };
     });
-    if (!children.length) {
-      strippedRoom.files.forEach(pushFileModule);
-      return entries;
+    const labelCounts = new Map();
+    for (const entry of fileEntries) labelCounts.set(entry.label, (labelCounts.get(entry.label) ?? 0) + 1);
+    for (const entry of fileEntries) {
+      if (labelCounts.get(entry.label) > 1 && entry.sublabel) entry.label = `${entry.label} (${entry.sublabel})`;
     }
-    for (const child of children) {
-      if (child.seg === "(files)") {
-        child.files.forEach(pushFileModule); // dissolve the support bucket
-      } else if (child.files.length === 1) {
-        pushFileModule(child.files[0]);
-      } else {
-        entries.push({
-          id: kebab(`${room.id}-${child.seg}`), label: titleCase(child.seg),
-          files: child.files, path: join(roomDir(room), child.seg),
-          support: externalFanIn(child.files) > 0,
-        });
-      }
-    }
-    return entries;
+    return [...entries, ...fileEntries];
   };
 
   const districts = multiPkg
@@ -673,6 +784,19 @@ if (overview) {
   const overviewNodes = [];
   const allModules = []; // { id, files } for flow-edge classification
   const fileToModule = new Map(); // source file -> module node id (for flow edges)
+
+  // Band per district: single-host code sits in its host's band, OTLP
+  // producers in the front band, everything shared or unplaced in the strip.
+  for (const district of districts) {
+    const hostSet = filesHosts(district.modules.flatMap((m) => m.files));
+    const producesOtlp = district.modules.some((m) => m.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f)))));
+    district.hosts = [...hostSet];
+    district.band = hostSet.size === 1 ? hostBand(district.hosts[0])
+      : hostSet.size === 0 && producesOtlp ? PRODUCERS_BAND
+      : SHARED_BAND;
+  }
+  districts.sort((a, b) => a.band - b.band || a.id.localeCompare(b.id));
+
   for (const district of districts) {
     if (!district.modules.length) continue;
     const utilityShare = district.modules.filter((m) => moduleIsUtility(m.files)).length / district.modules.length;
@@ -680,10 +804,12 @@ if (overview) {
     const color = shared ? OVERVIEW_SHARED_COLOR : OVERVIEW_APP_COLOR;
     overviewNodes.push({
       id: district.id, label: district.label, kind: "scope", archetype: "district",
-      description: `${shared ? "Shared code" : "Function area"}: ${district.path === "." ? "repository root" : district.path + "/"} — ${district.modules.length} module${district.modules.length === 1 ? "" : "s"}.`,
-      display: { color },
+      description: `${shared ? "Shared code" : "Function area"}: ${district.path === "." ? "repository root" : district.path + "/"} — ${district.modules.length} module${district.modules.length === 1 ? "" : "s"}${district.hosts.length ? ` — deploys to ${district.hosts.join(", ")}` : ""}.`,
+      tags: [`band:${bandLabel(district.band)}`],
+      display: { color, flowLayer: district.band },
     });
     for (const m of district.modules) {
+      const moduleHostTags = [...filesHosts(m.files)].map((name) => `host:${name}`);
       const loc = linesOf(m.files);
       const complexity = complexityOf(m.files);
       const height = Math.max(0.6, 0.55 + loc / 320);
@@ -697,7 +823,7 @@ if (overview) {
         description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, complexity ~${complexity}.`,
         sourceRefs: [{ path: m.path }],
         metrics: { loc, complexity, files: m.files.length },
-        tags: m.support ? ["support"] : ["composer"],
+        tags: [m.support ? "support" : "composer", ...moduleHostTags],
         display: {
           size: [footprint * scale, height * (m.support ? 0.85 : 1), footprint * 0.85 * scale],
           color,
@@ -731,77 +857,63 @@ if (overview) {
     const pick = candidates.find((s) => /collector|gateway|ingest/.test(s.name)) ?? candidates[0];
     return pick ? kebab(`infra-${host.name}-${pick.name}`) : null;
   };
-  const internalNames = new Set([
-    ...hosts.flatMap((h) => h.name.split(" ")),
-    ...hosts.flatMap((h) => h.services.map((s) => s.name)),
-  ].map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
-  for (const host of hosts) {
+  // Per-host infrastructure: services and backing stores sit in their host's
+  // district (and band), so postgres lives beside the evaluation modules.
+  // Externals get their own district behind the last host.
+  for (const scan of hostScan) {
+    const host = scan.host;
     for (const service of host.services) {
       if (service.dockerfile) continue; // built from this repo's modules
       infraMembers.push({
         id: kebab(`infra-${host.name}-${service.name}`), label: titleCase(service.name),
         archetype: service.imageClass ?? "cloud", kind: "infra",
         description: `${service.image ?? "container"} on the ${host.name} host.`,
-        path: host.file,
+        path: host.file, hostName: host.name,
       });
     }
-    const hostDir = dirname(host.file);
-    const hostQualifiers = host.name.split(" ").filter(Boolean);
-    for (const config of allFiles.filter((f) => dirname(f) === hostDir && /\.ya?ml$/.test(f) && !/docker-compose/.test(basename(f))
-      && hostQualifiers.some((token) => basename(f).includes(token)))) {
-      const rawLines = readText(join(repo, config)).split("\n");
-      rawLines.forEach((line, index) => {
-        const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
-        if (!envToken) return;
-        const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
-        if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
-        const candidate = envToken.split("_")
-          .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
-          .join(" ").toLowerCase();
-        if (candidate.length < 4) return;
-        infraMembers.push({
-          id: kebab(`external-${candidate}`), label: titleCase(candidate),
-          archetype: "cloud", kind: "external",
-          description: `External receiver declared in ${config}.`, path: config,
-        });
-        const exporterId = infraCollectorFor(host);
-        if (exporterId) {
-          addOverviewEdge({ id: `${exporterId}--${kebab(`external-${candidate}`)}`, from: exporterId, to: kebab(`external-${candidate}`),
-            kind: "data_flow", evidence: "declared", label: "OTLP export", sourceRefs: [{ path: config }] });
-        }
+    const from = infraCollectorFor(host);
+    for (const { candidate, config } of scan.externals) {
+      const externalId = kebab(`external-${candidate}`);
+      infraMembers.push({
+        id: externalId, label: titleCase(candidate), archetype: "cloud", kind: "external",
+        description: `External receiver declared in ${config}.`, path: config, external: true,
       });
-      // Config-declared forwarding: another host's name or service name in
-      // this config's exporter lines links the collectors / target module.
-      const exportLines = rawLines.filter((l) => /endpoint:|\$\{env:/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
-      const hostTokens = host.name.split(" ").filter(Boolean);
-      const from = infraCollectorFor(host);
-      if (!from) continue;
-      for (const other of hosts) {
-        if (other === host) continue;
-        const distinct = other.name.split(" ").filter((t) => t && !hostTokens.includes(t)).map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
-        if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
-          const to = infraCollectorFor(other);
-          if (to) addOverviewEdge({ id: `${from}--${to}`, from, to, kind: "data_flow", evidence: "declared", label: "OTLP forward", sourceRefs: [{ path: config }] });
+      if (from) {
+        addOverviewEdge({ id: `${from}--${externalId}`, from, to: externalId,
+          kind: "data_flow", evidence: "declared", label: "OTLP export", sourceRefs: [{ path: config }] });
+      }
+    }
+    if (from) {
+      for (const target of scan.hostTargets) {
+        const other = hosts.find((h) => h.name === target);
+        const to = other ? infraCollectorFor(other) : null;
+        if (to) {
+          addOverviewEdge({ id: `${from}--${to}`, from, to, kind: "data_flow", evidence: "declared",
+            label: "OTLP forward", sourceRefs: [{ path: scan.configs[0] }] });
         }
-        for (const service of other.services) {
-          const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (normalised.length < 6 || !exportLines.some((l) => l.includes(normalised))) continue;
-          const targetModule = service.entryFile ? fileToModule.get(service.entryFile) : null;
-          if (targetModule) addOverviewEdge({ id: `${from}--${targetModule}`, from, to: targetModule, kind: "data_flow", evidence: "declared", label: "OTLP forward", sourceRefs: [{ path: config }] });
+      }
+      for (const { service, config } of scan.serviceTargets) {
+        const targetModule = service.entryFile ? fileToModule.get(service.entryFile) : null;
+        if (targetModule) {
+          addOverviewEdge({ id: `${from}--${targetModule}`, from, to: targetModule,
+            kind: "data_flow", evidence: "declared", label: "OTLP forward", sourceRefs: [{ path: config }] });
         }
       }
     }
   }
   // Backing stores that only exist in deduped compose variants (the dev
-  // compose's postgres container) still represent real infrastructure.
+  // compose's postgres container) are attributed to the surviving host that
+  // shares that variant's services.
   for (const candidate of candidateHosts) {
     for (const service of candidate.services) {
       if (["database", "queue", "storage"].includes(service.imageClass) && !service.dockerfile) {
+        const variantServiceNames = new Set(candidate.services.map((s) => s.name));
+        const owner = hosts.find((h) => h.services.some((s) => variantServiceNames.has(s.name)));
         infraMembers.push({
           id: kebab(`infra-${service.name}`), label: titleCase(service.name),
           archetype: service.imageClass, kind: "infra",
           description: `${service.image ?? "container"} declared in ${candidate.file}.`,
-          path: candidate.file,
+          path: candidate.file, hostName: owner?.name,
         });
       }
     }
@@ -810,17 +922,32 @@ if (overview) {
   if (drizzleConfig) infraMembers.push({ id: "infra-drizzle-database", label: "Database", archetype: "database", kind: "infra", description: `Declared in ${drizzleConfig}.`, path: drizzleConfig });
   const seenInfra = new Set();
   const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
-  if (uniqueInfra.length) {
+  const infraDistricts = new Map();
+  for (const m of uniqueInfra) {
+    const key = m.external ? "external-systems" : m.hostName ? kebab(`host-${m.hostName}`) : "infrastructure-district";
+    if (!infraDistricts.has(key)) {
+      infraDistricts.set(key, {
+        id: key,
+        label: m.external ? "External systems" : m.hostName ? `${titleCase(m.hostName)} host` : "Infrastructure",
+        band: m.external ? EXTERNALS_BAND : m.hostName ? hostBand(m.hostName) : SHARED_BAND,
+        members: [],
+      });
+    }
+    infraDistricts.get(key).members.push(m);
+  }
+  for (const infraDistrict of [...infraDistricts.values()].sort((a, b) => a.band - b.band)) {
     overviewNodes.push({
-      id: "infrastructure-district", label: "Infrastructure & external", kind: "scope", archetype: "district",
-      description: `Deployed infrastructure and external systems — ${uniqueInfra.length} node${uniqueInfra.length === 1 ? "" : "s"}.`,
-      display: { color: OVERVIEW_INFRA_COLOR },
+      id: infraDistrict.id, label: infraDistrict.label, kind: "scope", archetype: "district",
+      description: `${infraDistrict.label}: ${infraDistrict.members.length} node${infraDistrict.members.length === 1 ? "" : "s"}.`,
+      tags: [`band:${bandLabel(infraDistrict.band)}`],
+      display: { color: OVERVIEW_INFRA_COLOR, flowLayer: infraDistrict.band },
     });
-    for (const m of uniqueInfra) {
+    for (const m of infraDistrict.members) {
       overviewNodes.push({
         id: m.id, label: m.label, kind: m.kind, archetype: m.archetype,
-        parentId: "infrastructure-district",
+        parentId: infraDistrict.id,
         description: m.description, sourceRefs: [{ path: m.path }],
+        ...(m.hostName ? { tags: [`host:${m.hostName}`] } : {}),
         display: { color: OVERVIEW_INFRA_COLOR },
       });
     }
@@ -848,6 +975,20 @@ if (overview) {
       }
     }
   }
+  // Modules that reference an external by SDK import or env-var prefix
+  // deliver data to it (src/delivery pushing scores into Langfuse/Latitude).
+  for (const external of uniqueInfra.filter((m) => m.external)) {
+    const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (name.length < 4) continue;
+    const referencePattern = new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
+    for (const m of allModules) {
+      if (m.files.some((f) => referencePattern.test(readText(join(repo, f))))) {
+        addOverviewEdge({ id: `${m.id}--${external.id}-d`, from: m.id, to: external.id,
+          kind: "data_flow", evidence: "inferred", confidence: 0.6, label: "delivers" });
+      }
+    }
+  }
+
   const emittedOverviewIds = new Set(overviewNodes.map((n) => n.id));
   const finalOverviewEdges = overviewEdges.filter((e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to));
 

@@ -291,3 +291,6 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .stats-card dl > div { display: flex; justify-content: space-between; gap: 16px; }
 .stats-card dt { text-transform: uppercase; letter-spacing: .1em; font-size: 9px; color: rgba(20,32,43,.55); }
 .stats-card dd { margin: 0; font-weight: 600; }
+
+/* Local additions: strip (band) headers in the left rail. */
+.rail-band { margin: 18px 0 6px; padding: 6px 8px; background: var(--ink); color: var(--paper); text-transform: uppercase; letter-spacing: .16em; font-size: 10px; }

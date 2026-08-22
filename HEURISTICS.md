@@ -97,18 +97,20 @@ omitted by design (only data flow is drawn).
 | ID | Signal | Action |
 | --- | --- | --- |
 | O1 | Single package | One district per top-level directory (S2 segmentation, so `src/` expands a level: src/lib, src/ingest, ...); multi-package repos get one district per package |
-| O2 | Module granularity inside a district | Subdirectories and standalone files are modules. The imported-loose-files bucket is dissolved: every file is its own module. Fan-in-0 modules are `composer` (front row); imported ones are `support` (row behind, 72% size, rendered as pyramids) |
+| O2 | Module granularity inside a district | Every file is its own module, wherever it sits in the tree (subdirectories such as src/lib/configuration are shown as their files, disambiguated by subdirectory when names collide). Fan-in-0 modules are `composer` (front row); imported ones are `support` (row behind, 72% size, rendered as ziggurats) |
 | O3 | Files matching `**/migrations/<digits>[-_.]...` | Collapse to one leaf module per migrations directory ("Migrations (N)") |
 | O4 | >=60% of a district's modules are utility (fan-in >= 2, instability <= 0.33) | District coloured as shared code (purple) instead of function area (teal) |
 | O5 | Lines of code and cyclomatic complexity | Height = 0.55 + loc/320 (floor 0.6, no ceiling); footprint = 0.85 + sqrt(complexity)/7 (clamped 0.95-3.4) |
 | O6 | TypeScript compiler API available | McCabe complexity per function (1 + decision points; logical operators and non-default `case` clauses count; nested functions counted separately), summed per file and module. Regex decision-point fallback otherwise |
-| O7 | Deployment shape | One "Infrastructure & external" district: image-only services on surviving hosts, backing stores from ANY compose variant (dev-only postgres), env-token externals (M6 scan), wrangler worker, drizzle database |
-| O8 | Flow edges | Declared collector chain from host-own configs (host-name and service-name matching as M5; a matched service resolves to the module owning its Dockerfile ENTRYPOINT); inferred OTLP producers -> gateway collector (M1 pattern); inferred database reads/writes (M8 patterns) against the database node |
+| O7 | Deployment shape | Per-host infrastructure districts: image-only services and backing stores (from ANY compose variant, attributed to the surviving host sharing services) sit in their host's district; env-token externals (M6 scan) get an "External systems" district |
+| O8 | Flow edges | Declared collector chain from host-own configs (host-name and service-name matching as M5; a matched service resolves to the module owning its Dockerfile ENTRYPOINT); inferred OTLP producers -> gateway collector (M1 pattern); inferred database reads/writes (M8 patterns); inferred `delivers` edges from modules referencing an external by SDK import or env prefix |
+| O9 | Deploy-host attribution | Files map to hosts via D3 COPY membership; a COPY coarser than room granularity (a dashboard image copying bare `src`) is ignored as packaging convenience. Modules carry `host:<name>` tags |
+| O10 | Bands | Districts arrange front-to-back: Shared & support (multi-host or unplaced code), Generators (undeployed OTLP producers), the host chain ordered by declared forwarding, External systems. Emitted as scope `display.flowLayer` plus a `band:<label>` tag; the viewer renders band names as rail headers and honours explicit district layers over edge inference |
 
 Failure modes: O4's 60% cut is untuned (src/core and src/providers read as
-function areas at file granularity); O7 groups all infrastructure into one
-district rather than locating services on their hosts; O6 attributes
-top-level statements' branches to the file rather than a function.
+function areas at file granularity); O6 attributes top-level statements'
+branches to the file rather than a function; O9 depends on Dockerfiles
+COPYing module-level dirs.
 
 ## Tuning constants
 
