@@ -27,6 +27,10 @@ const TEST_DIRS = new Set(["test", "tests", "__tests__", "test-database", "testi
 const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", "api"]);
+// Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
+// suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
+// map modes.
+const ENTRY_FILE_PATTERN = /(^|[-_.])(cli|cmd|command|main)$/;
 
 // Known container images -> infra classification.
 const IMAGE_CLASSES = [
@@ -92,7 +96,11 @@ function walk(root) {
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop();
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // Unreadable dirs (macOS-protected bundles like Photos Library) are
+    // skipped rather than crashing the walk.
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
       if (entry.name.startsWith(".") && entry.name !== ".github") continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -135,11 +143,20 @@ const { repo, outDir, modulesAsBuildings, overview } = parseArguments(process.ar
 // Experimental (--modules-as-buildings): every module node with >=2 files
 // becomes a building whose rooms are its files — a preview of "buildings
 // depict modules" while the room semantics are still undecided.
+// Kebab-flattened ids can collide across mechanisms (the file src/node.ts and
+// the room src/node/ both yield ...-src-node): suffix until free, checking
+// both emitted nodes and the room-id namespace still to be emitted.
+function uniqueNodeId(base) {
+  let id = base;
+  for (let n = 2; rooms.has(id) || nodes.some((x) => x.id === id); n += 1) id = `${base}-${n}`;
+  return id;
+}
+
 function pushFileRooms(parentId, files) {
   for (const file of files) {
     const name = basename(file).replace(/\.[a-z]+$/, "");
     nodes.push({
-      id: kebab(`${parentId}-${name}`),
+      id: uniqueNodeId(kebab(`${parentId}-${name}`)),
       label: titleCase(name),
       kind: "module", archetype: "room", parentId,
       description: `Source file ${file}.`,
@@ -757,6 +774,22 @@ for (let pass = 0; pass <= hosts.length; pass += 1) {
 }
 for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
 
+// Files referenced directly from a package.json script command (R1's script
+// roots) are declared entry points, whatever they are named. Shared by both
+// map modes.
+const scriptReferencedFiles = new Set();
+for (const pkg of packages) {
+  const manifest = readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {};
+  for (const command of Object.values(manifest.scripts ?? {})) {
+    for (const token of String(command).split(/\s+/)) {
+      const clean = token.replace(/^["']|["']$/g, "");
+      if (!/[./]/.test(clean) || clean.startsWith("-")) continue;
+      const candidate = join(pkg.dir === "." ? "" : pkg.dir, clean);
+      if (fileToRoom.has(candidate)) scriptReferencedFiles.add(candidate);
+    }
+  }
+}
+
 // --- Overview mode (--overview) ------------------------------------------------
 // A whole-codebase module overview: districts are directories (or packages in
 // a multi-package repo), every module is a structure, no edges. Composer
@@ -949,12 +982,17 @@ if (overview) {
       const asBuilding = m.files.length >= 2 && !m.collapsed;
       // Same classification as the deployment map: entry modules are gateways
       // (entry points), everything else a worker. At file granularity the
-      // entry name may be the file itself (src/cli.ts) rather than a dir —
-      // but only unambiguous entry names (api.ts is usually a client/types
-      // module, not an entry).
-      const ENTRY_FILE_NAMES = new Set(["cli", "cmd", "main"]);
-      const isEntryModule = m.path.split(sep).some((seg) => ENTRY_DIR_NAMES.has(seg))
-        || ENTRY_FILE_NAMES.has(basename(m.path).replace(/\.[a-z]+$/, ""));
+      // entry name may be the file itself — exactly cli/cmd/main, or the
+      // *-cli / *-command suffix convention (redeploy-cli.ts,
+      // delivery-command.ts). Bare api.ts stays a worker: usually a
+      // client/types module, not an entry.
+      // A file referenced from a package.json script is a DECLARED entry,
+      // whatever its name. Name-based entries (entry dirs, *-cli/*-command
+      // suffixes) only qualify as composers: an imported *-command file (a
+      // shared configured-command helper) is plumbing, not an entry.
+      const isEntryModule = m.files.some((f) => scriptReferencedFiles.has(f))
+        || (!m.support && (m.path.split(sep).some((seg) => ENTRY_DIR_NAMES.has(seg))
+          || ENTRY_FILE_PATTERN.test(basename(m.path).replace(/\.[a-z]+$/, ""))));
       overviewNodes.push({
         id: m.id, label: m.label, kind: "module",
         archetype: asBuilding ? "building" : isEntryModule ? "gateway" : "worker",
@@ -1300,10 +1338,28 @@ for (const room of rooms.values()) {
   const excluded = room.files.filter(isDevToolingFile);
   if (!excluded.length) continue;
   room.files = room.files.filter((f) => !isDevToolingFile(f));
+  // A room that lost QA files also sheds its file-level orphans: files
+  // referenced by no root whose importers are all themselves stripped are
+  // residue of the QA directory (an unwired coverage helper), not operational
+  // code. Iterated to a fixed point so residue-importing-residue goes too.
+  // OTLP producers stay, as in R3.
+  const strippedFiles = new Set(excluded);
+  const isQaResidue = (f) => !deployReachable.has(f) && !scriptReachable.has(f)
+    && fileEdges.every(({ from, to }) => to !== f || strippedFiles.has(from))
+    && !OTLP_PATTERN.test(readText(join(repo, f)));
+  const residue = [];
+  for (;;) {
+    const next = room.files.filter((f) => !strippedFiles.has(f) && isQaResidue(f));
+    if (!next.length) break;
+    for (const f of next) strippedFiles.add(f);
+    residue.push(...next);
+  }
+  room.files = room.files.filter((f) => !strippedFiles.has(f));
   room.loc = room.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+  const strippedCount = excluded.length + residue.length;
   devToolingWarnings.push(room.files.length
-    ? `Dev tooling stripped from ${room.segment}: ${excluded.length} QA-script file${excluded.length === 1 ? "" : "s"} (kept ${room.files.length} operational).`
-    : `Dev tooling excluded (reachable only from QA package.json scripts): ${room.segment} (${excluded.length} files).`);
+    ? `Dev tooling stripped from ${room.segment}: ${strippedCount} QA-script file${strippedCount === 1 ? "" : "s"} (kept ${room.files.length} operational).`
+    : `Dev tooling excluded (reachable only from QA package.json scripts): ${room.segment} (${strippedCount} files).`);
 }
 
 // --- 6c. Cross-package path references --------------------------------------------
@@ -1745,13 +1801,17 @@ for (const pkg of packages) {
         // Loose imported files ("Support files") and lib children are shared
         // plumbing, not deployment shape: excluded by decision.
         if (child.seg === "(files)" || child.seg === "lib") continue;
-        const childId = kebab(`${room.id}-${child.seg}`);
+        const childId = uniqueNodeId(kebab(`${room.id}-${child.seg}`));
         const childLoc = child.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
         const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
+        // Same entry classification as the overview (O2): a script-referenced
+        // file or an entry-named loose file (redeploy-cli) is an entry point.
+        const childIsEntry = child.files.some((f) => scriptReferencedFiles.has(f))
+          || (child.files.length === 1 && ENTRY_FILE_PATTERN.test(child.seg));
         nodes.push({
           id: childId,
           label: titleCase(child.seg),
-          kind: "module", archetype: childAsBuilding ? "building" : "worker",
+          kind: "module", archetype: childAsBuilding ? "building" : childIsEntry ? "gateway" : "worker",
           parentId: districtId,
           description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
           sourceRefs: childSourceRefs(room, child),
@@ -1784,7 +1844,7 @@ for (const pkg of packages) {
       for (const child of children) {
         if (child.seg === "lib") continue; // shared plumbing, not shape
         nodes.push({
-          id: kebab(`${room.id}-${child.seg}`),
+          id: uniqueNodeId(kebab(`${room.id}-${child.seg}`)),
           label: child.seg === "(files)" ? "Top-level files" : titleCase(child.seg),
           kind: "module", archetype: "room",
           parentId: room.id,

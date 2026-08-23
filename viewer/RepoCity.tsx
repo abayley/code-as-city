@@ -1042,6 +1042,8 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
   const [listing, setListing] = useState<Listing | null>(null);
   const [busy, setBusy] = useState<false | "overview" | "deployment">(false);
   const [error, setError] = useState<string | null>(null);
+  // Roving highlight over the folder list: 0 is "../", entries follow.
+  const [highlight, setHighlight] = useState(0);
 
   const load = useCallback(async (path?: string) => {
     try {
@@ -1049,12 +1051,62 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
       const data = await response.json();
       if (data.error) throw new Error(data.error);
       setListing(data);
+      setHighlight(0);
       setError(null);
     } catch (browseError) {
       setError(browseError instanceof Error ? browseError.message : String(browseError));
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Keyboard: arrows move the highlight, Enter/Right opens the highlighted
+  // folder, Left goes up, typing jumps to the first matching folder
+  // (type-ahead, 1s reset), Cmd/Ctrl+Enter generates the deployment map,
+  // Cmd/Ctrl+Shift+Enter the module overview, Esc clears type-ahead then cancels.
+  const typeAhead = useRef<{ text: string; timer: ReturnType<typeof setTimeout> | null }>({ text: "", timer: null });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const consume = () => { event.stopPropagation(); event.preventDefault(); };
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        consume();
+        generateRef.current(event.shiftKey);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Type-ahead: printable characters accumulate and jump the highlight.
+      if (event.key.length === 1 && /[\w.-]/.test(event.key) && listing) {
+        consume();
+        if (typeAhead.current.timer) clearTimeout(typeAhead.current.timer);
+        typeAhead.current.text += event.key.toLowerCase();
+        typeAhead.current.timer = setTimeout(() => { typeAhead.current.text = ""; }, 1000);
+        const index = listing.entries.findIndex((entry) => entry.name.toLowerCase().startsWith(typeAhead.current.text));
+        if (index >= 0) setHighlight(index + 1);
+        return;
+      }
+      const rowCount = 1 + (listing?.entries.length ?? 0);
+      const open = () => {
+        if (!listing) return;
+        load(highlight === 0 ? listing.parent : listing.entries[highlight - 1]?.path);
+      };
+      const handlers: Record<string, () => void> = {
+        Escape: () => {
+          if (typeAhead.current.text) { typeAhead.current.text = ""; return; }
+          onClose();
+        },
+        ArrowDown: () => setHighlight((value) => Math.min(rowCount - 1, value + 1)),
+        ArrowUp: () => setHighlight((value) => Math.max(0, value - 1)),
+        ArrowRight: open,
+        Enter: open,
+        ArrowLeft: () => { if (listing) load(listing.parent); },
+      };
+      const handler = handlers[event.key];
+      if (!handler) return;
+      consume();
+      handler();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [highlight, listing, load, onClose]);
 
   async function generate(overview: boolean) {
     if (!listing || busy) return;
@@ -1076,6 +1128,8 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
       setBusy(false);
     }
   }
+  const generateRef = useRef(generate);
+  generateRef.current = generate;
 
   return (
     <div className="folder-overlay" role="dialog" aria-label="Map a folder">
@@ -1084,12 +1138,20 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
         {listing && <>
           <div className="folder-path"><code>{listing.path}</code>{listing.isRepo && <span className="repo-badge">git</span>}</div>
           <div className="folder-list">
-            <button type="button" onClick={() => load(listing.parent)}>../</button>
-            {listing.entries.map((entry) => <button type="button" key={entry.path} onClick={() => load(entry.path)}>{entry.name}/</button>)}
+            <button type="button" className={highlight === 0 ? "highlighted" : undefined} onClick={() => load(listing.parent)}>../</button>
+            {listing.entries.map((entry, index) => (
+              <button
+                type="button"
+                key={entry.path}
+                className={highlight === index + 1 ? "highlighted" : undefined}
+                ref={(element) => { if (element && highlight === index + 1) element.scrollIntoView({ block: "nearest" }); }}
+                onClick={() => load(entry.path)}
+              >{entry.name}/</button>
+            ))}
           </div>
           <footer className="folder-actions">
-            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(true)}>{busy === "overview" ? "Generating…" : "Module overview"}</button>
-            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(false)}>{busy === "deployment" ? "Generating…" : "Deployment map"}</button>
+            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(false)}>{busy === "deployment" ? "Generating…" : <>Deployment map <kbd>⌘↵</kbd></>}</button>
+            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(true)}>{busy === "overview" ? "Generating…" : <>Module overview <kbd>⌘⇧↵</kbd></>}</button>
           </footer>
         </>}
         {error && <p className="folder-error">{error}</p>}

@@ -5,6 +5,8 @@ Prototype answering one question: **how useful is a fully deterministic
 
 Throwaway code. No tests, minimal error handling, mechanical naming by design.
 
+Copied and tweaked the renderer from <https://github.com/nem035/functionary.dev>.
+
 ## Inspiration
 
 - <https://x.com/fleetingbits/status/2088016749849682120>
