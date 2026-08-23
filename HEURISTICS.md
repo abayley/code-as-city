@@ -36,7 +36,7 @@ threshold is untuned beyond the test repos.
 | --- | --- | --- |
 | D1 | `docker-compose*.yml` | One host district per compose file. Overlays (`*.override.yml`, `*.build.yml`) skipped. Environment variants deduped when a higher-ranked host covers >=50% of a host's services; rank prod > uat/staging > example > unqualified > dev |
 | D2 | Compose file path | Host name from informative path segments (generic segments like `deploy` dropped) |
-| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms; ENTRYPOINT/CMD names the entry room |
+| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms; ENTRYPOINT/CMD names the entry room. A `*-command` entry file names the building (Delivery Command, not the compose service name delivery-worker) |
 | D4 | Crontab line running `compose run <service>` | Service tagged `cron` (scheduled job), schedule recorded |
 | D5 | Container image name, else service name (`database`, `redis`, `proxy`, ...) | Infra classification: database/queue/storage/gateway/cloud |
 | D6 | `depends_on`, harvested across ALL compose variants by service name | `depends_on` edges between the surviving host's services. A dependency only present in a deduped variant (dev-only database container) is carried onto the host as an infra node |
@@ -62,7 +62,8 @@ Computed from the import graph; matches archunitts fan-in/fan-out/instability
 | --- | --- | --- |
 | C1 | All import edges | Per-file and per-room fan-in, fan-out, instability; written to `coupling.json` |
 | C2 | Room fan-in >= 3 and instability <= 0.25, and NO file in the room is significantly mid-coupled (degree >= 5, 0.25 < instability < 0.8) | Room eliminated as a shared utility leaf. A mid-coupled file (e.g. an annotation-store) anchors its room against elimination |
-| C3 | Eliminated rooms exist for a package | They reappear once as a "Shared libraries" structure with aggregated import-count edges from every campus node using them. Parented to the package's district when it exists; district-less (implicit System neighbourhood) only when it does not |
+| C3 | RETIRED | Eliminated rooms formerly reappeared as per-district "Shared libraries" copies; dropped by decision (repeated noise). Shared code is simply removed from the deployment map. Overview mode still shows every file. |
+| C4 | Room (or service COPY, or building child) named `lib` | Excluded from the deployment map by decision: shared plumbing, not deployment shape. Residual "(files)"/"Support files" campus groupings likewise |
 
 Failure modes: C2 thresholds validated only on aria-evals/functionary.dev/
 aria-tools; C2 fires on self-contained tools whose lib serves one package
@@ -88,10 +89,12 @@ thing keeping unreferenced-but-meaningful producers (plugins/) on the map.
 | --- | --- | --- |
 | M1 | A promoted node's source references `@opentelemetry/`, `otlp`, or `OTEL_EXPORTER` and a collector node exists | Inferred `data_flow` edge (confidence 0.7, "OTLP export") to the collector, preferring the gateway host's |
 | M2 | Entry rooms (`bin`, `app`, `routes`, ...) and the room import graph | `flowLayer` by longest path from entries; infra sits downstream |
-| M3 | Package districts | Never wrap a single synthetic building: rooms are promoted into the district (entry dirs as gateways, structured dirs as buildings). Residual packages (partly claimed by compose services) instead yield a district per structured dir and district-less nodes for flat dirs |
+| M3 | Package districts | Never wrap a single synthetic building: rooms are promoted into the district (entry dirs as gateways, structured dirs as buildings). Residual packages (partly claimed by compose services) instead yield a district per structured dir and district-less nodes for flat dirs. (A coarse-COPY-to-host attribution rule was tried and reverted: baked-in-but-unreferenced tooling dirs do not belong on the host) |
+| M9 | Host districts | Explicit `display.flowLayer` = 1000 + position in the declared forwarding chain (M5 scan: gateway before stack before evaluation), so hosts always sit behind the code districts and edge cycles (evaluation <-> bootstrap) cannot scramble their row order |
+| M10 | A node's files reference an external by SDK import or env-var prefix | Inferred `data_flow` "delivers" edge (confidence 0.6) node -> external, in the deployment map as in overview O8 |
 | M4 | Assembly complete | Final sweep drops any edge whose endpoint was excluded by a later rule |
 | M5 | Host config exporter endpoint/env lines matching another host's name or another host's service name (kebab~snake normalised, >=6 chars) | Declared `data_flow` between the hosts' primary services (gateway collector -> stack collector; stack collector -> span-ingest) |
-| M6 | Exporter endpoint env token naming nothing internal (LANGFUSE_OTLP_ENDPOINT), with a +/-4-line window guard against internally-named blocks | Declared external cloud node with a `data_flow` edge from the exporting service |
+| M6 | Exporter endpoint env token naming nothing internal (LANGFUSE_OTLP_ENDPOINT), with a +/-4-line window guard against internally-named blocks | Declared external cloud node with a `data_flow` edge from the exporting service. Externals (M6, D11, D12) share one "External systems" district behind the host chain — they are their own systems, not tenants of the host whose config mentions them |
 | M7 | A campus node's files start a server (Bun.serve, .listen, createServer) or construct HTTP clients (fetch, axios) | Tags `listens` / `http-client` |
 | M8 | A campus node's files contain SQL write forms (`insert into`, `delete from`, `update ... set`) or ORM write calls on a database-ish receiver (`db.insert(...)`); reads via `select ... from` / `db.select(` | Inferred `data_flow` (confidence 0.75): writes flow node -> database, reads flow database -> node; target is the same-district database node, else the map's only one |
 

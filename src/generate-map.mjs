@@ -686,6 +686,77 @@ for (const file of workflowFiles) {
   }
 }
 
+// Host config scan: externals, host-to-host forwarding, host-to-service
+// forwarding — computed once, used for districts, infra, and edges.
+const hostScan = hosts.map((host) => {
+  const hostDir = dirname(host.file);
+  const hostQualifiers = host.name.split(" ").filter(Boolean);
+  const result = { host, externals: [], hostTargets: new Set(), serviceTargets: [], configs: [] };
+  const internalNames = new Set([
+    ...hosts.flatMap((h) => h.name.split(" ")),
+    ...hosts.flatMap((h) => h.services.map((s) => s.name)),
+  ].map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
+  for (const config of allFiles.filter((f) => dirname(f) === hostDir && /\.ya?ml$/.test(f)
+    && !/docker-compose/.test(basename(f)) && hostQualifiers.some((token) => basename(f).includes(token)))) {
+    result.configs.push(config);
+    const rawLines = readText(join(repo, config)).split("\n");
+    rawLines.forEach((line, index) => {
+      const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
+      if (!envToken) return;
+      const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
+      const candidate = envToken.split("_")
+        .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
+        .join(" ").toLowerCase();
+      if (candidate.length >= 4 && !result.externals.some((e) => e.candidate === candidate)) {
+        result.externals.push({ candidate, config });
+      }
+    });
+    const exportLines = rawLines.filter((l) => /endpoint:|\$\{env:/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    for (const other of hosts) {
+      if (other === host) continue;
+      const distinct = other.name.split(" ").filter((t) => t && !hostQualifiers.includes(t)).map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
+      if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
+        result.hostTargets.add(other.name);
+      }
+      for (const service of other.services) {
+        const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (normalised.length >= 6 && exportLines.some((l) => l.includes(normalised))) {
+          result.serviceTargets.push({ service, otherHost: other.name, config });
+          result.hostTargets.add(other.name);
+        }
+      }
+    }
+  }
+  return result;
+});
+
+// Host flow bands from the declared forwarding chain: gateway 1, stack 2,
+// evaluation 3, ... (band 0 is reserved for producers, externals go behind
+// the last host, shared code behind that).
+const hostLayer = new Map();
+const forwardingHosts = new Set(hostScan.flatMap((scan) => scan.hostTargets.size ? [scan.host.name, ...scan.hostTargets] : []));
+for (const scan of hostScan) {
+  if (forwardingHosts.has(scan.host.name) && ![...hostScan].some((other) => other.hostTargets.has(scan.host.name))) {
+    hostLayer.set(scan.host.name, 0);
+  }
+}
+for (let pass = 0; pass <= hosts.length; pass += 1) {
+  let changed = false;
+  for (const scan of hostScan) {
+    if (!hostLayer.has(scan.host.name)) continue;
+    for (const target of scan.hostTargets) {
+      const proposed = hostLayer.get(scan.host.name) + 1;
+      if ((hostLayer.get(target) ?? -1) < proposed && proposed <= hosts.length) {
+        hostLayer.set(target, proposed);
+        changed = true;
+      }
+    }
+  }
+  if (!changed) break;
+}
+for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
+
 // --- Overview mode (--overview) ------------------------------------------------
 // A whole-codebase module overview: districts are directories (or packages in
 // a multi-package repo), every module is a structure, no edges. Composer
@@ -732,76 +803,6 @@ if (overview) {
     return result;
   };
 
-  // Host config scan: externals, host-to-host forwarding, host-to-service
-  // forwarding — computed once, used for districts, infra, and edges.
-  const hostScan = hosts.map((host) => {
-    const hostDir = dirname(host.file);
-    const hostQualifiers = host.name.split(" ").filter(Boolean);
-    const result = { host, externals: [], hostTargets: new Set(), serviceTargets: [], configs: [] };
-    const internalNames = new Set([
-      ...hosts.flatMap((h) => h.name.split(" ")),
-      ...hosts.flatMap((h) => h.services.map((s) => s.name)),
-    ].map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
-    for (const config of allFiles.filter((f) => dirname(f) === hostDir && /\.ya?ml$/.test(f)
-      && !/docker-compose/.test(basename(f)) && hostQualifiers.some((token) => basename(f).includes(token)))) {
-      result.configs.push(config);
-      const rawLines = readText(join(repo, config)).split("\n");
-      rawLines.forEach((line, index) => {
-        const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
-        if (!envToken) return;
-        const windowText = rawLines.slice(Math.max(0, index - 4), index + 5).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
-        if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
-        const candidate = envToken.split("_")
-          .filter((word) => !["OTLP", "HTTP", "GRPC", "ENDPOINT", "URL", "ADDR", "HOST", "PROD", "UAT", "DEV", "TEST", "STAGING"].includes(word))
-          .join(" ").toLowerCase();
-        if (candidate.length >= 4 && !result.externals.some((e) => e.candidate === candidate)) {
-          result.externals.push({ candidate, config });
-        }
-      });
-      const exportLines = rawLines.filter((l) => /endpoint:|\$\{env:/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
-      for (const other of hosts) {
-        if (other === host) continue;
-        const distinct = other.name.split(" ").filter((t) => t && !hostQualifiers.includes(t)).map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
-        if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
-          result.hostTargets.add(other.name);
-        }
-        for (const service of other.services) {
-          const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (normalised.length >= 6 && exportLines.some((l) => l.includes(normalised))) {
-            result.serviceTargets.push({ service, otherHost: other.name, config });
-            result.hostTargets.add(other.name);
-          }
-        }
-      }
-    }
-    return result;
-  });
-
-  // Host flow bands from the declared forwarding chain: gateway 1, stack 2,
-  // evaluation 3, ... (band 0 is reserved for producers, externals go behind
-  // the last host, shared code behind that).
-  const hostLayer = new Map();
-  const forwardingHosts = new Set(hostScan.flatMap((scan) => scan.hostTargets.size ? [scan.host.name, ...scan.hostTargets] : []));
-  for (const scan of hostScan) {
-    if (forwardingHosts.has(scan.host.name) && ![...hostScan].some((other) => other.hostTargets.has(scan.host.name))) {
-      hostLayer.set(scan.host.name, 0);
-    }
-  }
-  for (let pass = 0; pass <= hosts.length; pass += 1) {
-    let changed = false;
-    for (const scan of hostScan) {
-      if (!hostLayer.has(scan.host.name)) continue;
-      for (const target of scan.hostTargets) {
-        const proposed = hostLayer.get(scan.host.name) + 1;
-        if ((hostLayer.get(target) ?? -1) < proposed && proposed <= hosts.length) {
-          hostLayer.set(target, proposed);
-          changed = true;
-        }
-      }
-    }
-    if (!changed) break;
-  }
-  for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
   // Band order: shared/support strip in front (band 0), then generators,
   // then the host chain, externals behind the last host.
   const SHARED_BAND = 0;
@@ -1357,11 +1358,30 @@ function addEdge(edge) {
   edges.push(edge);
 }
 
-// 7a. Host districts from deployment shape.
+// 7a. Host districts from deployment shape. Hosts carry explicit flow layers
+// from the declared forwarding chain (gateway before stack before evaluation)
+// with a large base, so they always sit behind the code districts and edge
+// cycles (evaluation <-> bootstrap) cannot scramble their order.
+const HOST_LAYER_BASE = 1000;
+// Externals are their own systems, not tenants of whichever host's config
+// mentions them: they share one district behind the host chain (as overview
+// mode's O7 does).
+const EXTERNALS_DISTRICT_ID = "external-systems";
+const ensureExternalsDistrict = () => {
+  if (!nodes.some((n) => n.id === EXTERNALS_DISTRICT_ID)) {
+    nodes.push({
+      id: EXTERNALS_DISTRICT_ID, label: "External systems", kind: "scope", archetype: "district",
+      description: "Externally hosted systems this deployment exchanges data with.",
+      display: { flowLayer: HOST_LAYER_BASE + 500 },
+    });
+  }
+  return EXTERNALS_DISTRICT_ID;
+};
 for (const host of hosts) {
   nodes.push({
     id: host.id, label: `${titleCase(host.name)} host`, kind: "scope", archetype: "district",
     description: `Deployment host projected from ${host.file}.`,
+    display: { flowLayer: HOST_LAYER_BASE + (hostLayer.get(host.name) ?? 0) },
   });
   for (const service of host.services) {
     const serviceId = kebab(`${host.id}-${service.name}`);
@@ -1374,6 +1394,7 @@ for (const host of hosts) {
       return sample ? fileToRoom.get(sample)?.id : null;
     };
     const copiedSegments = allCopiedSegments.filter((copy) => {
+      if (basename(copy) === "lib") return false; // shared plumbing, not shape
       const roomId = roomIdForCopy(copy);
       return !(roomId && isUtilityRoom(roomId));
     });
@@ -1391,9 +1412,12 @@ for (const host of hosts) {
     const flowLayer = service.imageClass === "database" || service.imageClass === "queue"
       || service.imageClass === "storage" ? 2 : service.hasPorts && !service.dockerfile ? 0
       : isScheduled ? 1 : service.dockerfile ? 1 : 1;
+    // A service whose entrypoint is a *-command file is labelled by that
+    // command (Delivery Command, not the compose service name delivery-worker).
+    const entryName = service.entryFile ? basename(service.entryFile).replace(/\.[a-z]+$/, "") : null;
     nodes.push({
       id: serviceId,
-      label: titleCase(service.name),
+      label: titleCase(entryName?.endsWith("-command") ? entryName : service.name),
       kind: service.dockerfile ? "deployable" : "infra",
       archetype,
       parentId: host.id,
@@ -1554,7 +1578,7 @@ for (const host of hosts) {
       if (!nodes.some((n) => n.id === externalId)) {
         nodes.push({
           id: externalId, label: titleCase(candidate), kind: "external", archetype: "cloud",
-          parentId: host.id,
+          parentId: ensureExternalsDistrict(),
           description: `External receiver declared by the ${host.name} host's exporter configuration (${envToken}).`,
           sourceRefs: [{ path: config }],
           display: { flowLayer: 4 },
@@ -1650,6 +1674,9 @@ for (const pkg of packages) {
     if (room.pkg !== pkg || room.files.length === 0) return false;
     if (claimedSegments.has(pkg.dir === "." ? room.segment : join(pkg.dir, room.segment))) return false;
     if (isUtilityRoom(room.id)) return false;
+    // lib rooms are shared plumbing, not deployment shape: excluded by
+    // decision, like the C2-eliminated utility rooms.
+    if (basename(room.segment) === "lib") return false;
     // Orphans: imported by nothing, reachable from nothing, no OTLP coupling,
     // not an entry dir, not referenced by path from another package. Sample
     // and demo material (examples/) falls out here.
@@ -1715,12 +1742,15 @@ for (const pkg of packages) {
         description: `Standalone area: ${room.segment}/.`,
       });
       for (const child of children) {
+        // Loose imported files ("Support files") and lib children are shared
+        // plumbing, not deployment shape: excluded by decision.
+        if (child.seg === "(files)" || child.seg === "lib") continue;
         const childId = kebab(`${room.id}-${child.seg}`);
         const childLoc = child.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
         const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
         nodes.push({
           id: childId,
-          label: child.seg === "(files)" ? "Support files" : titleCase(child.seg),
+          label: titleCase(child.seg),
           kind: "module", archetype: childAsBuilding ? "building" : "worker",
           parentId: districtId,
           description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
@@ -1752,6 +1782,7 @@ for (const pkg of packages) {
     if (leafAsBuilding) pushFileRooms(room.id, room.files);
     if (expandable) {
       for (const child of children) {
+        if (child.seg === "lib") continue; // shared plumbing, not shape
         nodes.push({
           id: kebab(`${room.id}-${child.seg}`),
           label: child.seg === "(files)" ? "Top-level files" : titleCase(child.seg),
@@ -1793,66 +1824,10 @@ if (collectorTarget) {
   }
 }
 
-// 7c-iii. Shared libraries: each district keeps its own copy. This is the
-// deployment truth (every service image bakes in the shared modules it
-// imports) and keeps the edges short. Importers without a district share one
-// floating copy in the implicit System neighbourhood.
-const scopeIdSet = new Set(nodes.filter((n) => n.kind === "scope").map((n) => n.id));
-const districtOfNode = new Map(nodes
-  .filter((n) => n.parentId && scopeIdSet.has(n.parentId))
-  .map((n) => [n.id, n.parentId]));
-const packagesWithEliminations = [...new Set(
-  eliminatedRooms.map((r) => rooms.get(r.id).pkg))];
-for (const pkg of packagesWithEliminations) {
-  const pkgEliminated = eliminatedRooms.filter((r) => rooms.get(r.id).pkg === pkg);
-  const totalLoc = pkgEliminated.reduce((sum, r) => sum + rooms.get(r.id).loc, 0);
-  const modules = pkgEliminated.map((r) => r.segment).join(", ");
-  // Importer counts, grouped by the importer's district.
-  const importsByDistrict = new Map(); // districtId|"" -> Map(owner -> count)
-  for (const { from, to } of fileEdges) {
-    const targetRoom = fileToRoom.get(to);
-    if (!targetRoom || targetRoom.pkg !== pkg || !eliminatedRoomIds.has(targetRoom.id)) continue;
-    const owner = fileNodeOwner.get(from);
-    if (!owner || !nodes.some((n) => n.id === owner)) continue;
-    const district = districtOfNode.get(owner) ?? "";
-    if (!importsByDistrict.has(district)) importsByDistrict.set(district, new Map());
-    const counts = importsByDistrict.get(district);
-    counts.set(owner, (counts.get(owner) ?? 0) + 1);
-  }
-  for (const [district, counts] of importsByDistrict) {
-    const copyId = kebab(`${district || pkg.id}-shared-libraries`);
-    const copyAsBuilding = modulesAsBuildings && pkgEliminated.length >= 2;
-    if (!nodes.some((n) => n.id === copyId)) {
-      nodes.push({
-        id: copyId, label: "Shared libraries", kind: "module",
-        archetype: copyAsBuilding ? "building" : "storage",
-        ...(district ? { parentId: district } : {}),
-        description: `This district's copy of the shared utility modules (high fan-in, low fan-out): ${modules}.`,
-        sourceRefs: pkgEliminated.map((r) => ({ path: roomDir(rooms.get(r.id)) })),
-        metrics: { loc: totalLoc },
-        display: { flowLayer: 3 },
-      });
-      if (copyAsBuilding) {
-        for (const r of pkgEliminated) {
-          const moduleRoom = rooms.get(r.id);
-          nodes.push({
-            id: kebab(`${copyId}-${r.segment}`),
-            label: titleCase(r.segment.split(sep).join(" / ")),
-            kind: "module", archetype: "room", parentId: copyId,
-            description: `Fan-in ${r.in}, fan-out ${r.out}, instability ${r.instability.toFixed(2)}.`,
-            sourceRefs: [{ path: roomDir(moduleRoom) }],
-          });
-        }
-      }
-    }
-    for (const [owner, count] of counts) {
-      if (owner === copyId) continue;
-      addEdge({ id: `${owner}--${copyId}`, from: owner, to: copyId,
-        kind: "depends_on", evidence: "declared",
-        label: `${count} import${count === 1 ? "" : "s"}` });
-    }
-  }
-}
+// 7c-iii (removed): eliminated shared-utility rooms used to reappear as a
+// per-district "Shared libraries" copy. Dropped by decision — the copies
+// repeated across every district without adding information; C2 elimination
+// now simply removes shared code from the deployment map.
 
 // 7d. Room-level and package-level import edges (only between nodes that exist).
 const nodeIds = new Set(nodes.map((n) => n.id));
@@ -2000,6 +1975,7 @@ for (const workflow of ciWorkflows) {
     if (!nodes.some((n) => n.id === storeId)) {
       nodes.push({
         id: storeId, label: workflow.storage.label, kind: "external", archetype: "storage",
+        parentId: ensureExternalsDistrict(),
         description: `Object store addressed from CI workflows.`,
         sourceRefs: [{ path: workflow.file }],
         display: { flowLayer: 2 },
@@ -2065,6 +2041,7 @@ for (const pkg of packages) {
     if (!nodes.some((n) => n.id === externalId)) {
       nodes.push({
         id: externalId, label: hostname, kind: "external", archetype: "cloud",
+        parentId: ensureExternalsDistrict(),
         description: `External service configured in ${configFile}.`,
         sourceRefs: [{ path: configFile }],
         display: { flowLayer: 0 },
@@ -2094,6 +2071,22 @@ const districtLookup = new Map(nodes
   .filter((n) => n.parentId && nodes.some((s) => s.id === n.parentId && s.kind === "scope"))
   .map((n) => [n.id, n.parentId]));
 const databaseNodes = nodes.filter((n) => n.archetype === "database");
+
+// 7f-i. Nodes referencing an external by SDK import or env-var prefix deliver
+// data to it (the delivery command pushing scores into Langfuse/Latitude).
+// Mirrors overview mode's delivers inference.
+for (const external of nodes.filter((n) => n.kind === "external")) {
+  const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (name.length < 4) continue;
+  const referencePattern = new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
+  for (const { id, files } of classificationSets) {
+    if (id === external.id || !files.length) continue;
+    if (files.some((f) => referencePattern.test(readText(join(repo, f))))) {
+      addEdge({ id: `${id}--${external.id}-d`, from: id, to: external.id,
+        kind: "data_flow", evidence: "inferred", confidence: 0.6, label: "delivers" });
+    }
+  }
+}
 
 for (const { id, files } of classificationSets) {
   const node = nodes.find((n) => n.id === id);

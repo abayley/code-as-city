@@ -386,3 +386,176 @@ export function flowStageLabel(layer: number, maxLayer: number) {
   if (ratio <= 0.68) return "Core compute";
   return "Runtime & data";
 }
+
+// Local addition: deterministic ground-plane edge routing. Edges route around
+// buildings and prefer the gaps between district plots instead of cutting
+// straight through them. A* on a coarse grid with a turn penalty keeps the
+// paths Manhattan-like; building cells are near-impassable, district
+// interiors carry a soft penalty (endpoints still need to get in and out).
+export function computeEdgeRoutes(
+  edges: CityEdge[],
+  layout: FlowLayout,
+  allNodes: CityNode[],
+): Map<string, Array<[number, number]>> {
+  const routes = new Map<string, Array<[number, number]>>();
+  const cell = 0.7;
+  const margin = 3;
+  const minX = layout.bounds.minX - margin;
+  const maxX = layout.bounds.maxX + margin;
+  const minZ = layout.bounds.minZ - margin;
+  const maxZ = layout.bounds.maxZ + margin;
+  const cols = Math.max(1, Math.ceil((maxX - minX) / cell));
+  const rows = Math.max(1, Math.ceil((maxZ - minZ) / cell));
+  if (cols * rows > 250_000) return routes; // absurd map: keep the simple paths
+
+  const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
+  const columnOf = (x: number) => clamp(Math.floor((x - minX) / cell), 0, cols - 1);
+  const rowOf = (z: number) => clamp(Math.floor((z - minZ) / cell), 0, rows - 1);
+  const indexOf = (column: number, row: number) => row * cols + column;
+  const worldOf = (index: number): [number, number] => [
+    minX + (index % cols) * cell + cell / 2,
+    minZ + Math.floor(index / cols) * cell + cell / 2,
+  ];
+
+  const DISTRICT_COST = 3;
+  const BUILDING_COST = 200;
+  const TURN_COST = 2.5;
+
+  const cost = new Float32Array(cols * rows).fill(1);
+  const rasterise = (bounds: { minX: number; maxX: number; minZ: number; maxZ: number }, value: number, cells?: Set<number>) => {
+    for (let row = rowOf(bounds.minZ); row <= rowOf(bounds.maxZ); row += 1) {
+      for (let column = columnOf(bounds.minX); column <= columnOf(bounds.maxX); column += 1) {
+        const index = indexOf(column, row);
+        cost[index] = Math.max(cost[index], value);
+        cells?.add(index);
+      }
+    }
+  };
+
+  for (const neighborhood of layout.neighborhoods) {
+    if (neighborhood.id.startsWith("__")) continue;
+    rasterise(neighborhood.bounds, DISTRICT_COST);
+  }
+  const nodeCells = new Map<string, Set<number>>();
+  for (const node of allNodes) {
+    const position = layout.positions.get(node.id);
+    if (!position) continue;
+    const [width, , depth] = node.display?.size ?? [1.65, 1.2, 1.4];
+    const pad = 0.3;
+    const cells = new Set<number>();
+    rasterise({
+      minX: position[0] - width / 2 - pad, maxX: position[0] + width / 2 + pad,
+      minZ: position[1] - depth / 2 - pad, maxZ: position[1] + depth / 2 + pad,
+    }, BUILDING_COST, cells);
+    nodeCells.set(node.id, cells);
+  }
+
+  // Binary min-heap over [priority, state] pairs.
+  const heapPriority: number[] = [];
+  const heapState: number[] = [];
+  const heapPush = (priority: number, state: number) => {
+    let i = heapPriority.length;
+    heapPriority.push(priority);
+    heapState.push(state);
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (heapPriority[parent] <= heapPriority[i]) break;
+      [heapPriority[parent], heapPriority[i]] = [heapPriority[i], heapPriority[parent]];
+      [heapState[parent], heapState[i]] = [heapState[i], heapState[parent]];
+      i = parent;
+    }
+  };
+  const heapPop = (): number => {
+    const top = heapState[0];
+    const lastPriority = heapPriority.pop()!;
+    const lastState = heapState.pop()!;
+    if (heapPriority.length) {
+      heapPriority[0] = lastPriority;
+      heapState[0] = lastState;
+      let i = 0;
+      for (;;) {
+        const left = i * 2 + 1;
+        const right = left + 1;
+        let smallest = i;
+        if (left < heapPriority.length && heapPriority[left] < heapPriority[smallest]) smallest = left;
+        if (right < heapPriority.length && heapPriority[right] < heapPriority[smallest]) smallest = right;
+        if (smallest === i) break;
+        [heapPriority[smallest], heapPriority[i]] = [heapPriority[i], heapPriority[smallest]];
+        [heapState[smallest], heapState[i]] = [heapState[i], heapState[smallest]];
+        i = smallest;
+      }
+    }
+    return top;
+  };
+
+  const DX = [1, -1, 0, 0];
+  const DZ = [0, 0, 1, -1];
+
+  for (const edge of edges) {
+    const from = layout.positions.get(edge.from);
+    const to = layout.positions.get(edge.to);
+    if (!from || !to) continue;
+    const exempt = new Set<number>([
+      ...(nodeCells.get(edge.from) ?? []),
+      ...(nodeCells.get(edge.to) ?? []),
+    ]);
+    const startIndex = indexOf(columnOf(from[0]), rowOf(from[1]));
+    const goalIndex = indexOf(columnOf(to[0]), rowOf(to[1]));
+    const goalColumn = goalIndex % cols;
+    const goalRow = Math.floor(goalIndex / cols);
+    // State: cell * 4 + incoming direction (direction 0 seeds the start).
+    const best = new Map<number, number>();
+    const cameFrom = new Map<number, number>();
+    heapPriority.length = 0;
+    heapState.length = 0;
+    for (let direction = 0; direction < 4; direction += 1) {
+      const state = startIndex * 4 + direction;
+      best.set(state, 0);
+      heapPush(0, state);
+    }
+    let goalState = -1;
+    let expansions = 0;
+    while (heapPriority.length && expansions < 60_000) {
+      expansions += 1;
+      const state = heapPop();
+      const index = state >> 2;
+      const direction = state & 3;
+      if (index === goalIndex) { goalState = state; break; }
+      const g = best.get(state)!;
+      const column = index % cols;
+      const row = Math.floor(index / cols);
+      for (let next = 0; next < 4; next += 1) {
+        const nextColumn = column + DX[next];
+        const nextRow = row + DZ[next];
+        if (nextColumn < 0 || nextColumn >= cols || nextRow < 0 || nextRow >= rows) continue;
+        const nextIndex = indexOf(nextColumn, nextRow);
+        const stepCost = exempt.has(nextIndex) ? 1 : cost[nextIndex];
+        const nextG = g + stepCost + (next === direction ? 0 : TURN_COST);
+        const nextState = nextIndex * 4 + next;
+        if ((best.get(nextState) ?? Infinity) <= nextG) continue;
+        best.set(nextState, nextG);
+        cameFrom.set(nextState, state);
+        const h = Math.abs(nextColumn - goalColumn) + Math.abs(nextRow - goalRow);
+        heapPush(nextG + h, nextState);
+      }
+    }
+    if (goalState < 0) continue;
+    const cellPath: number[] = [];
+    for (let state: number | undefined = goalState; state !== undefined; state = cameFrom.get(state)) {
+      cellPath.push(state >> 2);
+    }
+    cellPath.reverse();
+    // Exact endpoints, grid cells between, collinear runs collapsed.
+    const waypoints: Array<[number, number]> = [from, ...cellPath.map(worldOf), to];
+    const simplified: Array<[number, number]> = [waypoints[0]];
+    for (let i = 1; i < waypoints.length - 1; i += 1) {
+      const [previous, current, following] = [simplified[simplified.length - 1], waypoints[i], waypoints[i + 1]];
+      const collinear = (Math.abs(previous[0] - current[0]) < 1e-6 && Math.abs(current[0] - following[0]) < 1e-6)
+        || (Math.abs(previous[1] - current[1]) < 1e-6 && Math.abs(current[1] - following[1]) < 1e-6);
+      if (!collinear) simplified.push(current);
+    }
+    simplified.push(waypoints[waypoints.length - 1]);
+    routes.set(edge.id, simplified);
+  }
+  return routes;
+}

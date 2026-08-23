@@ -8,7 +8,7 @@ import { configureTextBuilder } from "troika-three-text";
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
-import { computeFlowLayout, type FlowLayout } from "./lib/flow-layout";
+import { computeEdgeRoutes, computeFlowLayout, type FlowLayout } from "./lib/flow-layout";
 import { showcases, type Showcase } from "./lib/local-showcases";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
@@ -250,26 +250,37 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
   });
 }
 
-function Connections({ edges, positions, activeEdgeId, focusedEdgeIds }: { edges: CityEdge[]; positions: Map<string, [number, number]>; activeEdgeId: string | null; focusedEdgeIds?: Set<string> }) {
+function Connections({ edges, positions, activeEdgeId, focusedEdgeIds, routes, selectedId }: { edges: CityEdge[]; positions: Map<string, [number, number]>; activeEdgeId: string | null; focusedEdgeIds?: Set<string>; routes?: Map<string, Array<[number, number]>>; selectedId?: string }) {
   return edges.map((edge) => {
     const from = positions.get(edge.from);
     const to = positions.get(edge.to);
     if (!from || !to) return null;
     const emphasized = edge.id === activeEdgeId;
-    const focused = focusedEdgeIds?.has(edge.id) ?? false;
+    // Local change: selecting a structure highlights every edge touching it —
+    // buildings with rooms can never reach the connections view (double-click
+    // opens the interior), so selection is their only path to seeing edges.
+    const touchesSelected = !!selectedId && (edge.from === selectedId || edge.to === selectedId);
+    const focused = (focusedEdgeIds?.has(edge.id) ?? false) || touchesSelected;
     // Local change: dependency edges are structural plumbing, not flow — draw
     // them only when selected or in focus mode, so resting lines are data flow.
     if (edge.kind === "depends_on" && !emphasized && !focused) return null;
+    // Local change: routed paths (around buildings and district plots) when
+    // available; the plain 3-segment Manhattan path otherwise.
+    const route = routes?.get(edge.id);
     const middleZ = from[1] + (to[1] - from[1]) * 0.52;
-    const points: [number, number, number][] = [
-      [from[0], 0.045, from[1]],
-      [from[0], 0.045, middleZ],
-      [to[0], 0.045, middleZ],
-      [to[0], 0.045, to[1]],
-    ];
-    const arrowStart = new THREE.Vector3(to[0], 0.07, middleZ);
-    const arrowEnd = new THREE.Vector3(to[0], 0.07, to[1]);
-    if (arrowStart.distanceTo(arrowEnd) < 0.12) arrowStart.set(from[0], 0.07, middleZ);
+    const points: [number, number, number][] = route && route.length >= 2
+      ? route.map(([x, z]) => [x, 0.045, z])
+      : [
+        [from[0], 0.045, from[1]],
+        [from[0], 0.045, middleZ],
+        [to[0], 0.045, middleZ],
+        [to[0], 0.045, to[1]],
+      ];
+    const last = points[points.length - 1];
+    const beforeLast = points[points.length - 2];
+    const arrowStart = new THREE.Vector3(beforeLast[0], 0.07, beforeLast[2]);
+    const arrowEnd = new THREE.Vector3(last[0], 0.07, last[2]);
+    if (arrowStart.distanceTo(arrowEnd) < 0.12 && points.length >= 3) arrowStart.set(points[points.length - 3][0], 0.07, points[points.length - 3][2]);
     const direction = arrowEnd.clone().sub(arrowStart).normalize();
     const arrowPosition = arrowStart.clone().lerp(arrowEnd, 0.74);
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
@@ -279,16 +290,16 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds }: { edges
         <Line
           points={points}
           color={EVIDENCE_COLORS[edge.evidence]}
-          lineWidth={emphasized ? 2.6 : focused ? 1.1 : 0.9}
+          lineWidth={emphasized ? 2.6 : touchesSelected ? 2 : focused ? 1.1 : 0.9}
           dashed={edge.evidence === "inferred"}
           dashSize={0.17}
           gapSize={0.1}
           transparent
-          opacity={emphasized ? 0.98 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
+          opacity={emphasized ? 0.98 : touchesSelected ? 0.85 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
         />
         <mesh position={arrowPosition} quaternion={quaternion}>
           <coneGeometry args={[emphasized ? 0.105 : 0.07, emphasized ? 0.26 : 0.18, 4]} />
-          <meshBasicMaterial color={EVIDENCE_COLORS[edge.evidence]} transparent opacity={emphasized ? 0.98 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
+          <meshBasicMaterial color={EVIDENCE_COLORS[edge.evidence]} transparent opacity={emphasized ? 0.98 : touchesSelected ? 0.9 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
         </mesh>
       </group>
     );
@@ -590,6 +601,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   overheadView: boolean;
 }) {
   const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
+  const edgeRoutes = useMemo(() => computeEdgeRoutes(edges, layout, nodes), [edges, layout, nodes]);
   const interiorModel = useMemo(() => {
     if (!expandedId) return null;
     const parentPosition = layout.positions.get(expandedId);
@@ -690,10 +702,10 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
       />
       <NeighborhoodPlots layout={layout} selectedId={selectedId} activeNeighborhoodId={neighborhoodId} hideLabels={!!interiorModel} />
       <FlowBands layout={layout} />
-      <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} />
+      <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} routes={edgeRoutes} selectedId={selectedId} />
       {interiorModel && <>
         <InteriorPlot bounds={interiorModel.plotBounds} />
-        <Connections edges={interiorModel.childEdges} positions={interiorModel.positions} activeEdgeId={interiorActiveEdgeId} />
+        <Connections edges={interiorModel.childEdges} positions={interiorModel.positions} activeEdgeId={interiorActiveEdgeId} selectedId={selectedId} />
       </>}
       {nodes.map((node, index) => (
         <group key={node.id}
@@ -925,6 +937,11 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
         {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} overheadView={overheadView} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
         <div className="viewport-viewmode">
           <button type="button" onClick={() => setOverheadView((value) => !value)}>{overheadView ? "Isometric" : "Overhead"}</button>
+        </div>
+        <div className="flow-legend">
+          <span><i className="legend-line legend-declared" /> data flow, declared in config</span>
+          <span><i className="legend-line legend-inferred" /> data flow, inferred from code</span>
+          <span><i className="legend-line legend-imports" /> imports (drawn when a node is selected)</span>
         </div>
         {hoverCard && (() => {
           const roomCount = map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length;
