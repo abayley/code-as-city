@@ -39,6 +39,7 @@ function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: Flo
   const currentTarget = useRef(new THREE.Vector3());
   const targetLookAt = useRef(new THREE.Vector3());
   const targetZoom = useRef(camera instanceof THREE.OrthographicCamera ? camera.zoom : 48);
+  const targetQuaternion = useRef(new THREE.Quaternion());
   const reduceMotion = useRef(false);
   const fitting = useRef(true);
 
@@ -62,11 +63,20 @@ function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: Flo
     // near plane clips the front of a large map.
     const boundingRadius = Math.hypot(spanX, spanZ) / 2;
     const distance = Math.max(23.5, boundingRadius * 1.4 + 12);
-    // Overhead looks straight down; the tilt is purely along +Z so the
-    // derived screen-up is exactly -Z and floor nameplates read horizontal.
-    const direction = (overhead ? new THREE.Vector3(0, 1, 0.002) : new THREE.Vector3(11, 14, 15)).normalize();
-    targetPosition.current.set(centerX + direction.x * distance, direction.y * distance, centerZ + direction.z * distance);
+    // Overhead looks (imperceptibly short of) straight down; the tiny tilt is
+    // purely along +Z so screen-up is exactly -Z and nameplates read
+    // horizontal, and it keeps the lookAt matrix non-degenerate. Roll is NOT
+    // derived from lookAt during the flight — the target orientation is
+    // computed once here and the frame loop slerps to it.
+    if (overhead) {
+      targetPosition.current.set(centerX, distance, centerZ + 0.2);
+    } else {
+      const direction = new THREE.Vector3(11, 14, 15).normalize();
+      targetPosition.current.set(centerX + direction.x * distance, direction.y * distance, centerZ + direction.z * distance);
+    }
     targetLookAt.current.set(centerX, 0.35, centerZ);
+    targetQuaternion.current.setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(targetPosition.current, targetLookAt.current, new THREE.Vector3(0, 1, 0)));
     const overheadToggled = previousOverhead.current !== overhead;
     previousOverhead.current = overhead;
     if (camera instanceof THREE.OrthographicCamera) {
@@ -82,26 +92,31 @@ function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: Flo
   // eslint-disable-next-line react-hooks/immutability
   useFrame((_, delta) => {
     if (!fitting.current) return;
-    const blend = reduceMotion.current ? 1 : 1 - Math.exp(-delta * 4.8);
+    const blend = reduceMotion.current ? 1 : 1 - Math.exp(-delta * 7.5);
     camera.position.lerp(targetPosition.current, blend);
     currentTarget.current.lerp(targetLookAt.current, blend);
-    camera.lookAt(currentTarget.current);
+    // Slerp orientation directly instead of lookAt: near-vertical lookAt roll
+    // is hypersensitive to the remaining travel and reads as a slow, skewed
+    // second phase. Controls are not updated mid-flight (their update() would
+    // re-derive the roll); they re-sync at the snap below.
+    camera.quaternion.slerp(targetQuaternion.current, blend);
     if (controls?.target) controls.target.copy(currentTarget.current);
-    controls?.update?.();
     if (camera instanceof THREE.OrthographicCamera) {
       // eslint-disable-next-line react-hooks/immutability
-      camera.zoom = THREE.MathUtils.damp(camera.zoom, targetZoom.current, reduceMotion.current ? 1000 : 5.4, delta);
+      camera.zoom = THREE.MathUtils.damp(camera.zoom, targetZoom.current, reduceMotion.current ? 1000 : 8, delta);
       camera.updateProjectionMatrix();
     }
-    const positionSettled = camera.position.distanceToSquared(targetPosition.current) < 0.0001;
-    const targetSettled = currentTarget.current.distanceToSquared(targetLookAt.current) < 0.0001;
-    const zoomSettled = !(camera instanceof THREE.OrthographicCamera) || Math.abs(camera.zoom - targetZoom.current) < 0.01;
+    // Settle early and snap: the exponential tail is where the near-vertical
+    // roll straightens, and letting it play out reads as a slow second phase.
+    const positionSettled = camera.position.distanceToSquared(targetPosition.current) < 0.0025;
+    const targetSettled = currentTarget.current.distanceToSquared(targetLookAt.current) < 0.0025;
+    const zoomSettled = !(camera instanceof THREE.OrthographicCamera) || Math.abs(camera.zoom - targetZoom.current) < 0.05;
     if (positionSettled && targetSettled && zoomSettled) {
       // Snap exactly: near-vertical views roll visibly from even a tiny
       // residual horizontal offset, so finish the move rather than abandon it.
       camera.position.copy(targetPosition.current);
       currentTarget.current.copy(targetLookAt.current);
-      camera.lookAt(currentTarget.current);
+      camera.quaternion.copy(targetQuaternion.current);
       if (controls?.target) controls.target.copy(currentTarget.current);
       controls?.update?.();
       if (camera instanceof THREE.OrthographicCamera) {
@@ -291,7 +306,9 @@ function plainType(node: CityNode, roomCount: number) {
   if (roomCount > 0) return `System with ${roomCount} room${roomCount === 1 ? "" : "s"}`;
   if (node.archetype === "room") return "Room";
   if (node.archetype === "gateway") return "Entry point";
-  if (node.archetype === "worker") return "Background process";
+  // Workers are the bulk of the map; an unlabelled type reads cleaner than
+  // "Background process" on every plain module.
+  if (node.archetype === "worker") return "";
   if (node.archetype === "database") return "Data store";
   if (node.archetype === "queue") return "Event channel";
   if (node.archetype === "storage") return "Storage";
@@ -403,7 +420,9 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
             emissiveIntensity={selected ? 0.32 : hovered ? 0.1 : 0}
           />
         </mesh>
-        <lineSegments geometry={outline} scale={selected ? 1.06 : 1.006}>
+        {/* Decorations must not raycast: the line threshold is a full world
+            unit, which bleeds the hover zone far outside the building. */}
+        <lineSegments geometry={outline} scale={selected ? 1.06 : 1.006} raycast={() => null}>
           <lineBasicMaterial color={SCENE_INK} transparent opacity={dimmed ? 0.2 : 1} />
         </lineSegments>
         {node.archetype !== "database" && node.archetype !== "cloud" && Array.from({ length: floorCount }, (_, floor) => (
@@ -487,15 +506,16 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
         <planeGeometry args={[footprintWidth, footprintDepth]} />
         <meshBasicMaterial color={SCENE_INK} transparent opacity={active && !dimmed ? 0.12 : 0} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
-      <Line points={footprint} color={active ? SCENE_INK : interior ? "#376f71" : "#70878c"} lineWidth={active ? 1.5 : 0.8} dashed={interior} dashSize={0.09} gapSize={0.06} transparent opacity={dimmed ? 0.18 : 0.78} />
-      <Line points={[[position[0], markerY, position[1] + footprintDepth / 2], [position[0], markerY, plaqueNearEdgeZ]]} color={SCENE_INK} lineWidth={0.8} transparent opacity={dimmed ? 0.14 : 0.56} />
+      <Line raycast={() => null} points={footprint} color={active ? SCENE_INK : interior ? "#376f71" : "#70878c"} lineWidth={active ? 1.5 : 0.8} dashed={interior} dashSize={0.09} gapSize={0.06} transparent opacity={dimmed ? 0.18 : 0.78} />
+      <Line raycast={() => null} points={[[position[0], markerY, position[1] + footprintDepth / 2], [position[0], markerY, plaqueNearEdgeZ]]} color={SCENE_INK} lineWidth={0.8} transparent opacity={dimmed ? 0.14 : 0.56} />
       <group position={[position[0], markerY + 0.012, plaqueZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh>
           <planeGeometry args={[plaqueWidth, plaqueHeight]} />
           <meshBasicMaterial color={active ? SCENE_INK : plaqueColor} transparent opacity={dimmed ? 0.3 : quieter ? 0.9 : 0.98} />
         </mesh>
-        <Line points={plaqueOutline} color={SCENE_INK} lineWidth={active ? 1.4 : 0.85} transparent opacity={dimmed ? 0.18 : 0.9} />
+        <Line raycast={() => null} points={plaqueOutline} color={SCENE_INK} lineWidth={active ? 1.4 : 0.85} transparent opacity={dimmed ? 0.18 : 0.9} />
         <Line
+          raycast={() => null}
           points={[[dividerX, -plaqueHeight / 2 + 0.07 * labelScale, 0.01], [dividerX, plaqueHeight / 2 - 0.07 * labelScale, 0.01]]}
           color={active ? SCENE_PANEL : SCENE_INK}
           lineWidth={0.65}
@@ -917,7 +937,8 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
             {hoverCard.node.sourceRefs?.slice(0, 3).map((ref) => <code key={ref.path ?? ref.url}>{ref.path ?? ref.url}</code>)}
             <dl>
               {metricEntries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}
-              <div><dt>type</dt><dd>{plainType(hoverCard.node, roomCount).toLowerCase()}</dd></div>
+              {roomCount > 0 && <div><dt>modules</dt><dd>{roomCount}</dd></div>}
+              {plainType(hoverCard.node, roomCount) && <div><dt>type</dt><dd>{plainType(hoverCard.node, roomCount).toLowerCase()}</dd></div>}
               {!!hoverCard.node.tags?.length && <div><dt>tags</dt><dd>{hoverCard.node.tags.join(", ")}</dd></div>}
             </dl>
           </div>;
@@ -940,7 +961,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       <aside className="inspector">
         {selected && <div className="inspector-content" key={selected.id}>
           <p className="eyebrow">What it does</p>
-          <div className={`plain-type type-${selected.kind}`}>{plainType(selected, selectedChildren.length)}</div>
+          {plainType(selected, selectedChildren.length) && <div className={`plain-type type-${selected.kind}`}>{plainType(selected, selectedChildren.length)}</div>}
           <h2>{selected.label}</h2>
           <p className="description">{selected.description ?? "Purpose not yet mapped."}</p>
           {!!selected.sourceRefs?.length && <section className="source-list"><p className="eyebrow">Found in code</p>{selected.sourceRefs.map((ref, index) => {
@@ -1099,5 +1120,5 @@ function ComponentRow({ node, markerIndex, roomCount, active, onSelect }: { node
     if (active) row.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [active]);
   const className = ["component-row", roomCount ? "landmark" : "", node.kind === "external" ? "quieter" : "", active ? "active" : ""].filter(Boolean).join(" ");
-  return <button ref={row} className={className} aria-pressed={active} onClick={onSelect} type="button"><span className="row-index">{String(markerIndex + 1).padStart(2, "0")}</span><span><strong>{node.label}</strong><small>{plainType(node, roomCount)}</small></span></button>;
+  return <button ref={row} className={className} aria-pressed={active} onClick={onSelect} type="button"><span className="row-index">{String(markerIndex + 1).padStart(2, "0")}</span><span><strong>{node.label}</strong>{plainType(node, roomCount) && <small>{plainType(node, roomCount)}</small>}</span></button>;
 }

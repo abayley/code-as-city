@@ -939,19 +939,31 @@ if (overview) {
       // of simple functions should not outscore one gnarly function.
       const complexity = Math.max(...m.files.map((f) => fileMaxFunctionComplexity(f)));
       const height = Math.max(0.6, 0.55 + Math.min(loc, 1500) / 320);
-      const footprint = Math.min(3.4, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 4));
-      const scale = m.support ? 0.72 : 1;
+      // Floor area is complexity alone: equal complexity reads as equal
+      // footprint whether the module is a composer or support (the ziggurat
+      // shape and height already distinguish them).
+      // Ceiling 2.5: at the viewer's 80% render scale that equals the 2.0
+      // layout step, so even max-complexity buildings cannot overlap.
+      const footprint = Math.min(2.5, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 4));
       const asBuilding = m.files.length >= 2 && !m.collapsed;
+      // Same classification as the deployment map: entry modules are gateways
+      // (entry points), everything else a worker. At file granularity the
+      // entry name may be the file itself (src/cli.ts) rather than a dir —
+      // but only unambiguous entry names (api.ts is usually a client/types
+      // module, not an entry).
+      const ENTRY_FILE_NAMES = new Set(["cli", "cmd", "main"]);
+      const isEntryModule = m.path.split(sep).some((seg) => ENTRY_DIR_NAMES.has(seg))
+        || ENTRY_FILE_NAMES.has(basename(m.path).replace(/\.[a-z]+$/, ""));
       overviewNodes.push({
         id: m.id, label: m.label, kind: "module",
-        archetype: asBuilding ? "building" : "worker",
+        archetype: asBuilding ? "building" : isEntryModule ? "gateway" : "worker",
         parentId: district.id,
         description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, max function complexity ~${complexity}.`,
         sourceRefs: [{ path: m.path }],
         metrics: { loc, complexity, files: m.files.length },
         tags: [m.support ? "support" : "composer", ...moduleHostTags],
         display: {
-          size: [footprint * scale, height * (m.support ? 0.85 : 1), footprint * 0.85 * scale],
+          size: [footprint, height * (m.support ? 0.85 : 1), footprint * 0.85],
           color,
           flowLayer: m.support ? 1 : 0,
           flowOrder: placementOrder.get(m.id),
@@ -1391,6 +1403,9 @@ for (const host of hosts) {
         service.entryFile ? `Entry point ${service.entryFile}.` : null,
       ].filter(Boolean).join(" "),
       sourceRefs: [{ path: service.dockerfile ?? host.file }],
+      ...(serviceSourceFiles.length
+        ? { metrics: { loc: serviceSourceFiles.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0) } }
+        : {}),
       tags: [
         isScheduled ? "cron" : null,
         service.hasPorts ? "listens" : null,
