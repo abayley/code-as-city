@@ -159,10 +159,14 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
     const centerZ = (minZ + maxZ) / 2;
     const active = neighborhood.id === activeNeighborhoodId || (!activeNeighborhoodId && neighborhood.nodeIds.includes(selectedId));
     const dimmed = !!activeNeighborhoodId && neighborhood.id !== activeNeighborhoodId;
-    const signWidth = Math.min(width - 0.4, 5.4);
+    // Narrow districts keep a readable sign: never below 2.2 wide, and the
+    // label font shrinks to fit at most two wrapped lines.
+    const signWidth = Math.min(Math.max(width - 0.3, 2.2), 5.4);
     const signHeight = 0.78;
     const signZ = maxZ - signHeight / 2 - 0.28;
-    const codeColumnWidth = 0.7;
+    const codeColumnWidth = signWidth < 3 ? 0.5 : 0.7;
+    const labelAvailable = signWidth - codeColumnWidth - 0.32;
+    const labelFontSize = Math.min(0.27, Math.max(0.14, (labelAvailable * 2) / (Math.max(1, neighborhood.label.length) * 0.62)));
     const dividerX = -signWidth / 2 + codeColumnWidth;
     const outline: [number, number, number][] = [
       [minX, 0.004, minZ],
@@ -216,8 +220,8 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
         <Text
           position={[dividerX + 0.18, 0, 0.014]}
           color={active ? SCENE_PANEL : SCENE_INK}
-          fontSize={0.27}
-          maxWidth={signWidth - codeColumnWidth - 0.32}
+          fontSize={labelFontSize}
+          maxWidth={labelAvailable}
           lineHeight={1.02}
           textAlign="center"
           anchorX="left"
@@ -334,7 +338,11 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
   const [hovered, setHovered] = useState(false);
   const group = useRef<THREE.Group>(null);
   const material = useRef<THREE.MeshStandardMaterial>(null);
-  const requestedSize = node.display?.size ?? [1.65, 1.2, 1.4];
+  const declaredSize = node.display?.size ?? [1.65, 1.2, 1.4];
+  // Local change: campus structures render at 80% so tightly packed rows do
+  // not obscure the nameplates in front of the row behind.
+  const structureScale = interior ? 1 : 0.8;
+  const requestedSize = declaredSize.map((d) => d * structureScale) as [number, number, number];
   const size: [number, number, number] = node.archetype === "building" && !hasInterior
     ? [requestedSize[0], Math.min(requestedSize[1], 1.25), requestedSize[2]]
     : requestedSize;
@@ -423,7 +431,8 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
   onEnter: () => void;
 }) {
   const requestedSize = node.display?.size ?? [1.65, 1.2, 1.4];
-  const scale = interior ? 0.48 : expanded ? 1.08 : 1;
+  // 0.8 matches Structure's campus structureScale so footprints stay snug.
+  const scale = interior ? 0.48 : (expanded ? 1.08 : 1) * 0.8;
   const footprintWidth = requestedSize[0] * scale + (interior ? 0.14 : 0.24);
   const footprintDepth = requestedSize[2] * scale + (interior ? 0.14 : 0.24);
   const labelLength = node.label.length + (hasInterior ? 3 : 0);
@@ -993,9 +1002,8 @@ export default function Functionary() {
 function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenerated: (payload: { map: CityMap; jsonPath: string }) => void }) {
   type Listing = { path: string; parent: string; entries: Array<{ name: string; path: string }>; isRepo: boolean };
   const [listing, setListing] = useState<Listing | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<false | "overview" | "deployment">(false);
   const [error, setError] = useState<string | null>(null);
-  const [overview, setOverview] = useState(true);
 
   const load = useCallback(async (path?: string) => {
     try {
@@ -1010,9 +1018,9 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  async function generate() {
+  async function generate(overview: boolean) {
     if (!listing || busy) return;
-    setBusy(true);
+    setBusy(overview ? "overview" : "deployment");
     setError(null);
     try {
       const response = await fetch("/api/generate", {
@@ -1041,12 +1049,9 @@ function FolderBrowser({ onClose, onGenerated }: { onClose: () => void; onGenera
             <button type="button" onClick={() => load(listing.parent)}>../</button>
             {listing.entries.map((entry) => <button type="button" key={entry.path} onClick={() => load(entry.path)}>{entry.name}/</button>)}
           </div>
-          <footer>
-            <label className="folder-mode">
-              <input type="checkbox" checked={overview} onChange={(event) => setOverview(event.target.checked)} />
-              Module overview (unchecked: deployment map)
-            </label>
-            <button className="map-action" type="button" disabled={busy} onClick={generate}>{busy ? "Generating…" : "Generate map for this folder"}</button>
+          <footer className="folder-actions">
+            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(true)}>{busy === "overview" ? "Generating…" : "Module overview"}</button>
+            <button className="map-action" type="button" disabled={!!busy} onClick={() => generate(false)}>{busy === "deployment" ? "Generating…" : "Deployment map"}</button>
           </footer>
         </>}
         {error && <p className="folder-error">{error}</p>}

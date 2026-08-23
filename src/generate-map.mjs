@@ -311,18 +311,19 @@ const DB_READ_PATTERN = /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|po
 const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
 
 // McCabe cyclomatic complexity from the TypeScript compiler API when it is
-// installed (per function: 1 + decision points, logical operators and
-// non-default switch cases included, nested functions counted separately;
-// file complexity is the sum). Falls back to a decision-point regex when the
-// typescript package is unavailable.
+// installed (per function: 1 + decision points attributed to the innermost
+// enclosing function; logical operators and non-default switch cases count;
+// top-level statements form an implicit function). A file carries the sum
+// and the max function complexity. Falls back to a decision-point regex
+// (sum == max, no function attribution) when typescript is unavailable.
 let ts = null;
 try { ts = (await import("typescript")).default; } catch { /* fall back below */ }
 const COMPLEXITY_FALLBACK_PATTERN = /\bif\s*\(|\bfor\s*(?:\(|await)|\bwhile\s*\(|\bcase\s|\bcatch\b|&&|\|\||\?\?/g;
 const complexityCache = new Map();
-function fileComplexity(file) {
+function fileComplexityStats(file) {
   if (complexityCache.has(file)) return complexityCache.get(file);
   const text = readText(join(repo, file));
-  let complexity;
+  let stats;
   if (ts) {
     const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const functionKinds = new Set([
@@ -338,22 +339,35 @@ function fileComplexity(file) {
     const logicalOperators = new Set([
       ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken,
     ]);
-    let functions = 0;
-    let decisions = 0;
+    const topLevel = { complexity: 1 };
+    const finished = [];
+    const stack = [topLevel];
     const visit = (node) => {
-      if (functionKinds.has(node.kind)) functions += 1;
-      else if (decisionKinds.has(node.kind)) decisions += 1;
-      else if (node.kind === ts.SyntaxKind.BinaryExpression && logicalOperators.has(node.operatorToken?.kind)) decisions += 1;
+      if (functionKinds.has(node.kind)) {
+        stack.push({ complexity: 1 });
+        ts.forEachChild(node, visit);
+        finished.push(stack.pop());
+        return;
+      }
+      if (decisionKinds.has(node.kind)
+        || (node.kind === ts.SyntaxKind.BinaryExpression && logicalOperators.has(node.operatorToken?.kind))) {
+        stack[stack.length - 1].complexity += 1;
+      }
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
-    complexity = Math.max(1, functions) + decisions;
+    finished.push(topLevel);
+    const values = finished.map((f) => f.complexity);
+    stats = { sum: values.reduce((total, v) => total + v, 0), max: Math.max(...values) };
   } else {
-    complexity = 1 + (text.match(COMPLEXITY_FALLBACK_PATTERN)?.length ?? 0);
+    const total = 1 + (text.match(COMPLEXITY_FALLBACK_PATTERN)?.length ?? 0);
+    stats = { sum: total, max: total };
   }
-  complexityCache.set(file, complexity);
-  return complexity;
+  complexityCache.set(file, stats);
+  return stats;
 }
+function fileComplexity(file) { return fileComplexityStats(file).sum; }
+function fileMaxFunctionComplexity(file) { return fileComplexityStats(file).max; }
 
 function couplingFromEdges(pairs) {
   const stats = new Map();
@@ -574,6 +588,103 @@ if (wranglerFile) {
 }
 
 const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
+
+// Embedded databases declared as package dependencies (LanceDB, SQLite,
+// DuckDB, Chroma) are deployment shape in both map modes. One entry per
+// dependency repo-wide: several manifests declaring the same store share it.
+const EMBEDDED_DB_DEPS = [
+  [/^@lancedb\//, "LanceDB vector database"],
+  [/^chromadb$/, "Chroma vector database"],
+  [/^(better-sqlite3|sqlite3)$/, "SQLite database"],
+  [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
+];
+const embeddedDatabases = [];
+for (const pkg of packages) {
+  for (const dep of Object.keys(pkg.deps ?? {})) {
+    const match = EMBEDDED_DB_DEPS.find(([pattern]) => pattern.test(dep));
+    if (!match) continue;
+    const id = kebab(`infra-${dep}`);
+    if (embeddedDatabases.some((db) => db.id === id)) continue;
+    const pkgManifest = pkg.dir === "." ? "package.json" : `${pkg.dir}/package.json`;
+    embeddedDatabases.push({
+      id, label: match[1], depName: dep, path: pkgManifest,
+      description: `Embedded database (${dep}) declared in ${pkgManifest}.`,
+    });
+  }
+}
+
+// GitHub Actions workflows are deployment shape too: a scheduled or chained
+// workflow that runs repo code is a job host (D9). Line-based parse: name,
+// cron, workflow_run upstreams, run-step commands.
+const workflowFiles = allFiles.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f));
+const ciWorkflows = [];
+for (const file of workflowFiles) {
+  const text = readText(join(repo, file));
+  const lines = text.split("\n");
+  const name = (/^name:\s*(.+)$/m.exec(text)?.[1] ?? basename(file).replace(/\.ya?ml$/, ""))
+    .trim().replace(/^['"]|['"]$/g, "");
+  const cron = /-\s*cron:\s*['"]?([^'"#\n]+)/.exec(text)?.[1]?.trim() ?? null;
+  // workflow_run upstreams: inline list (workflows: ['Sync corpus']) or block list.
+  const triggeredBy = [];
+  const workflowRunIndex = lines.findIndex((line) => /^\s*workflow_run:\s*$/.test(line));
+  if (workflowRunIndex >= 0) {
+    for (let i = workflowRunIndex + 1; i < lines.length && /^\s+\S/.test(lines[i]); i += 1) {
+      const inline = /^\s*workflows:\s*\[([^\]]+)\]/.exec(lines[i]);
+      if (inline) {
+        triggeredBy.push(...inline[1].split(",").map((w) => w.trim().replace(/^['"]|['"]$/g, "")));
+        break;
+      }
+      if (/^\s*workflows:\s*$/.test(lines[i])) {
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const item = /^\s*-\s*['"]?([^'"\n]+?)['"]?\s*$/.exec(lines[j]);
+          if (!item) break;
+          triggeredBy.push(item[1]);
+        }
+        break;
+      }
+    }
+  }
+  // Run-step commands: inline `run: cmd` and block `run: |` bodies.
+  const commands = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const runMatch = /^(\s*)(?:-\s+)?run:\s*(.*)$/.exec(lines[i]);
+    if (!runMatch) continue;
+    const [, indent, rest] = runMatch;
+    if (rest && !/^[|>]/.test(rest)) { commands.push(rest); continue; }
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const bodyIndent = lines[j].length - lines[j].trimStart().length;
+      if (lines[j].trim() && bodyIndent <= indent.length) break;
+      if (lines[j].trim()) commands.push(lines[j].trim());
+    }
+  }
+  // Repo entry invocations: a command token naming an existing source file,
+  // optionally followed by a subcommand word (D10).
+  const invocations = [];
+  for (const command of commands) {
+    const tokens = command.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ""));
+    tokens.forEach((token, index) => {
+      if (!fileExists(token) || !SOURCE_EXTENSIONS.has(extensionOf(token))) return;
+      const next = tokens[index + 1];
+      const sub = next && /^[a-z][a-z0-9-]*$/.test(next) && !next.startsWith("-") && !fileExists(next) ? next : null;
+      if (!invocations.some((inv) => inv.file === token && inv.sub === sub)) invocations.push({ file: token, sub });
+    });
+  }
+  // Object-storage traffic: aws s3 cp/sync/mv with an s3:// source or
+  // destination; an R2 endpoint anywhere in the file names the store (D11).
+  const storage = { downloads: false, uploads: false };
+  for (const command of commands) {
+    const copy = /\bs3\s+(?:cp|sync|mv)\s+(\S+)\s+(\S+)/.exec(command);
+    if (!copy) continue;
+    const [source, destination] = [copy[1], copy[2]].map((t) => t.replace(/^["']/, ""));
+    if (source.startsWith("s3://")) storage.downloads = true;
+    if (destination.startsWith("s3://")) storage.uploads = true;
+  }
+  const storageLabel = /r2\.cloudflarestorage\.com/i.test(text) ? "Cloudflare R2" : "S3 object storage";
+  if (cron || triggeredBy.length || invocations.length) {
+    ciWorkflows.push({ file, name, cron, triggeredBy, invocations,
+      storage: storage.downloads || storage.uploads ? { ...storage, label: storageLabel } : null });
+  }
+}
 
 // --- Overview mode (--overview) ------------------------------------------------
 // A whole-codebase module overview: districts are directories (or packages in
@@ -816,23 +927,26 @@ if (overview) {
       tags: [`band:${bandLabel(district.band)}`],
       display: { color, flowLayer: district.band },
     });
+    // Files in the same directory sit adjacent on the map: placement order is
+    // the path, carried to the viewer as display.flowOrder.
+    const placementOrder = new Map([...district.modules]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((m, index) => [m.id, index]));
     for (const m of district.modules) {
       const moduleHostTags = [...filesHosts(m.files)].map((name) => `host:${name}`);
       const loc = linesOf(m.files);
-      // Summed complexity is meaningless across files; a multi-file module
-      // reports the worst contained file instead.
-      const complexity = m.files.length > 1
-        ? Math.max(...m.files.map((f) => fileComplexity(f)))
-        : complexityOf(m.files);
+      // Complexity is the worst single function in the module: a big module
+      // of simple functions should not outscore one gnarly function.
+      const complexity = Math.max(...m.files.map((f) => fileMaxFunctionComplexity(f)));
       const height = Math.max(0.6, 0.55 + Math.min(loc, 1500) / 320);
-      const footprint = Math.min(3.4, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 7));
+      const footprint = Math.min(3.4, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 4));
       const scale = m.support ? 0.72 : 1;
       const asBuilding = m.files.length >= 2 && !m.collapsed;
       overviewNodes.push({
         id: m.id, label: m.label, kind: "module",
         archetype: asBuilding ? "building" : "worker",
         parentId: district.id,
-        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, ${m.files.length > 1 ? `max file complexity ~${complexity}` : `complexity ~${complexity}`}.`,
+        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, max function complexity ~${complexity}.`,
         sourceRefs: [{ path: m.path }],
         metrics: { loc, complexity, files: m.files.length },
         tags: [m.support ? "support" : "composer", ...moduleHostTags],
@@ -840,6 +954,7 @@ if (overview) {
           size: [footprint * scale, height * (m.support ? 0.85 : 1), footprint * 0.85 * scale],
           color,
           flowLayer: m.support ? 1 : 0,
+          flowOrder: placementOrder.get(m.id),
         },
       });
       for (const file of m.files) fileToModule.set(file, m.id);
@@ -932,31 +1047,11 @@ if (overview) {
   }
   if (edgeHost) infraMembers.push({ id: "infra-cloudflare-worker", label: "Cloudflare Worker", archetype: "worker", kind: "infra", description: `Declared in ${edgeHost.file}.`, path: edgeHost.file });
   if (drizzleConfig) infraMembers.push({ id: "infra-drizzle-database", label: "Database", archetype: "database", kind: "infra", description: `Declared in ${drizzleConfig}.`, path: drizzleConfig });
-  // Embedded databases declared as package dependencies (LanceDB, SQLite,
-  // DuckDB, Chroma) become database nodes even with no compose or ORM config.
-  const EMBEDDED_DB_DEPS = [
-    [/^@lancedb\//, "LanceDB vector database"],
-    [/^chromadb$/, "Chroma vector database"],
-    [/^(better-sqlite3|sqlite3)$/, "SQLite database"],
-    [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
-  ];
-  const embeddedDbMembers = [];
-  for (const pkg of packages) {
-    for (const dep of Object.keys(pkg.deps ?? {})) {
-      const match = EMBEDDED_DB_DEPS.find(([pattern]) => pattern.test(dep));
-      if (!match) continue;
-      const pkgManifest = pkg.dir === "." ? "package.json" : `${pkg.dir}/package.json`;
-      // One node per dependency repo-wide: several manifests declaring the
-      // same embedded database share one store (id dedupe collapses them).
-      const member = {
-        id: kebab(`infra-${dep}`), label: match[1], archetype: "database", kind: "infra",
-        description: `Embedded database (${dep}) declared in ${pkgManifest}.`,
-        path: pkgManifest, depName: dep,
-      };
-      infraMembers.push(member);
-      embeddedDbMembers.push(member);
-    }
-  }
+  const embeddedDbMembers = embeddedDatabases.map((db) => ({
+    id: db.id, label: db.label, archetype: "database", kind: "infra",
+    description: db.description, path: db.path, depName: db.depName,
+  }));
+  infraMembers.push(...embeddedDbMembers);
   const seenInfra = new Set();
   const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
   const infraDistricts = new Map();
@@ -1054,7 +1149,7 @@ if (overview) {
       "Overview mode: dev-tooling/orphan exclusion is intentionally skipped.",
       "Only data-flow edges are shown; import dependencies are omitted by design.",
       "Shared-code districts (>=60% high fan-in / low fan-out modules) are coloured differently.",
-      "Complexity is a decision-point count (if/for/while/case/catch/&&/||/??), not exact cyclomatic complexity.",
+      "Complexity is the module's worst single function (McCabe-style decision-point count), not a module-wide sum.",
     ],
   };
   const overviewMermaidId = (id) => id.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -1131,7 +1226,9 @@ function resolvePathToken(pkgDir, token) {
 // package.json script entries split by naming convention: QA/codebase
 // utilities (checks, linting, tests, packaging, doc indexes) versus
 // operational tooling (bootstrap, certificates, backfill, deploys).
-const QA_SCRIPT_PATTERN = /^(check|lint|test|typecheck|coverage|knip|audit|format|fmt|quality|adr|rfc|docs?|prepare|prepack|postinstall|release|clean|proof|prove|uat|spike|poc|bench(mark)?)([:._-]|$)/i;
+// A QA keyword in ANY segment of the script name marks it QA
+// (tool:test:coverage is QA even though it starts with "tool").
+const QA_SCRIPT_PATTERN = /(^|[:._-])(check|lint|test|typecheck|coverage|knip|audit|format|fmt|quality|adr|rfc|docs?|prepare|prepack|postinstall|release|clean|proof|prove|uat|spike|poc|bench(mark)?|inventory|crap)([:._-]|$)/i;
 
 const deployRoots = new Set();
 const scriptRoots = new Set();
@@ -1205,7 +1302,12 @@ const pathReassignments = new Map(); // roomId -> { pkg, fromFile }
 for (const file of sourceFiles) {
   const text = readText(join(repo, file));
   const fromPkg = owningPackage(file);
+  // Plain relative imports are ordinary dependencies (S3 edges), not area
+  // claims: a root-package QA script importing ../tools/x/src/core must not
+  // steal the room. Only non-import path literals reassign.
+  const importSpecifiers = new Set([...text.matchAll(IMPORT_PATTERN)].map((m) => m[1]));
   for (const match of text.matchAll(/["']((?:\.\.\/)+[^"'\n]+)["']/g)) {
+    if (importSpecifiers.has(match[1])) continue;
     // The literal may be relative to the file's directory or to the package
     // root (the `resolve(packageRoot, "...")` idiom): try both bases.
     const bases = [dirname(file), fromPkg?.dir ?? "."];
@@ -1784,6 +1886,178 @@ if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
     const from = edgeHost ? "edge-worker" : owner?.id;
     if (from && nodeIds.has(from) || nodes.some((n) => n.id === from)) {
       addEdge({ id: `${from}--drizzle-database`, from, to: "drizzle-database", kind: "depends_on", evidence: "declared" });
+    }
+  }
+}
+
+// 7e-i. Embedded databases (same dependency scan as overview mode's O11):
+// the node lives in the district of the first module importing the SDK, and
+// importers get inferred reads/writes data flow.
+for (const database of embeddedDatabases) {
+  const escaped = database.depName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const importPattern = new RegExp(`(from\\s+|require\\()["']${escaped}`);
+  const importerOwners = [];
+  for (const file of sourceFiles) {
+    if (!importPattern.test(readText(join(repo, file)))) continue;
+    const owner = fileNodeOwner.get(file);
+    if (owner && nodes.some((n) => n.id === owner) && !importerOwners.includes(owner)) importerOwners.push(owner);
+  }
+  const parentDistrict = importerOwners
+    .map((owner) => nodes.find((n) => n.id === owner)?.parentId)
+    .find((parent) => parent && nodes.some((n) => n.id === parent && n.kind === "scope"));
+  nodes.push({
+    id: database.id, label: database.label, kind: "infra", archetype: "database",
+    ...(parentDistrict ? { parentId: parentDistrict } : {}),
+    description: database.description,
+    sourceRefs: [{ path: database.path }],
+    display: { flowLayer: 2 },
+  });
+  for (const owner of importerOwners) {
+    addEdge({ id: `${owner}--${database.id}`, from: owner, to: database.id,
+      kind: "data_flow", evidence: "inferred", confidence: 0.7, label: "reads/writes",
+      sourceRefs: [{ path: database.path }] });
+  }
+}
+
+// 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
+// a workflow_run chain, or a run step invoking repo code becomes a CI job
+// district. Object-storage traffic becomes an external store with directional
+// data flow; an invoked entry's Commander subcommand resolves to its handler
+// module for a `runs` edge.
+const nodeOwningFile = (file) => {
+  const direct = fileNodeOwner.get(file);
+  if (direct && nodes.some((n) => n.id === direct)) return direct;
+  let best = null;
+  for (const node of nodes) {
+    if (node.kind === "scope") continue;
+    for (const ref of node.sourceRefs ?? []) {
+      if (!ref.path) continue;
+      if (file === ref.path || file.startsWith(ref.path.replace(/\/$/, "") + "/")) {
+        if (!best || ref.path.length > best.length) best = { id: node.id, length: ref.path.length };
+      }
+    }
+  }
+  return best?.id ?? null;
+};
+// Commander registration: the handler is the first imported identifier used
+// inside the `.command('<sub>')` chunk of the entry file.
+const subcommandHandlerFile = (entryFile, sub) => {
+  const text = readText(join(repo, entryFile));
+  const importedNames = new Map(); // identifier -> specifier
+  for (const match of text.matchAll(/import\s*{([^}]+)}\s*from\s*['"]([^'"]+)['"]/g)) {
+    for (const raw of match[1].split(",")) {
+      const identifier = raw.trim().split(/\s+as\s+/).pop();
+      if (identifier) importedNames.set(identifier, match[2]);
+    }
+  }
+  const chunkMatch = new RegExp(`\\.command\\(['"]${sub}(?:\\s[^'"]*)?['"]\\)([\\s\\S]*?)(?=\\.command\\(|$)`).exec(text);
+  if (!chunkMatch) return null;
+  let first = null;
+  for (const [identifier, specifier] of importedNames) {
+    const at = chunkMatch[1].indexOf(identifier);
+    if (at >= 0 && (!first || at < first.at)) first = { at, specifier };
+  }
+  return first ? (resolveImport(entryFile, first.specifier)?.file ?? null) : null;
+};
+const ciJobId = new Map(ciWorkflows.map((w) => [w.name, kebab(`ci-${w.name}-job`)]));
+for (const workflow of ciWorkflows) {
+  const districtId = kebab(`ci-${workflow.name}`);
+  const jobId = ciJobId.get(workflow.name);
+  nodes.push({
+    id: districtId, label: `CI: ${workflow.name}`, kind: "scope", archetype: "district",
+    description: `GitHub Actions workflow declared in ${workflow.file}.`,
+  });
+  nodes.push({
+    id: jobId, label: titleCase(workflow.name), kind: "deployable", archetype: "worker",
+    parentId: districtId,
+    description: [
+      `CI job from ${workflow.file}.`,
+      workflow.cron ? `Scheduled (${workflow.cron}).` : null,
+      workflow.triggeredBy.length ? `Runs after: ${workflow.triggeredBy.join(", ")}.` : null,
+      ...workflow.invocations.map((inv) => `Runs ${inv.file}${inv.sub ? ` ${inv.sub}` : ""}.`),
+    ].filter(Boolean).join(" "),
+    sourceRefs: [{ path: workflow.file }],
+    tags: workflow.cron ? ["cron"] : [],
+    display: { flowLayer: 1 },
+  });
+  if (workflow.storage) {
+    const storeId = kebab(`external-${workflow.storage.label}`);
+    if (!nodes.some((n) => n.id === storeId)) {
+      nodes.push({
+        id: storeId, label: workflow.storage.label, kind: "external", archetype: "storage",
+        description: `Object store addressed from CI workflows.`,
+        sourceRefs: [{ path: workflow.file }],
+        display: { flowLayer: 2 },
+      });
+    }
+    if (workflow.storage.downloads) {
+      addEdge({ id: `${storeId}--${jobId}`, from: storeId, to: jobId, kind: "data_flow",
+        evidence: "declared", label: "downloads", sourceRefs: [{ path: workflow.file }] });
+    }
+    if (workflow.storage.uploads) {
+      addEdge({ id: `${jobId}--${storeId}`, from: jobId, to: storeId, kind: "data_flow",
+        evidence: "declared", label: "uploads", sourceRefs: [{ path: workflow.file }] });
+    }
+  }
+  for (const upstream of workflow.triggeredBy) {
+    const upstreamId = ciJobId.get(upstream);
+    if (upstreamId) {
+      addEdge({ id: `${upstreamId}--${jobId}`, from: upstreamId, to: jobId, kind: "calls",
+        evidence: "declared", label: "triggers on completion", sourceRefs: [{ path: workflow.file }] });
+    }
+  }
+  for (const invocation of workflow.invocations) {
+    const entryOwner = nodeOwningFile(invocation.file);
+    if (entryOwner) {
+      addEdge({ id: `${jobId}--${entryOwner}`, from: jobId, to: entryOwner, kind: "calls",
+        evidence: "declared", label: `runs ${basename(invocation.file)}${invocation.sub ? ` ${invocation.sub}` : ""}`,
+        sourceRefs: [{ path: workflow.file }] });
+    }
+    if (invocation.sub) {
+      const handlerFile = subcommandHandlerFile(invocation.file, invocation.sub);
+      const handlerOwner = handlerFile ? nodeOwningFile(handlerFile) : null;
+      if (handlerOwner && handlerOwner !== entryOwner) {
+        addEdge({ id: `${jobId}--${handlerOwner}-h`, from: jobId, to: handlerOwner, kind: "calls",
+          evidence: "declared", label: `${invocation.sub} handler`,
+          sourceRefs: [{ path: handlerFile }] });
+      }
+    }
+  }
+}
+
+// 7e-iii. Config-declared external services (D12): an https URL assigned as a
+// value in a package-root config.yaml names an external system the package's
+// CLI entry fetches from.
+for (const pkg of packages) {
+  const configFile = ["config.yaml", "config.yml"]
+    .map((candidate) => (pkg.dir === "." ? candidate : `${pkg.dir}/${candidate}`))
+    .find(fileExists);
+  if (!configFile) continue;
+  const packageJson = readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {};
+  const binTargets = typeof packageJson.bin === "string" ? [packageJson.bin] : Object.values(packageJson.bin ?? {});
+  const entrySource = binTargets
+    .map((target) => join(pkg.dir === "." ? "" : pkg.dir, target).replace(/(^|\/)dist\//, "$1src/").replace(/\.js$/, ".ts"))
+    .find(fileExists);
+  const fromId = entrySource ? nodeOwningFile(entrySource) : null;
+  for (const line of readText(join(repo, configFile)).split("\n")) {
+    if (/^\s*#/.test(line)) continue;
+    const urlMatch = /:\s*['"]?(https:\/\/[^'"\s]+)/.exec(line);
+    if (!urlMatch) continue;
+    let hostname;
+    try { hostname = new URL(urlMatch[1]).hostname; } catch { continue; }
+    if (/localhost|^127\.|cloudflarestorage\.com$/.test(hostname)) continue;
+    const externalId = kebab(`external-${hostname}`);
+    if (!nodes.some((n) => n.id === externalId)) {
+      nodes.push({
+        id: externalId, label: hostname, kind: "external", archetype: "cloud",
+        description: `External service configured in ${configFile}.`,
+        sourceRefs: [{ path: configFile }],
+        display: { flowLayer: 0 },
+      });
+    }
+    if (fromId) {
+      addEdge({ id: `${externalId}--${fromId}`, from: externalId, to: fromId, kind: "data_flow",
+        evidence: "declared", label: "fetches", sourceRefs: [{ path: configFile }] });
     }
   }
 }

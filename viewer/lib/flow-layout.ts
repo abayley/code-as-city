@@ -200,9 +200,25 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     (districtLayer.get(left) ?? maxDistrictLayer) - (districtLayer.get(right) ?? maxDistrictLayer)
     || groupLabel(left).localeCompare(groupLabel(right)));
 
-  const neighborhoodWidths = neighborhoodEntries.map(([, neighborhoodNodes]) => {
-    const largestCell = Math.max(...[...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))]
-      .map((layer) => neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length), 1);
+  // Local change: a district whose flow layers are all tiny (1-2 nodes each)
+  // would pack as a skinny 1xN strip; flatten its layers and pack it square
+  // instead, keeping layer order as the placement order.
+  const flattenLayers = (neighborhoodNodes: CityNode[]) => {
+    if (neighborhoodNodes.length < 4) return false;
+    const counts = new Map<number, number>();
+    neighborhoodNodes.forEach((node) => {
+      const layer = layers.get(node.id)!;
+      counts.set(layer, (counts.get(layer) ?? 0) + 1);
+    });
+    return counts.size >= 2 && [...counts.values()].every((count) => count <= 2);
+  };
+  const flattened = new Map(neighborhoodEntries.map(([id, neighborhoodNodes]) => [id, flattenLayers(neighborhoodNodes)]));
+  const localLayerOf = (neighborhoodId: string, node: CityNode) =>
+    flattened.get(neighborhoodId) ? 0 : layers.get(node.id)!;
+
+  const neighborhoodWidths = neighborhoodEntries.map(([id, neighborhoodNodes]) => {
+    const largestCell = Math.max(...[...new Set(neighborhoodNodes.map((node) => localLayerOf(id, node)))]
+      .map((layer) => neighborhoodNodes.filter((node) => localLayerOf(id, node) === layer).length), 1);
     return Math.max(3.2, columnsFor(largestCell) * nodeStepX + 0.7);
   });
 
@@ -218,14 +234,14 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
   // land its rows on top of the next layer's nodes.
   const layerGap = 0.2;
   const localInfo = new Map<number, { layerIndex: Map<number, number>; layerOffsets: Map<number, number>; depth: number }>();
-  neighborhoodEntries.forEach(([, neighborhoodNodes], index) => {
-    const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => layers.get(node.id)!))].sort((a, b) => a - b);
+  neighborhoodEntries.forEach(([id, neighborhoodNodes], index) => {
+    const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => localLayerOf(id, node)))].sort((a, b) => a - b);
     const layerIndex = new Map(uniqueLayers.map((layer, position) => [layer, position]));
     const layerOffsets = new Map<number, number>();
     let offset = 0;
     for (const layer of uniqueLayers) {
       layerOffsets.set(layer, offset);
-      const count = neighborhoodNodes.filter((node) => layers.get(node.id) === layer).length;
+      const count = neighborhoodNodes.filter((node) => localLayerOf(id, node) === layer).length;
       const rows = Math.ceil(count / columnsFor(count));
       offset += rows * nodeStepZ + layerGap;
     }
@@ -275,14 +291,19 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
       const neighborhoodWidth = neighborhoodWidths[neighborhoodIndex];
       const { layerOffsets } = localInfo.get(neighborhoodIndex)!;
       const centerX = neighborhoodCursor + neighborhoodWidth / 2;
+      const [neighborhoodId] = neighborhoodEntries[neighborhoodIndex];
       const localLayers = new Map<number, CityNode[]>();
       neighborhoodNodes.forEach((node) => {
-        const layer = layers.get(node.id)!;
+        const layer = localLayerOf(neighborhoodId, node);
         localLayers.set(layer, [...(localLayers.get(layer) ?? []), node]);
       });
       for (const [layer, layerNodes] of localLayers) {
+        // Flattened districts keep flow order as placement order: global
+        // layer first, then flowOrder, then label.
         layerNodes.sort((a, b) =>
-          (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) || a.label.localeCompare(b.label),
+          layers.get(a.id)! - layers.get(b.id)!
+          || (a.display?.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.display?.flowOrder ?? Number.MAX_SAFE_INTEGER)
+          || a.label.localeCompare(b.label),
         );
         const columnCount = columnsFor(layerNodes.length);
         layerNodes.forEach((node, index) => {

@@ -281,7 +281,8 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .folder-list button { padding: 8px 16px; border: 0; border-bottom: 1px solid rgba(20,32,43,.12); background: none; text-align: left; font-size: 13px; cursor: pointer; }
 .folder-list button:hover { background: var(--paper-deep); }
 .folder-browser > footer { padding: 12px 16px; border-top: 1px solid var(--rule); }
-.folder-mode { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; cursor: pointer; }
+.folder-actions { display: flex; gap: 10px; }
+.folder-actions .map-action { flex: 1; }
 .folder-browser .map-action { width: 100%; padding: 12px; }
 .folder-error { margin: 0; padding: 10px 16px; border-top: 1px solid var(--rule); color: #8d3030; font-size: 12px; }
 .empty-actions { display: flex; gap: 12px; }

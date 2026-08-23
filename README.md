@@ -66,7 +66,7 @@ MIT) hosted as a plain Vite React app, with two local changes:
 ## Heuristics
 
 The full rule catalogue lives in [HEURISTICS.md](./HEURISTICS.md): inventory
-(I1-I4), structure (S1-S4), deployment shape (D1-D8), coupling (C1-C3),
+(I1-I5), structure (S1-S4), deployment shape (D1-D13), coupling (C1-C3),
 reachability (R1-R4), and map shaping (M1-M4), each with its signal, action,
 known failure modes, and tuning constants. In one line: deployment manifests
 define the districts, the import graph defines the edges and interiors,
