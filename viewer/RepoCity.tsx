@@ -10,22 +10,23 @@ import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { showcases, type Showcase } from "./lib/local-showcases";
+import * as palette from "./lib/palette";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
 // Main-thread typesetting keeps labels functional without the broken worker.
 configureTextBuilder({ useWorker: false });
 
-const SCENE_INK = "#14202b";
-const SCENE_PAPER = "#dbe5e7";
-const SCENE_PANEL = "#edf3f2";
-const NEIGHBORHOOD_ACCENTS = ["#6d9da5", "#75967b", "#8f7da8", "#b77f8b", "#718eaf"];
+const SCENE_INK = palette.INK;
+const SCENE_PAPER = palette.PAPER;
+const SCENE_PANEL = palette.PANEL;
+const NEIGHBORHOOD_ACCENTS = palette.NEIGHBORHOOD_ACCENTS;
 
-const IMPORTS_OUT_COLOR = "#2a4d9b"; // selected node imports these
-const IMPORTED_BY_COLOR = "#7c3f8f"; // these import the selected node
+const IMPORTS_OUT_COLOR = palette.IMPORTS_OUT;
+const IMPORTED_BY_COLOR = palette.IMPORTED_BY;
 const EVIDENCE_COLORS: Record<EvidenceKind, string> = {
   declared: SCENE_INK,
-  observed: "#3f725d",
-  inferred: "#a56f46",
+  observed: palette.EDGE_OBSERVED,
+  inferred: palette.EDGE_INFERRED,
 };
 
 function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: FlowLayout["bounds"]; overhead: boolean }) {
@@ -145,11 +146,11 @@ function FlowBands({ layout }: { layout: FlowLayout }) {
       <group key={layer}>
         <mesh position={[centerX, -0.018, z]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[width, 3.5]} />
-          <meshBasicMaterial color={layer % 2 ? "#c5d5d8" : "#e1eaeb"} transparent opacity={0.12} depthWrite={false} />
+          <meshBasicMaterial color={layer % 2 ? palette.BAND_FILL_ODD : palette.BAND_FILL_EVEN} transparent opacity={0.12} depthWrite={false} />
         </mesh>
         <Line
           points={[[layout.bounds.minX - 1.1, 0.01, z + 1.28], [layout.bounds.maxX + 1.1, 0.01, z + 1.28]]}
-          color="#83989d"
+          color={palette.BAND_RULE}
           lineWidth={0.55}
           dashed
           dashSize={0.16}
@@ -163,7 +164,7 @@ function FlowBands({ layout }: { layout: FlowLayout }) {
 }
 
 function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabels = false }: { layout: FlowLayout; selectedId: string; activeNeighborhoodId: string | null; hideLabels?: boolean }) {
-  const colors = ["#c8dfe2", "#cddbcf", "#d7d2e5", "#e2cfd7", "#c9d7e6"];
+  const colors = palette.NEIGHBORHOOD_PLOT_FILLS;
 
   return layout.neighborhoods.map((neighborhood, index) => {
     // Local change: implicit groups (satellites of a district, the System
@@ -198,7 +199,7 @@ function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabel
         <planeGeometry args={[width, depth]} />
         <meshBasicMaterial color={neighborhood.color ?? colors[index % colors.length]} transparent opacity={dimmed ? 0.1 : active ? 0.5 : 0.34} depthWrite={false} />
       </mesh>
-      <Line points={outline} color={active ? SCENE_INK : "#70878c"} lineWidth={active ? 1.55 : 0.9} transparent opacity={dimmed ? 0.16 : active ? 0.9 : 0.62} />
+      <Line points={outline} color={active ? SCENE_INK : palette.MARKER_MUTED} lineWidth={active ? 1.55 : 0.9} transparent opacity={dimmed ? 0.16 : active ? 0.9 : 0.62} />
       {!hideLabels && <group position={[centerX, 0.048, signZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh>
           <planeGeometry args={[signWidth, signHeight]} />
@@ -299,16 +300,16 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds, routes, s
         <Line
           points={points}
           color={edgeColor}
-          lineWidth={selectedImport ? 3.4 : emphasized ? 2.6 : touchesSelected ? 2 : focused ? 1.1 : 0.9}
+          lineWidth={selectedImport ? 3.4 : emphasized ? 3.2 : touchesSelected ? 2.8 : focused ? 1.4 : 1.3}
           dashed={edge.evidence === "inferred" && !selectedImport}
           dashSize={0.17}
           gapSize={0.1}
           transparent
-          opacity={selectedImport ? 1 : emphasized ? 0.98 : touchesSelected ? 0.85 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
+          opacity={selectedImport ? 1 : emphasized ? 1 : touchesSelected ? 0.95 : focused ? 0.55 : focusedEdgeIds ? 0.03 : 0.62}
         />
         <mesh position={arrowPosition} quaternion={quaternion}>
-          <coneGeometry args={[selectedImport ? 0.12 : emphasized ? 0.105 : 0.07, selectedImport ? 0.3 : emphasized ? 0.26 : 0.18, 4]} />
-          <meshBasicMaterial color={edgeColor} transparent opacity={selectedImport ? 1 : emphasized ? 0.98 : touchesSelected ? 0.9 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
+          <coneGeometry args={[selectedImport ? 0.12 : emphasized ? 0.11 : touchesSelected ? 0.1 : 0.08, selectedImport ? 0.3 : emphasized ? 0.27 : touchesSelected ? 0.25 : 0.2, 4]} />
+          <meshBasicMaterial color={edgeColor} transparent opacity={selectedImport ? 1 : emphasized ? 1 : touchesSelected ? 0.95 : focused ? 0.65 : focusedEdgeIds ? 0.03 : 0.65} />
         </mesh>
       </group>
     );
@@ -480,7 +481,7 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segments, cronCap, hasCoverageGap, coverageFraction, depth, height, visualArchetype, width]);
   const outline = useMemo(() => new THREE.EdgesGeometry(fullGeometry), [fullGeometry]);
-  const color = node.display?.color ?? (node.kind === "infra" ? "#b17f9f" : node.kind === "external" ? "#cf8278" : "#81afa6");
+  const color = node.display?.color ?? (node.kind === "infra" ? palette.STRUCTURE_INFRA : node.kind === "external" ? palette.STRUCTURE_EXTERNAL : palette.STRUCTURE_DEFAULT);
   const floorCount = hasInterior ? Math.max(0, Math.min(4, Math.round(height * 1.2) - 1)) : 0;
   const worldScale = interior ? 0.48 : 1;
   const initialScale = interior ? 0.08 : 1;
@@ -533,9 +534,9 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
           scale={selected ? 1.075 : 1}
         >
           <meshStandardMaterial
-            color="#c0574a"
+            color={palette.COVERAGE_GAP}
             roughness={0.86}
-            emissive={selected || hovered ? "#c0574a" : "#000000"}
+            emissive={selected || hovered ? palette.COVERAGE_GAP : "#000000"}
             emissiveIntensity={selected ? 0.32 : hovered ? 0.1 : 0}
           />
         </mesh>}
@@ -600,7 +601,7 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
   const plaqueHeight = (interior ? 0.58 : landmark ? 1.02 : quieter ? 0.76 : 0.88) * labelScale;
   const codeFontSize = (interior ? 0.13 : landmark ? 0.2 : quieter ? 0.145 : 0.17) * labelScale;
   const labelFontSize = (interior ? 0.17 : landmark ? 0.29 : quieter ? 0.205 : 0.24) * labelScale;
-  const plaqueColor = node.kind === "external" ? "#f0e5e5" : node.kind === "infra" ? "#ebe5ee" : "#e5efee";
+  const plaqueColor = node.kind === "external" ? palette.PLAQUE_EXTERNAL : node.kind === "infra" ? palette.PLAQUE_INFRA : palette.PLAQUE_DEFAULT;
   const markerY = 0.055;
   const plaqueZ = position[1] + footprintDepth / 2 + plaqueHeight / 2 + (interior ? 0.12 : 0.06);
   const plaqueNearEdgeZ = plaqueZ - plaqueHeight / 2;
@@ -636,7 +637,7 @@ function MapMarker({ node, index, position, selected, hasInterior, expanded = fa
         <planeGeometry args={[footprintWidth, footprintDepth]} />
         <meshBasicMaterial color={SCENE_INK} transparent opacity={active && !dimmed ? 0.12 : 0} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
-      <Line raycast={() => null} points={footprint} color={active ? SCENE_INK : interior ? "#376f71" : "#70878c"} lineWidth={active ? 1.5 : 0.8} dashed={interior} dashSize={0.09} gapSize={0.06} transparent opacity={dimmed ? 0.18 : 0.78} />
+      <Line raycast={() => null} points={footprint} color={active ? SCENE_INK : interior ? palette.MARKER_INTERIOR : palette.MARKER_MUTED} lineWidth={active ? 1.5 : 0.8} dashed={interior} dashSize={0.09} gapSize={0.06} transparent opacity={dimmed ? 0.18 : 0.78} />
       <Line raycast={() => null} points={[[position[0], markerY, position[1] + footprintDepth / 2], [position[0], markerY, plaqueNearEdgeZ]]} color={SCENE_INK} lineWidth={0.8} transparent opacity={dimmed ? 0.14 : 0.56} />
       <group position={[position[0], markerY + 0.012, plaqueZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh>
@@ -702,7 +703,7 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
   </group>;
 }
 
-function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, onHover, viewKey, overheadView }: {
+function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId, interiorActiveEdgeId, expandedId, focusId, neighborhoodId, onSelect, onEnter, onHover, viewKey, overheadView, onDeselect }: {
   nodes: CityNode[];
   allNodes: CityNode[];
   edges: CityEdge[];
@@ -718,6 +719,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   onHover: (node: CityNode | null, x: number, y: number) => void;
   viewKey: string;
   overheadView: boolean;
+  onDeselect: () => void;
 }) {
   const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
   const edgeRouter = useMemo(() => createEdgeRouter(layout, nodes), [layout, nodes]);
@@ -819,13 +821,6 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
     return routed;
   }, [edgeRouter, edgeRoutes, edges, focusModel, selectedId]);
 
-  // Grid sized to the layout so large maps do not spill off its edge.
-  const gridSize = Math.ceil(Math.max(
-    80,
-    (layout.bounds.maxX - layout.bounds.minX) * 1.2,
-    (layout.bounds.maxZ - layout.bounds.minZ) * 1.2,
-  ) / 10) * 10;
-
   return (
     <Canvas
       orthographic
@@ -835,15 +830,12 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
       camera={{ position: [120, 156, 180], zoom: 48, near: 0.1, far: 800 }}
       shadows
       dpr={[1, 1.7]}
+      onPointerMissed={() => onDeselect()}
     >
       <CameraRig viewKey={viewKey} bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? neighborhoodModel?.bounds ?? layout.bounds} overhead={overheadView} />
       <color attach="background" args={[SCENE_PAPER]} />
       <ambientLight intensity={1.6} />
       <directionalLight position={[-6, 12, 7]} intensity={2.25} castShadow shadow-mapSize={[1024, 1024]} />
-      <gridHelper
-        args={[gridSize, gridSize, "#91a7ab", "#c1d0d2"]}
-        position={[(layout.bounds.minX + layout.bounds.maxX) / 2, -0.035, (layout.bounds.minZ + layout.bounds.maxZ) / 2]}
-      />
       <NeighborhoodPlots layout={layout} selectedId={selectedId} activeNeighborhoodId={neighborhoodId} hideLabels={!!interiorModel} />
       <FlowBands layout={layout} />
       <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} routes={activeRoutes} selectedId={selectedId} />
@@ -879,11 +871,9 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
   // Local change: campus structures may be district-less (no parentId).
   const isCampusNode = (node: CityNode) =>
     node.kind !== "scope" && (!node.parentId || nodeById.get(node.parentId)?.kind === "scope");
-  const firstStructure = map.nodes.find(isCampusNode) ?? map.nodes[0];
-  const [selectedId, setSelectedId] = useState(firstStructure?.id ?? "");
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(() =>
-    map.edges.find((edge) => edge.from === firstStructure?.id || edge.to === firstStructure?.id)?.id ?? null,
-  );
+  // Start deselected: the panel opens on the map summary.
+  const [selectedId, setSelectedId] = useState("");
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [neighborhoodId, setNeighborhoodId] = useState<string | null>(null);
@@ -920,8 +910,10 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
   const sceneIds = useMemo(() => new Set([...visibleNodes.map((node) => node.id), ...expandedChildren.map((node) => node.id)]), [expandedChildren, visibleNodes]);
   const layout = useMemo(() => computeFlowLayout(visibleNodes, visibleEdges, map.nodes), [map.nodes, visibleEdges, visibleNodes]);
   const activeNeighborhoodId = neighborhoodId && layout.neighborhoods.some((neighborhood) => neighborhood.id === neighborhoodId) && !activeExpandedId && !activeFocusId ? neighborhoodId : null;
-  const effectiveSelectedId = sceneIds.has(selectedId) ? selectedId : visibleNodes[0]?.id ?? selectedId;
-  const selected = nodeById.get(effectiveSelectedId) ?? visibleNodes[0] ?? map.nodes[0];
+  // Local change: no forced selection — an empty selection shows the map
+  // summary in the panel, and clicking the background deselects.
+  const effectiveSelectedId = selectedId && sceneIds.has(selectedId) ? selectedId : "";
+  const selected = effectiveSelectedId ? nodeById.get(effectiveSelectedId) : undefined;
   const selectedChildren = selected ? map.nodes.filter((node) => node.parentId === selected.id) : [];
   const focusConnections = activeFocusId ? visibleEdges.filter((edge) => edge.from === activeFocusId || edge.to === activeFocusId) : [];
   const selectedConnection = map.edges.find((edge) => edge.id === selectedConnectionId);
@@ -1054,7 +1046,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       </header>
 
       <aside className="rail">
-        <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a component" /></label>
+        <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a component" />{search && <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setSearch("")}>×</button>}</label>
         <div className="component-list" aria-label="Mapped components">
           {(() => {
             let lastBand: number | undefined;
@@ -1078,7 +1070,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       </aside>
 
       <section className="viewport" aria-label="Interactive repository city">
-        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} overheadView={overheadView} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
+        {visibleNodes.length ? <CityScene nodes={visibleNodes} allNodes={map.nodes} edges={visibleEdges} allEdges={map.edges} selectedId={effectiveSelectedId} activeEdgeId={campusActiveEdgeId} interiorActiveEdgeId={selectedConnectionId} expandedId={activeExpandedId} focusId={activeFocusId} neighborhoodId={activeNeighborhoodId} onSelect={selectNode} onEnter={exploreNode} onHover={handleHover} viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`} overheadView={overheadView} onDeselect={() => { setSelectedId(""); setSelectedConnectionId(null); }} /> : <div className="empty-view"><strong>No mapped structures.</strong></div>}
         <div className="viewport-viewmode">
           <button type="button" onClick={() => setOverheadView((value) => !value)}>{overheadView ? "Isometric" : "Overhead"}</button>
         </div>
@@ -1120,19 +1112,78 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
       </section>
 
       <aside className="inspector">
-        {selected && <div className="inspector-content" key={selected.id}>
-          <p className="eyebrow">What it does</p>
-          {plainType(selected, selectedChildren.length) && <div className={`plain-type type-${selected.kind}`}>{plainType(selected, selectedChildren.length)}</div>}
-          <h2>{selected.label}</h2>
-          <p className="description">{selected.description ?? "Purpose not yet mapped."}</p>
-          {!!selected.sourceRefs?.length && <section className="source-list"><p className="eyebrow">Found in code</p>{selected.sourceRefs.map((ref, index) => {
-            const label = `${ref.path ?? ref.url}${ref.line ? `:${ref.line}` : ""}`;
-            const href = sourceHref(map, ref);
+        {(() => {
+          // The panel follows the pointer like the stats card: hovered node
+          // first, the selection otherwise.
+          const shown = hoverCard?.node ?? selected;
+          if (!shown) {
+            // Map summary: what the panel shows when nothing is selected.
+            const districts = layout.neighborhoods.filter((neighborhood) => !neighborhood.id.startsWith("__"));
+            const kindLabels: Array<[string, (n: CityNode) => boolean]> = [
+              ["districts", () => false],
+              ["entry points", (n) => n.archetype === "gateway"],
+              ["services", (n) => n.kind === "deployable"],
+              ["modules", (n) => n.kind === "module" && n.archetype !== "gateway"],
+              ["data stores", (n) => n.archetype === "database" || n.archetype === "storage"],
+              ["infrastructure", (n) => n.kind === "infra" && n.archetype !== "database" && n.archetype !== "storage"],
+              ["external systems", (n) => n.kind === "external"],
+            ];
+            const summary: Array<[string, string]> = kindLabels
+              .map(([name, test]) => [name, name === "districts" ? districts.length : visibleNodes.filter(test).length] as [string, number])
+              .filter(([, count]) => Number(count) > 0)
+              .map(([name, count]) => [name, String(count)]);
+            summary.push(["visible edges", String(visibleEdges.length)]);
+            return <div className="inspector-content" key="map-summary">
+              <p className="eyebrow">This map</p>
+              <h2>{map.name}</h2>
+              {map.summary && <p className="description">{map.summary}</p>}
+              {map.generatedAt && <p className="description">Generated {new Date(map.generatedAt).toLocaleString()}.</p>}
+              <section className="stats-section"><p className="eyebrow">Contents</p>
+                <dl>{summary.map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>
+              </section>
+            </div>;
+          }
+          const shownChildren = map.nodes.filter((candidate) => candidate.parentId === shown.id).length;
+          const attributes = (shown as CityNode & { attributes?: Record<string, string> }).attributes ?? {};
+          const attributeEntries = Object.entries(attributes);
+          const attributePaths = new Set(Object.values(attributes));
+          const plainRefs = (shown.sourceRefs ?? []).filter((ref) => !ref.path || !attributePaths.has(ref.path));
+          const metrics = (shown.metrics ?? {}) as Record<string, number>;
+          const stats: Array<[string, string]> = [
+            ["loc", metrics.loc !== undefined ? String(metrics.loc) : ""],
+            ["complexity", metrics.complexity !== undefined ? String(metrics.complexity) : ""],
+            ["coverage", metrics.coverage !== undefined ? `${metrics.coverage}%` : ""],
+          ].filter(([, value]) => value !== "") as Array<[string, string]>;
+          const sourceRow = (path: string, key: string, tag?: string) => {
+            const href = sourceHref(map, { path });
+            const body = <><span className="ref-main">{tag && <span className="ref-tag">{tag}</span>}<code>{path}</code></span>{href && <span aria-hidden="true">↗</span>}</>;
             return href
-              ? <a href={href} target="_blank" rel="noreferrer" key={`${ref.path ?? ref.url}-${index}`} aria-label={`Open ${label} in source`}><code>{label}</code><span aria-hidden="true">↗</span></a>
-              : <div key={`${ref.path ?? ref.url}-${index}`}><code>{label}</code></div>;
-          })}</section>}
-        </div>}
+              ? <a href={href} target="_blank" rel="noreferrer" key={key} aria-label={`Open ${path} in source`}>{body}</a>
+              : <div key={key}>{body}</div>;
+          };
+          const paragraphs = (shown.description ?? "").split("\n\n").filter((p) => p.trim());
+          return <div className="inspector-content" key={shown.id}>
+            <p className="eyebrow">What it does</p>
+            {plainType(shown, shownChildren) && <div className={`plain-type type-${shown.kind}`}>{plainType(shown, shownChildren)}</div>}
+            <h2>{shown.label}</h2>
+            {paragraphs.length
+              ? paragraphs.map((paragraph, index) => <p className="description" key={index}>{paragraph}</p>)
+              : <p className="description">Purpose not yet mapped.</p>}
+            {(attributeEntries.length > 0 || plainRefs.length > 0) && <section className="source-list"><p className="eyebrow">Source files</p>
+              {attributeEntries.map(([name, path]) => sourceRow(path, `attr-${name}`, name))}
+              {plainRefs.map((ref, index) => {
+                const label = `${ref.path ?? ref.url}${ref.line ? `:${ref.line}` : ""}`;
+                const href = sourceHref(map, ref);
+                return href
+                  ? <a href={href} target="_blank" rel="noreferrer" key={`${ref.path ?? ref.url}-${index}`} aria-label={`Open ${label} in source`}><code>{label}</code><span aria-hidden="true">↗</span></a>
+                  : <div key={`${ref.path ?? ref.url}-${index}`}><code>{label}</code></div>;
+              })}
+            </section>}
+            {stats.length > 0 && <section className="stats-section"><p className="eyebrow">Stats</p>
+              <dl>{stats.map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>
+            </section>}
+          </div>;
+        })()}
       </aside>
     </main>
   );

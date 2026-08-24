@@ -18,7 +18,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 const IGNORED_DIRS = new Set([
   "node_modules", ".git", ".next", "dist", "build", "coverage", ".wrangler",
   ".turbo", "out", "vendor", ".venv", "__pycache__", ".functionary", ".repo-city",
-  "generated", "docs", "examples",
+  "generated", "docs", "examples", "data",
 ]);
 // Codebase/dev utilities are detected by reachability, not by name: code
 // reachable only from package.json scripts and imported by nothing that
@@ -507,7 +507,7 @@ for (const crontab of crontabFiles) {
 // Hosts: one per compose file, excluding partial overlays (override/build).
 // Name from informative path segments; env variants deduped below, preferring
 // prod > uat > example > unqualified > dev.
-const GENERIC_SEGMENTS = new Set(["deploy", "deployment", "deployments", "docker", "compose", "infra"]);
+const GENERIC_SEGMENTS = new Set(["deploy", "deployment", "deployments", "docker", "compose", "infra", "products"]);
 const ENV_RANK = [
   [/prod/, 5], [/uat|stag/, 4], [/example/, 3], [/dev/, 1],
 ];
@@ -815,6 +815,45 @@ for (const base of new Set([".", ...packageDirs])) {
     }
   }
 }
+// TSDoc extraction: the first /** */ block that is file-level (only comments
+// or whitespace before it) or attached to an export becomes the node's prose.
+// First paragraph only, tags dropped, capped at 280 characters.
+const docCache = new Map();
+function fileDocSummary(file) {
+  if (docCache.has(file)) return docCache.get(file);
+  const text = readText(join(repo, file));
+  let summary = null;
+  const match = /\/\*\*([\s\S]*?)\*\//.exec(text.slice(0, 4000));
+  if (match) {
+    const before = text.slice(0, match.index);
+    const fileLevel = /^\s*(?:\/\/[^\n]*\n|\s)*$/.test(before);
+    const onExport = /^\s*export\b/.test(text.slice(match.index + match[0].length));
+    if (fileLevel || onExport) {
+      const paragraph = [];
+      for (const raw of match[1].split("\n")) {
+        const line = raw.replace(/^\s*\*? ?/, "");
+        if (/^@\w/.test(line)) break;
+        if (!line.trim() && paragraph.length) break;
+        if (line.trim()) paragraph.push(line.trim());
+      }
+      const joined = paragraph.join(" ").trim();
+      if (joined) summary = joined.length > 280 ? `${joined.slice(0, 277)}...` : joined;
+    }
+  }
+  docCache.set(file, summary);
+  return summary;
+}
+// For a multi-file node, prefer the entry-like file's doc.
+function docForFiles(files) {
+  const ordered = [...files].sort((a, b) =>
+    Number(ENTRY_FILE_PATTERN.test(basename(b).replace(/\.[a-z]+$/, ""))) - Number(ENTRY_FILE_PATTERN.test(basename(a).replace(/\.[a-z]+$/, ""))));
+  for (const file of ordered) {
+    const summary = fileDocSummary(file);
+    if (summary) return summary;
+  }
+  return null;
+}
+
 function coverageForFiles(files) {
   let covered = 0;
   let total = 0;
@@ -834,6 +873,8 @@ function coverageForFiles(files) {
 // Height scales with lines of code (unclamped above the minimum); footprint
 // scales with a cyclomatic-complexity approximation (decision-point count).
 if (overview) {
+  // District/module colours baked into map.json; keep in step with the
+  // viewer's colour vocabulary in viewer/lib/palette.ts.
   const OVERVIEW_APP_COLOR = "#6d9da5";
   const OVERVIEW_SHARED_COLOR = "#8f7da8";
   const OVERVIEW_INFRA_COLOR = "#b77f8b";
@@ -1032,7 +1073,10 @@ if (overview) {
         id: m.id, label: m.label, kind: "module",
         archetype: asBuilding ? "building" : isEntryModule ? "gateway" : "worker",
         parentId: district.id,
-        description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, max function complexity ~${complexity}.`,
+        // TSDoc prose only — the stats live in metrics and render in the
+        // panel's Stats section.
+        ...(docForFiles(m.files) ? { description: docForFiles(m.files) } : {}),
+        ...(isEntryModule ? { attributes: { "entry-point": m.path } } : {}),
         sourceRefs: [{ path: m.path }],
         metrics: { loc, complexity, files: m.files.length,
           ...(coverageForFiles(m.files) !== null ? { coverage: coverageForFiles(m.files) } : {}) },
@@ -1511,7 +1555,7 @@ for (const host of hosts) {
     for (const copy of copiedSegments) {
       for (const f of sourceFiles) if (f.startsWith(copy + "/")) { fileNodeOwner.set(f, serviceId); serviceSourceFiles.push(f); }
     }
-    campusFileSets.push({ id: serviceId, files: serviceSourceFiles });
+    campusFileSets.push({ id: serviceId, files: serviceSourceFiles, entryFile: service.entryFile });
     const isScheduled = Boolean(service.schedule);
     const roomsForService = copiedSegments.length >= 2;
     const archetype = roomsForService
@@ -1529,11 +1573,17 @@ for (const host of hosts) {
       kind: service.dockerfile ? "deployable" : "infra",
       archetype,
       parentId: host.id,
+      // Prose (TSDoc, prepended in 7f) plus the schedule as its own
+      // paragraph; build/entry provenance moves to labelled attributes
+      // rendered in the Source files section.
       description: [
-        service.dockerfile ? `Service built from ${service.dockerfile}.` : `Container image ${service.image ?? "unknown"}.`,
-        service.schedule ? `Scheduled job (${service.schedule}).` : null,
-        service.entryFile ? `Entry point ${service.entryFile}.` : null,
-      ].filter(Boolean).join(" "),
+        service.dockerfile ? null : `Container image ${service.image ?? "unknown"}.`,
+        service.schedule ? `Scheduled job: ${service.schedule}` : null,
+      ].filter(Boolean).join("\n\n"),
+      attributes: {
+        ...(service.dockerfile ? { "service-source": service.dockerfile } : {}),
+        ...(service.entryFile ? { "entry-point": service.entryFile } : {}),
+      },
       sourceRefs: [{ path: service.dockerfile ?? host.file }],
       ...(serviceSourceFiles.length
         ? { metrics: { loc: serviceSourceFiles.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0) } }
@@ -1864,6 +1914,7 @@ for (const pkg of packages) {
           id: childId,
           label: titleCase(child.seg),
           kind: "module", archetype: childAsBuilding ? "building" : childIsEntry ? "gateway" : "worker",
+          ...(childIsEntry && child.files.length === 1 ? { attributes: { "entry-point": child.files[0] } } : {}),
           parentId: districtId,
           description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
           sourceRefs: childSourceRefs(room, child),
@@ -2200,7 +2251,7 @@ for (const external of nodes.filter((n) => n.kind === "external")) {
   }
 }
 
-for (const { id, files } of classificationSets) {
+for (const { id, files, entryFile } of classificationSets) {
   const node = nodes.find((n) => n.id === id);
   if (!node || !files.length) continue;
   // Deployment structures size like overview modules (O5): height from lines
@@ -2215,6 +2266,13 @@ for (const { id, files } of classificationSets) {
   node.metrics = { ...(node.metrics ?? {}), loc: sizedLoc, complexity: sizedComplexity,
     ...(coverage !== null ? { coverage } : {}) };
   node.display = { ...(node.display ?? {}), size: [sizedFootprint, sizedHeight, sizedFootprint * 0.85] };
+  // TSDoc prose leads the description as its own paragraph: the node's
+  // DECLARED entry file wins (a service's Dockerfile entrypoint), else the
+  // best entry-like file by name.
+  const doc = (entryFile ? fileDocSummary(entryFile) : null) ?? docForFiles(files);
+  if (doc && !node.description?.startsWith(doc)) {
+    node.description = [doc, node.description].filter(Boolean).join("\n\n");
+  }
   let listens = false, callsOut = false, writes = false, reads = false;
   for (const file of files) {
     const text = readText(join(repo, file));

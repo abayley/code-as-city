@@ -11,7 +11,7 @@ and commit messages can cite them.
 | --- | --- | --- |
 | I1 | `.git` present | Inventory via `git ls-files` (respects .gitignore); fall back to a directory walk |
 | I2 | A directory contains its own `.git` | Excluded entirely (vendored third-party checkout, e.g. a langfuse clone) |
-| I3 | Directory name in the ignore set (`node_modules`, `dist`, `generated`, `docs`, `examples`, ...) | Excluded entirely |
+| I3 | Directory name in the ignore set (`node_modules`, `dist`, `generated`, `docs`, `examples`, `data`, ...) | Excluded entirely (a `data/` dir can hide fixture workspaces with their own package.json, which would flip the repo to multi-package and collapse O1's districts) |
 | I4 | Path segment in `test`/`tests`/`__tests__`/`coverage`/`test-database`, or filename matching `*.test.*`, `*.spec.*`, `*_test.*` | Excluded from source analysis |
 | I5 | Filename matching `*.config.{ts,js,mjs,cjs}`, `*-setup.*`, or `.*rc.js` | Tool configuration pretending to be code: excluded from source analysis (still visible to config-driven rules such as D7) |
 
@@ -94,6 +94,7 @@ thing keeping unreferenced-but-meaningful producers (plugins/) on the map.
 | M10 | A node's files reference an external by SDK import or env-var prefix | Inferred `data_flow` "delivers" edge (confidence 0.6) node -> external, in the deployment map as in overview O8 |
 | M11 | Lines of code and per-function complexity of a deployment node's files | Height = 0.6 + log2(1 + loc/200) * 0.55 (log-scaled: services are multi-file aggregates running to 5 figures of loc); floor area = the O5 footprint formula (worst single function, clamped 0.95-2.5) |
 | M12 | Istanbul `coverage-summary.json` under a `coverage/` dir at repo or package root (one suite subdir deep) | Suites merge by best per-file line coverage; nodes carry a line-weighted `coverage` metric (both map modes). The viewer renders every box-family shape (buildings, ziggurats, archways, clock towers) as stacked segments split at the covered height — covered fraction in the node colour, the remainder red. Databases and clouds carry the metric only |
+| M13 | The first `/** */` block in a node's file that is file-level (nothing but comments before it) or attached to an export | Its first paragraph (tags dropped, capped at 280 chars) leads the node description ahead of the mechanical stats, in both map modes. Multi-file nodes prefer the declared entry file's doc (a service's Dockerfile entrypoint), else the best entry-named file |
 | M4 | Assembly complete | Final sweep drops any edge whose endpoint was excluded by a later rule |
 | M5 | Host config exporter endpoint/env lines matching another host's name or another host's service name (kebab~snake normalised, >=6 chars) | Declared `data_flow` between the hosts' primary services (gateway collector -> stack collector; stack collector -> span-ingest) |
 | M6 | Exporter endpoint env token naming nothing internal (LANGFUSE_OTLP_ENDPOINT), with a +/-4-line window guard against internally-named blocks | Declared external cloud node with a `data_flow` edge from the exporting service. Externals (M6, D11, D12) share one "External systems" district behind the host chain — they are their own systems, not tenants of the host whose config mentions them |

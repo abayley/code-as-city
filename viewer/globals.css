@@ -1,4 +1,6 @@
 
+/* DOM chrome colours; keep in step with the map's colour vocabulary in
+   viewer/lib/palette.ts (which holds the three.js scene colours). */
 :root {
   --ink: #14202b;
   --paper: #dbe5e7;
@@ -125,6 +127,8 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .search-box { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 11px; margin-bottom: 19px; border: 1px solid rgba(20,32,43,.5); background: rgba(219,229,231,.56); }
 .search-box span { font-size: 15px; transform: translateY(-1px); }
 .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 12px; }
+.search-clear { border: 0; background: none; font-size: 16px; line-height: 1; cursor: pointer; color: rgba(20,32,43,.6); padding: 2px 4px; }
+.search-clear:hover { color: var(--ink); }
 .search-box input::placeholder { color: rgba(23,25,21,.48); }
 .component-list { border-top: 1px solid var(--rule); }
 .rail-group { --district-accent: #6d9da5; margin: 18px -8px 0; padding: 0 8px 8px; border-top: 3px solid var(--district-accent); background: color-mix(in srgb, var(--district-accent) 8%, transparent); }
@@ -180,6 +184,15 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .inspector h2 { margin: 22px 0 12px; font-family: var(--font-geist-sans), sans-serif; font-size: 36px; line-height: 1.08; letter-spacing: -.04em; font-weight: 560; text-wrap: balance; }
 .description { margin: 0; font-family: var(--font-geist-sans), sans-serif; line-height: 1.6; color: rgba(20,32,43,.76); font-size: 14px; }
 .source-list { margin-top: 27px; border-top: 1px solid var(--rule); padding-top: 16px; }
+.source-list .ref-tag { display: inline-block; margin-right: 8px; padding: 1px 7px; border: 1px solid rgba(20,32,43,.4); border-radius: 3px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: rgba(20,32,43,.62); }
+.source-list .ref-main { display: block; min-width: 0; }
+.source-list .ref-main code { overflow-wrap: anywhere; }
+.stats-section { margin-top: 27px; border-top: 1px solid var(--rule); padding-top: 16px; }
+.stats-section dl { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.stats-section dl > div { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(20,32,43,.14); padding-bottom: 7px; }
+.stats-section dt { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; color: rgba(20,32,43,.55); }
+.stats-section dd { margin: 0; font-size: 13px; font-weight: 600; }
+.description + .description { margin-top: 10px; }
 .source-list > div, .source-list > a { padding: 10px 0; border-bottom: 1px solid rgba(20,32,43,.24); }
 .source-list > a { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .source-list > a:hover { background: rgba(23,25,21,.07); }
