@@ -306,10 +306,12 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds, routes, s
   });
 }
 
+// Only the non-box archetypes remain here; box-family shapes (buildings,
+// ziggurats, archways, clock towers) are built as stacked segments inside
+// Structure so coverage-fill can split them.
 function geometryFor(archetype: CityNode["archetype"], width: number, height: number, depth: number) {
   if (archetype === "database") return new THREE.CylinderGeometry(width / 2, width / 2, height, 24);
   if (archetype === "cloud") return new THREE.DodecahedronGeometry(width * 0.57, 0);
-  if (archetype === "gateway") return new THREE.BoxGeometry(width, height, depth * 0.72);
   return new THREE.BoxGeometry(width, height, depth);
 }
 
@@ -379,15 +381,96 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
   // Local change: support modules (overview mode) render as four-sided
   // ziggurats so they read differently from the composer buildings.
   const isSupportShape = node.archetype === "worker" && (node.tags ?? []).includes("support");
-  const geometry = useMemo(() => {
-    if (!isSupportShape) return geometryFor(visualArchetype, width, height, depth);
-    const tierScales = [1, 0.72, 0.46];
-    const tiers = tierScales.map((scale, index) =>
-      new THREE.BoxGeometry(width * scale, height / 3, depth * scale)
-        .translate(0, -height / 2 + height / 6 + (index * height) / 3, 0));
-    return mergeGeometries(tiers);
-  }, [depth, height, isSupportShape, visualArchetype, width]);
-  const outline = useMemo(() => new THREE.EdgesGeometry(geometry), [geometry]);
+  // Local change: cron-tagged structures render as clock towers (a narrow
+  // tower with a pyramidal cap and a clockface near the top).
+  const isCronShape = !isSupportShape && !interior
+    && (node.tags ?? []).includes("cron")
+    && visualArchetype !== "database" && visualArchetype !== "cloud" && visualArchetype !== "gateway";
+  // Local change: box-family shapes (plain buildings, ziggurats, archways,
+  // clock towers) are built as stacked box segments. Coverage-fill splits the
+  // stack at the covered height — covered segments in the node colour, the
+  // remainder as red gap segments. Stacking (never overlaying) avoids
+  // coplanar faces and z-fighting.
+  type BoxSegment = { x?: number; z?: number; w: number; d: number; y0: number; y1: number };
+  const segments = useMemo<BoxSegment[] | null>(() => {
+    if (visualArchetype === "database" || visualArchetype === "cloud") return null;
+    if (isSupportShape) {
+      // Ziggurat: at least 3 tiers (short ones get slim layers); a layer is
+      // added whenever the tier height would exceed the threshold, so slabs
+      // never thicken as the building grows. Step-down adapts to tier count.
+      const MAX_TIER_HEIGHT = 0.5;
+      const tierCount = Math.max(3, Math.ceil(height / MAX_TIER_HEIGHT));
+      const topScale = 0.42;
+      return Array.from({ length: tierCount }, (_, tier) => {
+        const scale = 1 - (1 - topScale) * (tier / (tierCount - 1));
+        return { w: width * scale, d: depth * scale,
+          y0: -height / 2 + (tier * height) / tierCount,
+          y1: -height / 2 + ((tier + 1) * height) / tierCount };
+      });
+    }
+    if (visualArchetype === "gateway") {
+      // Archway: pillars carry the height at constant thickness; the lintel
+      // is a constant-thickness slab.
+      const pillarWidth = Math.min(width * 0.32, 0.5);
+      const lintelHeight = Math.min(height * 0.4, 0.45);
+      const archDepth = depth * 0.72;
+      return [
+        { x: -(width - pillarWidth) / 2, w: pillarWidth, d: archDepth, y0: -height / 2, y1: height / 2 - lintelHeight },
+        { x: (width - pillarWidth) / 2, w: pillarWidth, d: archDepth, y0: -height / 2, y1: height / 2 - lintelHeight },
+        { w: width, d: archDepth, y0: height / 2 - lintelHeight, y1: height / 2 },
+      ];
+    }
+    if (isCronShape) {
+      return [{ w: width * 0.58, d: depth * 0.58, y0: -height / 2, y1: height / 2 - height * 0.15 }];
+    }
+    return [{ w: width, d: depth, y0: -height / 2, y1: height / 2 }];
+  }, [depth, height, isCronShape, isSupportShape, visualArchetype, width]);
+  const cronCap = useMemo(() => {
+    if (!isCronShape) return null;
+    const cap = new THREE.ConeGeometry(width * 0.58 * 0.72, height * 0.15, 4);
+    cap.rotateY(Math.PI / 4);
+    cap.translate(0, height / 2 - height * 0.075, 0);
+    return cap;
+  }, [height, isCronShape, width]);
+  const segmentGeometry = (segment: BoxSegment) => {
+    const box = new THREE.BoxGeometry(segment.w, segment.y1 - segment.y0, segment.d);
+    box.translate(segment.x ?? 0, (segment.y0 + segment.y1) / 2, segment.z ?? 0);
+    return box;
+  };
+  const coveragePct = typeof (node.metrics as Record<string, number> | undefined)?.coverage === "number"
+    ? (node.metrics as Record<string, number>).coverage : null;
+  const coverageFillable = coveragePct !== null && segments !== null && !interior && !expanded;
+  const coverageFraction = coverageFillable ? Math.max(0.04, Math.min(1, coveragePct / 100)) : null;
+  const hasCoverageGap = coverageFraction !== null && coverageFraction < 0.995;
+  const [geometry, gapGeometry, fullGeometry] = useMemo(() => {
+    if (!segments) {
+      const shape = geometryFor(visualArchetype, width, height, depth);
+      return [shape, null, shape] as const;
+    }
+    const all = [...segments.map(segmentGeometry), ...(cronCap ? [cronCap.clone()] : [])];
+    const full = mergeGeometries(all);
+    if (!hasCoverageGap) return [full, null, full] as const;
+    const cutY = -height / 2 + height * coverageFraction!;
+    const covered: THREE.BufferGeometry[] = [];
+    const gap: THREE.BufferGeometry[] = [];
+    for (const segment of segments) {
+      if (segment.y1 <= cutY) covered.push(segmentGeometry(segment));
+      else if (segment.y0 >= cutY) gap.push(segmentGeometry(segment));
+      else {
+        covered.push(segmentGeometry({ ...segment, y1: cutY }));
+        gap.push(segmentGeometry({ ...segment, y0: cutY }));
+      }
+    }
+    // The tower cap is indivisible: red unless the cut clears its base.
+    if (cronCap) (cutY >= height / 2 - height * 0.15 ? covered : gap).push(cronCap.clone());
+    return [
+      covered.length ? mergeGeometries(covered) : new THREE.BufferGeometry(),
+      gap.length ? mergeGeometries(gap) : null,
+      full,
+    ] as const;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segments, cronCap, hasCoverageGap, coverageFraction, depth, height, visualArchetype, width]);
+  const outline = useMemo(() => new THREE.EdgesGeometry(fullGeometry), [fullGeometry]);
   const color = node.display?.color ?? (node.kind === "infra" ? "#b17f9f" : node.kind === "external" ? "#cf8278" : "#81afa6");
   const floorCount = hasInterior ? Math.max(0, Math.min(4, Math.round(height * 1.2) - 1)) : 0;
   const worldScale = interior ? 0.48 : 1;
@@ -431,12 +514,39 @@ function Structure({ node, position, selected, hasInterior, expanded = false, in
             emissiveIntensity={selected ? 0.32 : hovered ? 0.1 : 0}
           />
         </mesh>
+        {gapGeometry && <mesh
+          geometry={gapGeometry}
+          castShadow
+          onClick={(event) => { event.stopPropagation(); onSelect(); }}
+          onDoubleClick={(event) => { event.stopPropagation(); if (!interior || hasInterior) onEnter(); }}
+          onPointerEnter={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
+          onPointerLeave={() => { setHovered(false); document.body.style.cursor = "default"; }}
+          scale={selected ? 1.075 : 1}
+        >
+          <meshStandardMaterial
+            color="#c0574a"
+            roughness={0.86}
+            emissive={selected || hovered ? "#c0574a" : "#000000"}
+            emissiveIntensity={selected ? 0.32 : hovered ? 0.1 : 0}
+          />
+        </mesh>}
         {/* Decorations must not raycast: the line threshold is a full world
             unit, which bleeds the hover zone far outside the building. */}
         <lineSegments geometry={outline} scale={selected ? 1.06 : 1.006} raycast={() => null}>
           <lineBasicMaterial color={SCENE_INK} transparent opacity={dimmed ? 0.2 : 1} />
         </lineSegments>
-        {node.archetype !== "database" && node.archetype !== "cloud" && Array.from({ length: floorCount }, (_, floor) => (
+        {isCronShape && (() => {
+          const clockRadius = Math.min(width, depth) * 0.19;
+          const clockY = height * 0.2;
+          const clockZ = depth * 0.29 + 0.012;
+          return <group position={[0, clockY, clockZ]}>
+            <mesh><circleGeometry args={[clockRadius, 20]} /><meshBasicMaterial color={SCENE_PANEL} /></mesh>
+            <mesh position={[0, 0, 0.002]}><ringGeometry args={[clockRadius * 0.86, clockRadius, 20]} /><meshBasicMaterial color={SCENE_INK} /></mesh>
+            <mesh position={[0, clockRadius * 0.32, 0.002]}><planeGeometry args={[clockRadius * 0.14, clockRadius * 0.64]} /><meshBasicMaterial color={SCENE_INK} /></mesh>
+            <mesh position={[clockRadius * 0.22, 0, 0.002]} rotation={[0, 0, -Math.PI / 2]}><planeGeometry args={[clockRadius * 0.14, clockRadius * 0.44]} /><meshBasicMaterial color={SCENE_INK} /></mesh>
+          </group>;
+        })()}
+        {node.archetype !== "database" && node.archetype !== "cloud" && node.archetype !== "gateway" && !isCronShape && Array.from({ length: floorCount }, (_, floor) => (
           <mesh key={floor} position={[0, -height / 2 + ((floor + 1) * height) / (floorCount + 1), depth / 2 + 0.008]}>
             <planeGeometry args={[width * 0.86, 0.018]} />
             <meshBasicMaterial color={SCENE_INK} transparent opacity={dimmed ? 0.12 : 0.56} />
@@ -945,10 +1055,9 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
         </div>
         {hoverCard && (() => {
           const roomCount = map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length;
-          // A many-room building's aggregate complexity is meaningless; its
-          // rooms carry their own numbers. Total lines stay accurate.
-          const metricEntries = Object.entries(hoverCard.node.metrics ?? {})
-            .filter(([key]) => roomCount === 0 || key !== "complexity");
+          // Complexity is now the worst single function, meaningful for
+          // buildings too, so nothing is suppressed.
+          const metricEntries = Object.entries(hoverCard.node.metrics ?? {});
           return <div className="stats-card" style={{ left: hoverCard.x + 18, top: hoverCard.y - 12 }}>
             <strong>{hoverCard.node.label}</strong>
             {hoverCard.node.sourceRefs?.slice(0, 3).map((ref) => <code key={ref.path ?? ref.url}>{ref.path ?? ref.url}</code>)}

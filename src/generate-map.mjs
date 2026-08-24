@@ -790,6 +790,41 @@ for (const pkg of packages) {
   }
 }
 
+// Code coverage: Istanbul coverage-summary.json files under coverage/ dirs
+// (repo root or package roots, one suite subdir deep). Suites merge by best
+// per-file line coverage; node coverage is line-weighted over its files.
+// The coverage dir is I3-ignored for inventory, so this scan targets it
+// directly.
+const coverageByFile = new Map(); // repo-relative file -> { covered, total, pct }
+for (const base of new Set([".", ...packageDirs])) {
+  const coverageDir = join(repo, base === "." ? "" : base, "coverage");
+  if (!existsSync(coverageDir)) continue;
+  let suiteDirs = [];
+  try { suiteDirs = readdirSync(coverageDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(coverageDir, e.name)); } catch { /* unreadable */ }
+  for (const candidate of [coverageDir, ...suiteDirs].map((dir) => join(dir, "coverage-summary.json"))) {
+    if (!existsSync(candidate)) continue;
+    for (const [file, stats] of Object.entries(readJson(candidate) ?? {})) {
+      if (file === "total") continue;
+      const rel = relative(repo, file);
+      if (rel.startsWith("..")) continue;
+      const lines = stats.lines ?? {};
+      const previous = coverageByFile.get(rel);
+      if (!previous || (lines.pct ?? 0) > previous.pct) {
+        coverageByFile.set(rel, { covered: lines.covered ?? 0, total: lines.total ?? 0, pct: lines.pct ?? 0 });
+      }
+    }
+  }
+}
+function coverageForFiles(files) {
+  let covered = 0;
+  let total = 0;
+  for (const file of files) {
+    const entry = coverageByFile.get(file);
+    if (entry) { covered += entry.covered; total += entry.total; }
+  }
+  return total ? Math.round((covered / total) * 1000) / 10 : null;
+}
+
 // --- Overview mode (--overview) ------------------------------------------------
 // A whole-codebase module overview: districts are directories (or packages in
 // a multi-package repo), every module is a structure, no edges. Composer
@@ -999,7 +1034,8 @@ if (overview) {
         parentId: district.id,
         description: `${m.files.length} source file${m.files.length === 1 ? "" : "s"}, ${loc} lines, max function complexity ~${complexity}.`,
         sourceRefs: [{ path: m.path }],
-        metrics: { loc, complexity, files: m.files.length },
+        metrics: { loc, complexity, files: m.files.length,
+          ...(coverageForFiles(m.files) !== null ? { coverage: coverageForFiles(m.files) } : {}) },
         tags: [m.support ? "support" : "composer", ...moduleHostTags],
         display: {
           size: [footprint, height * (m.support ? 0.85 : 1), footprint * 0.85],
@@ -2151,6 +2187,18 @@ for (const external of nodes.filter((n) => n.kind === "external")) {
 for (const { id, files } of classificationSets) {
   const node = nodes.find((n) => n.id === id);
   if (!node || !files.length) continue;
+  // Deployment structures size like overview modules (O5): height from lines
+  // of code, floor area from the worst single function inside. Height is
+  // log-scaled — these are multi-file aggregates (services run to 5 figures
+  // of loc) and the overview's linear cap would flatten them all.
+  const sizedLoc = files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+  const sizedComplexity = Math.max(...files.map((f) => fileMaxFunctionComplexity(f)));
+  const sizedHeight = Math.max(0.6, 0.6 + Math.log2(1 + sizedLoc / 200) * 0.55);
+  const sizedFootprint = Math.min(2.5, Math.max(0.95, 0.85 + Math.sqrt(sizedComplexity) / 4));
+  const coverage = coverageForFiles(files);
+  node.metrics = { ...(node.metrics ?? {}), loc: sizedLoc, complexity: sizedComplexity,
+    ...(coverage !== null ? { coverage } : {}) };
+  node.display = { ...(node.display ?? {}), size: [sizedFootprint, sizedHeight, sizedFootprint * 0.85] };
   let listens = false, callsOut = false, writes = false, reads = false;
   for (const file of files) {
     const text = readText(join(repo, file));
