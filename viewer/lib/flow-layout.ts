@@ -392,13 +392,16 @@ export function flowStageLabel(layer: number, maxLayer: number) {
 // straight through them. A* on a coarse grid with a turn penalty keeps the
 // paths Manhattan-like; building cells are near-impassable, district
 // interiors carry a soft penalty (endpoints still need to get in and out).
-export function computeEdgeRoutes(
-  edges: CityEdge[],
+// The grid build is selection-independent, so the router is a factory: build
+// once per layout, route individual edges on demand (cached per edge id).
+// Import edges are routed lazily this way when a node is selected.
+export type EdgeRouter = { route: (edge: CityEdge) => Array<[number, number]> | null };
+export function createEdgeRouter(
   layout: FlowLayout,
   allNodes: CityNode[],
-): Map<string, Array<[number, number]>> {
-  const routes = new Map<string, Array<[number, number]>>();
-  const cell = 0.7;
+): EdgeRouter {
+  const cache = new Map<string, Array<[number, number]> | null>();
+  const cell = 0.45;
   const margin = 3;
   const minX = layout.bounds.minX - margin;
   const maxX = layout.bounds.maxX + margin;
@@ -406,7 +409,7 @@ export function computeEdgeRoutes(
   const maxZ = layout.bounds.maxZ + margin;
   const cols = Math.max(1, Math.ceil((maxX - minX) / cell));
   const rows = Math.max(1, Math.ceil((maxZ - minZ) / cell));
-  if (cols * rows > 250_000) return routes; // absurd map: keep the simple paths
+  if (cols * rows > 600_000) return { route: () => null }; // absurd map: keep the simple paths
 
   const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
   const columnOf = (x: number) => clamp(Math.floor((x - minX) / cell), 0, cols - 1);
@@ -440,8 +443,11 @@ export function computeEdgeRoutes(
   for (const node of allNodes) {
     const position = layout.positions.get(node.id);
     if (!position) continue;
-    const [width, , depth] = node.display?.size ?? [1.65, 1.2, 1.4];
-    const pad = 0.3;
+    // Obstacles use the RENDERED footprint (structures draw at 80%) with a
+    // slim pad, so the corridors between tightly packed buildings stay open.
+    const renderScale = 0.8;
+    const [width, , depth] = (node.display?.size ?? [1.65, 1.2, 1.4]).map((d) => d * renderScale) as [number, number, number];
+    const pad = 0.12;
     const cells = new Set<number>();
     rasterise({
       minX: position[0] - width / 2 - pad, maxX: position[0] + width / 2 + pad,
@@ -491,10 +497,12 @@ export function computeEdgeRoutes(
   const DX = [1, -1, 0, 0];
   const DZ = [0, 0, 1, -1];
 
-  for (const edge of edges) {
+  const route = (edge: CityEdge): Array<[number, number]> | null => {
+    if (cache.has(edge.id)) return cache.get(edge.id)!;
+    cache.set(edge.id, null);
     const from = layout.positions.get(edge.from);
     const to = layout.positions.get(edge.to);
-    if (!from || !to) continue;
+    if (!from || !to) return null;
     const exempt = new Set<number>([
       ...(nodeCells.get(edge.from) ?? []),
       ...(nodeCells.get(edge.to) ?? []),
@@ -515,7 +523,7 @@ export function computeEdgeRoutes(
     }
     let goalState = -1;
     let expansions = 0;
-    while (heapPriority.length && expansions < 60_000) {
+    while (heapPriority.length && expansions < 150_000) {
       expansions += 1;
       const state = heapPop();
       const index = state >> 2;
@@ -539,7 +547,7 @@ export function computeEdgeRoutes(
         heapPush(nextG + h, nextState);
       }
     }
-    if (goalState < 0) continue;
+    if (goalState < 0) return null;
     const cellPath: number[] = [];
     for (let state: number | undefined = goalState; state !== undefined; state = cameFrom.get(state)) {
       cellPath.push(state >> 2);
@@ -555,7 +563,8 @@ export function computeEdgeRoutes(
       if (!collinear) simplified.push(current);
     }
     simplified.push(waypoints[waypoints.length - 1]);
-    routes.set(edge.id, simplified);
-  }
-  return routes;
+    cache.set(edge.id, simplified);
+    return simplified;
+  };
+  return { route };
 }

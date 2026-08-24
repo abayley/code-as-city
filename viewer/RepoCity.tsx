@@ -8,7 +8,7 @@ import { configureTextBuilder } from "troika-three-text";
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
-import { computeEdgeRoutes, computeFlowLayout, type FlowLayout } from "./lib/flow-layout";
+import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { showcases, type Showcase } from "./lib/local-showcases";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
@@ -20,6 +20,8 @@ const SCENE_PAPER = "#dbe5e7";
 const SCENE_PANEL = "#edf3f2";
 const NEIGHBORHOOD_ACCENTS = ["#6d9da5", "#75967b", "#8f7da8", "#b77f8b", "#718eaf"];
 
+const IMPORTS_OUT_COLOR = "#2a4d9b"; // selected node imports these
+const IMPORTED_BY_COLOR = "#7c3f8f"; // these import the selected node
 const EVIDENCE_COLORS: Record<EvidenceKind, string> = {
   declared: SCENE_INK,
   observed: "#3f725d",
@@ -285,21 +287,28 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds, routes, s
     const arrowPosition = arrowStart.clone().lerp(arrowEnd, 0.74);
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
 
+    // Local change: import edges of the selected node draw thick and in a
+    // distinct colour by direction — blue for what it imports, purple for
+    // what imports it. They only appear on selection and must read instantly.
+    const selectedImport = touchesSelected && edge.kind === "depends_on";
+    const edgeColor = selectedImport
+      ? (edge.from === selectedId ? IMPORTS_OUT_COLOR : IMPORTED_BY_COLOR)
+      : EVIDENCE_COLORS[edge.evidence];
     return (
       <group key={edge.id}>
         <Line
           points={points}
-          color={EVIDENCE_COLORS[edge.evidence]}
-          lineWidth={emphasized ? 2.6 : touchesSelected ? 2 : focused ? 1.1 : 0.9}
-          dashed={edge.evidence === "inferred"}
+          color={edgeColor}
+          lineWidth={selectedImport ? 3.4 : emphasized ? 2.6 : touchesSelected ? 2 : focused ? 1.1 : 0.9}
+          dashed={edge.evidence === "inferred" && !selectedImport}
           dashSize={0.17}
           gapSize={0.1}
           transparent
-          opacity={emphasized ? 0.98 : touchesSelected ? 0.85 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
+          opacity={selectedImport ? 1 : emphasized ? 0.98 : touchesSelected ? 0.85 : focused ? 0.48 : focusedEdgeIds ? 0.025 : 0.38}
         />
         <mesh position={arrowPosition} quaternion={quaternion}>
-          <coneGeometry args={[emphasized ? 0.105 : 0.07, emphasized ? 0.26 : 0.18, 4]} />
-          <meshBasicMaterial color={EVIDENCE_COLORS[edge.evidence]} transparent opacity={emphasized ? 0.98 : touchesSelected ? 0.9 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
+          <coneGeometry args={[selectedImport ? 0.12 : emphasized ? 0.105 : 0.07, selectedImport ? 0.3 : emphasized ? 0.26 : 0.18, 4]} />
+          <meshBasicMaterial color={edgeColor} transparent opacity={selectedImport ? 1 : emphasized ? 0.98 : touchesSelected ? 0.9 : focused ? 0.62 : focusedEdgeIds ? 0.03 : 0.42} />
         </mesh>
       </group>
     );
@@ -711,7 +720,18 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
   overheadView: boolean;
 }) {
   const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
-  const edgeRoutes = useMemo(() => computeEdgeRoutes(edges, layout, nodes), [edges, layout, nodes]);
+  const edgeRouter = useMemo(() => createEdgeRouter(layout, nodes), [layout, nodes]);
+  // Data-flow edges route eagerly (always visible); import edges route
+  // on demand below, only for the selected or focused node.
+  const edgeRoutes = useMemo(() => {
+    const routed = new Map<string, Array<[number, number]>>();
+    for (const edge of edges) {
+      if (edge.kind === "depends_on") continue;
+      const route = edgeRouter.route(edge);
+      if (route) routed.set(edge.id, route);
+    }
+    return routed;
+  }, [edgeRouter, edges]);
   const interiorModel = useMemo(() => {
     if (!expandedId) return null;
     const parentPosition = layout.positions.get(expandedId);
@@ -785,6 +805,20 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
     };
   }, [focusModel, interiorModel, layout, neighborhoodId]);
 
+  // Import edges of the selected/focused node route on demand: the router
+  // caches per edge, so re-selecting is instant.
+  const activeRoutes = useMemo(() => {
+    const wanted = edges.filter((edge) => edge.kind === "depends_on"
+      && ((selectedId && (edge.from === selectedId || edge.to === selectedId)) || focusModel?.edgeIds.has(edge.id)));
+    if (!wanted.length) return edgeRoutes;
+    const routed = new Map(edgeRoutes);
+    for (const edge of wanted) {
+      const route = edgeRouter.route(edge);
+      if (route) routed.set(edge.id, route);
+    }
+    return routed;
+  }, [edgeRouter, edgeRoutes, edges, focusModel, selectedId]);
+
   // Grid sized to the layout so large maps do not spill off its edge.
   const gridSize = Math.ceil(Math.max(
     80,
@@ -812,7 +846,7 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
       />
       <NeighborhoodPlots layout={layout} selectedId={selectedId} activeNeighborhoodId={neighborhoodId} hideLabels={!!interiorModel} />
       <FlowBands layout={layout} />
-      <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} routes={edgeRoutes} selectedId={selectedId} />
+      <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} routes={activeRoutes} selectedId={selectedId} />
       {interiorModel && <>
         <InteriorPlot bounds={interiorModel.plotBounds} />
         <Connections edges={interiorModel.childEdges} positions={interiorModel.positions} activeEdgeId={interiorActiveEdgeId} selectedId={selectedId} />
@@ -1051,7 +1085,8 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
         <div className="flow-legend">
           <span><i className="legend-line legend-declared" /> data flow, declared in config</span>
           <span><i className="legend-line legend-inferred" /> data flow, inferred from code</span>
-          <span><i className="legend-line legend-imports" /> imports (drawn when a node is selected)</span>
+          <span><i className="legend-line legend-imports-out" /> what the selected node imports</span>
+          <span><i className="legend-line legend-imported-by" /> what imports the selected node</span>
         </div>
         {hoverCard && (() => {
           const roomCount = map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length;

@@ -107,9 +107,10 @@ inventory/structure (I, S), deployment shape (D), coupling (C), reachability
 (R), and map shaping (M). `--overview` produces a whole-codebase **module
 overview** instead: it shares I, S, and the C1 coupling metrics, reuses the
 D/M scans for hosts, externals, and flow (see O7-O10), but skips coupling
-elimination (C2/C3), dev-tooling and orphan exclusion (R2/R3), and omits
-import edges by design (only data flow is drawn). The O rules below apply
-only in this mode.
+elimination (C2/C3) and dev-tooling and orphan exclusion (R2/R3). Import
+edges are emitted aggregated per module pair but the viewer draws them only
+when a node is selected — at rest only data flow shows. The O rules below
+apply only in this mode.
 
 | ID | Signal | Action |
 | --- | --- | --- |

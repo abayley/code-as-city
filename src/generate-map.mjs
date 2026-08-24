@@ -1220,6 +1220,22 @@ if (overview) {
     }
   }
 
+  // Import edges, aggregated per module pair. The viewer never draws these
+  // at rest — they appear only when a node is selected — so they cost map
+  // size, not visual noise.
+  const importCounts = new Map();
+  for (const { from, to } of fileEdges) {
+    const a = fileToModule.get(from);
+    const b = fileToModule.get(to);
+    if (!a || !b || a === b) continue;
+    importCounts.set(`${a}->${b}`, (importCounts.get(`${a}->${b}`) ?? 0) + 1);
+  }
+  for (const [key, count] of importCounts) {
+    const [from, to] = key.split("->");
+    addOverviewEdge({ id: `${from}--${to}-i`, from, to, kind: "depends_on", evidence: "declared",
+      label: `${count} import${count === 1 ? "" : "s"}` });
+  }
+
   const emittedOverviewIds = new Set(overviewNodes.map((n) => n.id));
   const finalOverviewEdges = overviewEdges.filter((e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to));
 

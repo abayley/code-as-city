@@ -160,7 +160,8 @@ footer > span { justify-self: end; text-transform: uppercase; letter-spacing: .1
 .legend-line { display: inline-block; width: 26px; height: 0; border-top: 2px solid; }
 .legend-declared { border-color: #14202b; }
 .legend-inferred { border-top-style: dashed; border-color: #a56f46; }
-.legend-imports { border-color: #14202b; opacity: 0.35; }
+.legend-imports-out { border-color: #2a4d9b; border-top-width: 3px; }
+.legend-imported-by { border-color: #7c3f8f; border-top-width: 3px; }
 .viewport-location button { min-height: 34px; padding: 0 11px; border: 1px solid var(--ink); background: rgba(237,243,242,.96); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; cursor: pointer; box-shadow: 0 3px 0 rgba(20,32,43,.1); }
 .viewport-location button:hover { background: var(--ink); color: var(--paper); }
 .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; max-width: min(340px, calc(100vw - 210px)); padding: 8px 10px; background: rgba(219,229,231,.84); color: rgba(20,32,43,.66); }
