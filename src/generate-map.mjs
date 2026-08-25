@@ -7,19 +7,17 @@
 // Usage: bun src/generate-map.mjs <target-repo> [--out-dir out/<name>]
 // Outputs: map.json, deploy-shape.json, deps-files.json, deps-rooms.json, deps-rooms.dot
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
-import { parseComposeServices } from "./lib/compose.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
-import { parseDockerfile } from "./lib/dockerfile.ts";
+import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
-import { readJson, readJsonSafe, readText } from "./lib/read.ts";
+import { readJson, readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
@@ -30,15 +28,6 @@ const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", 
 // suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
 // map modes.
 const ENTRY_FILE_PATTERN = /(^|[-_.])(cli|cmd|command|main)$/;
-
-// Known container images -> infra classification.
-const IMAGE_CLASSES = [
-    { pattern: /postgres|mysql|mariadb|sqlite|clickhouse/, archetype: "database" },
-    { pattern: /redis|valkey|rabbitmq|kafka|nats/, archetype: "queue" },
-    { pattern: /minio|s3/, archetype: "storage" },
-    { pattern: /nginx|traefik|caddy|haproxy|envoy/, archetype: "gateway" },
-    { pattern: /langfuse|latitude|grafana|prometheus|otel|collector/, archetype: "cloud" },
-];
 
 const parsedArguments = parseArguments(process.argv.slice(2));
 if (!parsedArguments) {
@@ -216,100 +205,7 @@ const composeFiles = allFiles.filter((f) => /docker-compose[^/]*\.(yml|yaml)$/.t
 const crontabFiles = allFiles.filter((f) => /^crontab/.test(basename(f)));
 const schedules = parseCrontabSchedules(crontabFiles.map((f) => [f, readText(join(repo, f))]));
 
-// Hosts: one per compose file, excluding partial overlays (override/build).
-// Name from informative path segments; env variants deduped below, preferring
-// prod > uat > example > unqualified > dev.
-const GENERIC_SEGMENTS = new Set(["deploy", "deployment", "deployments", "docker", "compose", "infra", "products"]);
-const ENV_RANK = [
-    [/prod/, 5],
-    [/uat|stag/, 4],
-    [/example/, 3],
-    [/dev/, 1],
-];
-
-function hostNameParts(file) {
-    const qualifiers = basename(file)
-        .replace(/\.ya?ml$/, "")
-        .split(".")
-        .filter((part) => part && part !== "docker-compose" && part !== "compose");
-    const dirParts = dirname(file)
-        .split(sep)
-        .filter((seg) => seg !== "." && !GENERIC_SEGMENTS.has(seg));
-    return [...dirParts, ...qualifiers.filter((q) => !dirParts.includes(q))];
-}
-
-function envRank(file) {
-    for (const [pattern, rank] of ENV_RANK) if (pattern.test(file)) return rank;
-    return 2;
-}
-
-const candidateHosts = composeFiles
-    .filter((file) => !/\.(override|build)\.ya?ml$/.test(basename(file)))
-    .map((file) => {
-        const dir = dirname(file);
-        const parts = hostNameParts(file).filter((p) => p !== "example");
-        const name = parts.join(" ") || "host";
-        const services = parseComposeServices(readText(join(repo, file))).map((service) => {
-            // Bind service to a Dockerfile: explicit build.dockerfile, or images/<name>.Dockerfile convention.
-            let dockerfile = service.dockerfile;
-            if (dockerfile && !fileExists(dockerfile)) {
-                const relToCompose = join(dir, dockerfile);
-                dockerfile = fileExists(relToCompose) ? relToCompose : dockerfile;
-            }
-            if (!dockerfile) {
-                dockerfile = allFiles.find((f) => basename(f) === `${service.name}.Dockerfile`);
-            }
-            const built = dockerfile && fileExists(dockerfile) ? parseDockerfile(repo, dockerfile, allFiles) : null;
-            const imageClass =
-                (service.image && IMAGE_CLASSES.find(({ pattern }) => pattern.test(service.image))?.archetype) ??
-                (/database|postgres|mysql|db$/.test(service.name)
-                    ? "database"
-                    : /redis|queue|broker|kafka/.test(service.name)
-                      ? "queue"
-                      : /proxy|nginx|ingress/.test(service.name)
-                        ? "gateway"
-                        : undefined);
-            return {
-                ...service,
-                dockerfile: built ? dockerfile : undefined,
-                copies: built?.copies ?? [],
-                entryFile: built?.entryFile ?? null,
-                schedule: schedules.get(service.name)?.schedule,
-                imageClass,
-            };
-        });
-        return { file, name, id: kebab(`host-${name}`), services, rank: envRank(file) };
-    });
-
-// Service-level depends_on harvested across ALL compose variants by service
-// name, so wiring declared only in a deduped variant (e.g. development) still
-// informs the surviving host's edges.
-const serviceDependsOn = new Map();
-for (const host of candidateHosts) {
-    for (const service of host.services) {
-        if (!service.dependsOn?.length) continue;
-        if (!serviceDependsOn.has(service.name)) serviceDependsOn.set(service.name, new Set());
-        for (const dep of service.dependsOn) serviceDependsOn.get(service.name).add(dep);
-    }
-}
-
-// Dedup environment variants: drop a host when a higher-ranked host covers
-// >=50% of its services (same host, different environment projection).
-function serviceNames(host) {
-    return new Set(host.services.map((s) => s.name));
-}
-const hosts = candidateHosts.filter((host) => {
-    const names = serviceNames(host);
-    return !candidateHosts.some((other) => {
-        if (other === host) return false;
-        const otherNames = serviceNames(other);
-        const shared = [...names].filter((n) => otherNames.has(n)).length;
-        const covered = names.size > 0 && shared / names.size >= 0.5;
-        if (!covered) return false;
-        if (other.rank !== host.rank) return other.rank > host.rank;
-        return other.file < host.file; // stable tie-break
-    });
-});
+const { hosts, candidateHosts, serviceDependsOn } = buildHosts(repo, allFiles, composeFiles, schedules);
 
 // Wrangler -> an edge host.
 const edgeHost = findEdgeHost(repo, allFiles);

@@ -1,9 +1,9 @@
 export type ComposeService = {
     name: string;
-    image?: string;
-    dockerfile?: string;
-    hasPorts?: boolean;
-    dependsOn?: string[];
+    image?: string | undefined;
+    dockerfile?: string | undefined;
+    hasPorts?: boolean | undefined;
+    dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
 };
 
