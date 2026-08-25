@@ -133,36 +133,6 @@ function CameraRig({ viewKey, bounds, overhead }: { viewKey: string; bounds: Flo
   return null;
 }
 
-function FlowBands({ layout }: { layout: FlowLayout }) {
-  const layerNumbers = [...new Set(layout.layers.values())].sort((a, b) => a - b);
-  const width = layout.bounds.maxX - layout.bounds.minX + 3;
-  const centerX = (layout.bounds.minX + layout.bounds.maxX) / 2;
-
-  return layerNumbers.map((layer) => {
-    const ids = [...layout.layers].filter(([, value]) => value === layer).map(([id]) => id);
-    const zValues = ids.map((id) => layout.positions.get(id)?.[1] ?? 0);
-    const z = zValues.reduce((total, value) => total + value, 0) / Math.max(1, zValues.length);
-    return (
-      <group key={layer}>
-        <mesh position={[centerX, -0.018, z]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[width, 3.5]} />
-          <meshBasicMaterial color={layer % 2 ? palette.BAND_FILL_ODD : palette.BAND_FILL_EVEN} transparent opacity={0.12} depthWrite={false} />
-        </mesh>
-        <Line
-          points={[[layout.bounds.minX - 1.1, 0.01, z + 1.28], [layout.bounds.maxX + 1.1, 0.01, z + 1.28]]}
-          color={palette.BAND_RULE}
-          lineWidth={0.55}
-          dashed
-          dashSize={0.16}
-          gapSize={0.12}
-          transparent
-          opacity={0.36}
-        />
-      </group>
-    );
-  });
-}
-
 function NeighborhoodPlots({ layout, selectedId, activeNeighborhoodId, hideLabels = false }: { layout: FlowLayout; selectedId: string; activeNeighborhoodId: string | null; hideLabels?: boolean }) {
   const colors = palette.NEIGHBORHOOD_PLOT_FILLS;
 
@@ -288,22 +258,21 @@ function Connections({ edges, positions, activeEdgeId, focusedEdgeIds, routes, s
     const arrowPosition = arrowStart.clone().lerp(arrowEnd, 0.74);
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
 
-    // Local change: import edges of the selected node draw thick and in a
-    // distinct colour by direction — blue for what it imports, purple for
-    // what imports it. They only appear on selection and must read instantly.
+    // Local change: import edges of the selected node draw thick blue —
+    // solid for what it imports, dashed for what imports it. They only
+    // appear on selection and must read instantly.
     const selectedImport = touchesSelected && edge.kind === "depends_on";
-    const edgeColor = selectedImport
-      ? (edge.from === selectedId ? IMPORTS_OUT_COLOR : IMPORTED_BY_COLOR)
-      : EVIDENCE_COLORS[edge.evidence];
+    const importedBy = selectedImport && edge.to === selectedId;
+    const edgeColor = selectedImport ? IMPORTS_OUT_COLOR : EVIDENCE_COLORS[edge.evidence];
     return (
       <group key={edge.id}>
         <Line
           points={points}
           color={edgeColor}
           lineWidth={selectedImport ? 3.4 : emphasized ? 3.2 : touchesSelected ? 2.8 : focused ? 1.4 : 1.3}
-          dashed={edge.evidence === "inferred" && !selectedImport}
-          dashSize={0.17}
-          gapSize={0.1}
+          dashed={importedBy}
+          dashSize={0.45}
+          gapSize={0.28}
           transparent
           opacity={selectedImport ? 1 : emphasized ? 1 : touchesSelected ? 0.95 : focused ? 0.55 : focusedEdgeIds ? 0.03 : 0.62}
         />
@@ -837,7 +806,6 @@ function CityScene({ nodes, allNodes, edges, allEdges, selectedId, activeEdgeId,
       <ambientLight intensity={1.6} />
       <directionalLight position={[-6, 12, 7]} intensity={2.25} castShadow shadow-mapSize={[1024, 1024]} />
       <NeighborhoodPlots layout={layout} selectedId={selectedId} activeNeighborhoodId={neighborhoodId} hideLabels={!!interiorModel} />
-      <FlowBands layout={layout} />
       <Connections edges={edges} positions={layout.positions} activeEdgeId={activeEdgeId} focusedEdgeIds={focusModel?.edgeIds} routes={activeRoutes} selectedId={selectedId} />
       {interiorModel && <>
         <InteriorPlot bounds={interiorModel.plotBounds} />
@@ -1075,8 +1043,7 @@ function MapViewer({ map, slug, jsonPath, onSelectShowcase, onImport, onMapFolde
           <button type="button" onClick={() => setOverheadView((value) => !value)}>{overheadView ? "Isometric" : "Overhead"}</button>
         </div>
         <div className="flow-legend">
-          <span><i className="legend-line legend-declared" /> data flow, declared in config</span>
-          <span><i className="legend-line legend-inferred" /> data flow, inferred from code</span>
+          <span><i className="legend-line legend-declared" /> data flow</span>
           <span><i className="legend-line legend-imports-out" /> what the selected node imports</span>
           <span><i className="legend-line legend-imported-by" /> what imports the selected node</span>
         </div>

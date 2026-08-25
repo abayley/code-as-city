@@ -875,9 +875,12 @@ function coverageForFiles(files) {
 if (overview) {
   // District/module colours baked into map.json; keep in step with the
   // viewer's colour vocabulary in viewer/lib/palette.ts.
-  const OVERVIEW_APP_COLOR = "#6d9da5";
-  const OVERVIEW_SHARED_COLOR = "#8f7da8";
-  const OVERVIEW_INFRA_COLOR = "#b77f8b";
+  const OVERVIEW_APP_COLOR = "#C77740";
+  const OVERVIEW_SHARED_COLOR = "#C79F40";
+  const OVERVIEW_INFRA_COLOR = "#283B47";
+  // .tsx (UI component) modules stand out from plain .ts. Shares the
+  // shared-code gold by decision.
+  const OVERVIEW_TSX_COLOR = "#C79F40";
   const activeRooms = [...rooms.values()].filter((r) => r.files.length > 0);
   const pkgsWithRooms = [...new Set(activeRooms.map((r) => r.pkg))];
   const multiPkg = pkgsWithRooms.length > 1;
@@ -1083,7 +1086,7 @@ if (overview) {
         tags: [m.support ? "support" : "composer", ...moduleHostTags],
         display: {
           size: [footprint, height * (m.support ? 0.85 : 1), footprint * 0.85],
-          color,
+          color: m.files.every((f) => f.endsWith(".tsx")) ? OVERVIEW_TSX_COLOR : color,
           flowLayer: m.support ? 1 : 0,
           flowOrder: placementOrder.get(m.id),
         },
