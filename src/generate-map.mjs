@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
+import { createComplexityScanner } from "./lib/complexity.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
 import { buildHosts } from "./lib/hosts.ts";
@@ -106,86 +107,7 @@ const DB_READ_PATTERN =
     /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.select\s*\(/i;
 const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
 
-// McCabe cyclomatic complexity from the TypeScript compiler API when it is
-// installed (per function: 1 + decision points attributed to the innermost
-// enclosing function; logical operators and non-default switch cases count;
-// top-level statements form an implicit function). A file carries the sum
-// and the max function complexity. Falls back to a decision-point regex
-// (sum == max, no function attribution) when typescript is unavailable.
-let ts = null;
-try {
-    ts = (await import("typescript")).default;
-} catch {
-    /* fall back below */
-}
-const COMPLEXITY_FALLBACK_PATTERN = /\bif\s*\(|\bfor\s*(?:\(|await)|\bwhile\s*\(|\bcase\s|\bcatch\b|&&|\|\||\?\?/g;
-const complexityCache = new Map();
-function fileComplexityStats(file) {
-    if (complexityCache.has(file)) return complexityCache.get(file);
-    const text = readText(join(repo, file));
-    let stats;
-    if (ts) {
-        const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-        const functionKinds = new Set([
-            ts.SyntaxKind.FunctionDeclaration,
-            ts.SyntaxKind.FunctionExpression,
-            ts.SyntaxKind.ArrowFunction,
-            ts.SyntaxKind.MethodDeclaration,
-            ts.SyntaxKind.Constructor,
-            ts.SyntaxKind.GetAccessor,
-            ts.SyntaxKind.SetAccessor,
-        ]);
-        const decisionKinds = new Set([
-            ts.SyntaxKind.IfStatement,
-            ts.SyntaxKind.ForStatement,
-            ts.SyntaxKind.ForInStatement,
-            ts.SyntaxKind.ForOfStatement,
-            ts.SyntaxKind.WhileStatement,
-            ts.SyntaxKind.DoStatement,
-            ts.SyntaxKind.ConditionalExpression,
-            ts.SyntaxKind.CatchClause,
-            ts.SyntaxKind.CaseClause,
-        ]);
-        const logicalOperators = new Set([
-            ts.SyntaxKind.AmpersandAmpersandToken,
-            ts.SyntaxKind.BarBarToken,
-            ts.SyntaxKind.QuestionQuestionToken,
-        ]);
-        const topLevel = { complexity: 1 };
-        const finished = [];
-        const stack = [topLevel];
-        const visit = (node) => {
-            if (functionKinds.has(node.kind)) {
-                stack.push({ complexity: 1 });
-                ts.forEachChild(node, visit);
-                finished.push(stack.pop());
-                return;
-            }
-            if (
-                decisionKinds.has(node.kind) ||
-                (node.kind === ts.SyntaxKind.BinaryExpression && logicalOperators.has(node.operatorToken?.kind))
-            ) {
-                stack[stack.length - 1].complexity += 1;
-            }
-            ts.forEachChild(node, visit);
-        };
-        visit(sourceFile);
-        finished.push(topLevel);
-        const values = finished.map((f) => f.complexity);
-        stats = { sum: values.reduce((total, v) => total + v, 0), max: Math.max(...values) };
-    } else {
-        const total = 1 + (text.match(COMPLEXITY_FALLBACK_PATTERN)?.length ?? 0);
-        stats = { sum: total, max: total };
-    }
-    complexityCache.set(file, stats);
-    return stats;
-}
-function fileComplexity(file) {
-    return fileComplexityStats(file).sum;
-}
-function fileMaxFunctionComplexity(file) {
-    return fileComplexityStats(file).max;
-}
+const { fileComplexity, fileMaxFunctionComplexity } = createComplexityScanner(repo);
 
 const { fileCoupling, roomCoupling, isMidFile, isUtilityRoom, eliminatedRooms } = analyseCoupling(
     fileEdges,
