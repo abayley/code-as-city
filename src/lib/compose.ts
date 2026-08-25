@@ -1,0 +1,61 @@
+export type ComposeService = {
+    name: string;
+    image?: string;
+    dockerfile?: string;
+    hasPorts?: boolean;
+    dependsOn?: string[];
+    dependsOnIndent?: number | undefined;
+};
+
+/**
+ * Minimal indentation-based parse of a compose file's services block.
+ * Only recognises 2-space-indented service entries under a top-level
+ * `services:` key (the convention every fixture and target repo uses);
+ * deeper indentation is not parsed.
+ */
+export function parseComposeServices(text: string): ComposeService[] {
+    const lines = text.split("\n");
+    const services: ComposeService[] = [];
+    let inServices = false;
+    let current: ComposeService | null = null;
+    let servicesIndent = -1;
+    for (const line of lines) {
+        if (/^\s*(#|$)/.test(line)) continue;
+        const indent = line.length - line.trimStart().length;
+        const key = line.trim();
+        if (/^services:\s*$/.test(key) && indent === 0) {
+            inServices = true;
+            servicesIndent = 0;
+            continue;
+        }
+        if (inServices && indent === servicesIndent && /^\S/.test(line)) {
+            inServices = false;
+            current = null;
+        }
+        if (!inServices) continue;
+        const serviceName = /^([a-zA-Z0-9_-]+):\s*$/.exec(key)?.[1];
+        if (indent === servicesIndent + 2 && serviceName !== undefined) {
+            current = { name: serviceName };
+            services.push(current);
+            continue;
+        }
+        if (!current) continue;
+        const image = /^image:\s*(.+)$/.exec(key)?.[1];
+        if (image !== undefined) current.image = image.trim();
+        const dockerfile = /^dockerfile:\s*(.+)$/.exec(key)?.[1];
+        if (dockerfile !== undefined) current.dockerfile = dockerfile.trim();
+        if (/^ports:\s*$/.test(key)) current.hasPorts = true;
+        if (/^depends_on:\s*$/.test(key)) {
+            current.dependsOnIndent = indent;
+            current.dependsOn ??= [];
+            continue;
+        }
+        if (current.dependsOnIndent !== undefined && indent > current.dependsOnIndent) {
+            const dep = (/^-\s*([a-zA-Z0-9_-]+)\s*$/.exec(key) ?? /^([a-zA-Z0-9_-]+):\s*$/.exec(key))?.[1];
+            if (dep !== undefined) current.dependsOn?.push(dep);
+        } else if (current.dependsOnIndent !== undefined && indent <= current.dependsOnIndent) {
+            current.dependsOnIndent = undefined;
+        }
+    }
+    return services;
+}

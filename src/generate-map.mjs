@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
+import { parseComposeServices } from "./lib/compose.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
@@ -203,54 +204,6 @@ const { fileCoupling, roomCoupling, isMidFile, isUtilityRoom, eliminatedRooms } 
 );
 
 // --- 5. Deployment shape -----------------------------------------------------------
-
-// Minimal indentation-based parse of a compose file's services block.
-function parseComposeServices(text) {
-    const lines = text.split("\n");
-    const services = [];
-    let inServices = false;
-    let current = null;
-    let servicesIndent = -1;
-    for (const line of lines) {
-        if (/^\s*(#|$)/.test(line)) continue;
-        const indent = line.length - line.trimStart().length;
-        const key = line.trim();
-        if (/^services:\s*$/.test(key) && indent === 0) {
-            inServices = true;
-            servicesIndent = 0;
-            continue;
-        }
-        if (inServices && indent === servicesIndent && /^\S/.test(line)) {
-            inServices = false;
-            current = null;
-        }
-        if (!inServices) continue;
-        const serviceMatch = /^([a-zA-Z0-9_-]+):\s*$/.exec(key);
-        if (indent === servicesIndent + 2 && serviceMatch) {
-            current = { name: serviceMatch[1] };
-            services.push(current);
-            continue;
-        }
-        if (!current) continue;
-        const image = /^image:\s*(.+)$/.exec(key);
-        if (image) current.image = image[1].trim();
-        const dockerfile = /^dockerfile:\s*(.+)$/.exec(key);
-        if (dockerfile) current.dockerfile = dockerfile[1].trim();
-        if (/^ports:\s*$/.test(key)) current.hasPorts = true;
-        if (/^depends_on:\s*$/.test(key)) {
-            current.dependsOnIndent = indent;
-            current.dependsOn ??= [];
-            continue;
-        }
-        if (current.dependsOnIndent !== undefined && indent > current.dependsOnIndent) {
-            const dep = /^-\s*([a-zA-Z0-9_-]+)\s*$/.exec(key) ?? /^([a-zA-Z0-9_-]+):\s*$/.exec(key);
-            if (dep) current.dependsOn.push(dep[1]);
-        } else if (current.dependsOnIndent !== undefined && indent <= current.dependsOnIndent) {
-            current.dependsOnIndent = undefined;
-        }
-    }
-    return services;
-}
 
 function parseDockerfile(path) {
     const text = readText(join(repo, path));
