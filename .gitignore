@@ -4,3 +4,4 @@ out/
 baseline/
 *.log
 .DS_Store
+coverage/

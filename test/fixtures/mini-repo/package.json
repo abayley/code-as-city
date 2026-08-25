@@ -1,6 +1,9 @@
 {
     "name": "mini-repo",
     "private": true,
+    "scripts": {
+        "check:coverage": "bun run scripts/coverage-report.ts"
+    },
     "workspaces": [
         "packages/*"
     ]

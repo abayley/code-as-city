@@ -11,7 +11,8 @@
         "format": "biome format --write .",
         "knip": "knip",
         "test": "vitest run",
-        "check": "bun run typecheck && bun run lint && bun run knip && bun run test"
+        "check": "bun run typecheck && bun run lint && bun run knip && bun run test",
+        "test:coverage": "vitest run --coverage"
     },
     "dependencies": {
         "@react-three/drei": "^10.7.8",
@@ -27,6 +28,7 @@
         "@types/react": "19.2.14",
         "@types/react-dom": "19.2.3",
         "@vitejs/plugin-react": "6.0.2",
+        "@vitest/coverage-v8": "^4.1.11",
         "knip": "^6.32.2",
         "typescript": "5.9.3",
         "vite": "8.2.1",

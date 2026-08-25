@@ -42,6 +42,15 @@ describe("generate-map golden master", () => {
         expect(generateMap(["--overview"])).toEqual(loadGolden("mini-repo-overview.json"));
     });
 
+    it("given a file reachable only from QA scripts, when generating the overview map, then it is excluded", () => {
+        const map = generateMap(["--overview"]);
+        const nodes = map["nodes"] as Array<{ sourceRefs?: Array<{ path?: string }> }>;
+        const scriptNodes = nodes.filter((node) =>
+            (node.sourceRefs ?? []).some((ref) => ref.path?.startsWith("scripts/")),
+        );
+        expect(scriptNodes).toEqual([]);
+    });
+
     it("given the fixture repo, when generating twice, then output is byte-identical bar the timestamp", () => {
         expect(generateMap([])).toEqual(generateMap([]));
     });
