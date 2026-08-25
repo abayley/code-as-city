@@ -22,7 +22,7 @@ type HostService = ComposeService & {
     imageClass?: string | undefined;
 };
 
-type Host = {
+export type Host = {
     file: string;
     name: string;
     id: string;

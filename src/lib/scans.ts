@@ -5,6 +5,8 @@ import type { Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
 import { kebab } from "./text.ts";
 
+export const OTLP_PATTERN = /@opentelemetry\/|otlp|OTEL_EXPORTER/i;
+
 type FileCoverage = { covered: number; total: number; pct: number };
 
 export type CoverageScan = {

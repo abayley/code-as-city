@@ -17,9 +17,10 @@ import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { ENTRY_FILE_PATTERN, extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
+import { analyseReachability, stripDevTooling } from "./lib/reachability.ts";
 import { readJson, readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
-import { createDocScanner, findEmbeddedDatabases, scanCoverage } from "./lib/scans.ts";
+import { createDocScanner, findEmbeddedDatabases, OTLP_PATTERN, scanCoverage } from "./lib/scans.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
 import { findEdgeHost } from "./lib/wrangler.ts";
@@ -96,7 +97,6 @@ const { fileToRoom, resolveImport, fileEdges, packageEdges, bareImports, roomEdg
 // lib-like leaves: eliminated from the map so buildings keep only their
 // coordinator/composer rooms. Coordinators (low in, high out) are retained.
 
-const OTLP_PATTERN = /@opentelemetry\/|otlp|OTEL_EXPORTER/i;
 // Method-call forms require a database-ish receiver: bare .delete()/.update()
 // would match every JavaScript Map and Set.
 const DB_WRITE_PATTERN =
@@ -319,148 +319,14 @@ for (let pass = 0; pass <= hosts.length; pass += 1) {
 }
 for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
 
-// Files referenced directly from a package.json script command (R1's script
-// roots) are declared entry points, whatever they are named. Shared by both
-// map modes.
-const scriptReferencedFiles = new Set();
-for (const pkg of packages) {
-    const manifest = readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {};
-    for (const command of Object.values(manifest.scripts ?? {})) {
-        for (const token of String(command).split(/\s+/)) {
-            const clean = token.replace(/^["']|["']$/g, "");
-            if (!/[./]/.test(clean) || clean.startsWith("-")) continue;
-            const candidate = join(pkg.dir === "." ? "" : pkg.dir, clean);
-            if (fileToRoom.has(candidate)) scriptReferencedFiles.add(candidate);
-        }
-    }
-}
-
 const { coverageForFiles } = scanCoverage(repo, packageDirs);
 const { fileDocSummary, docForFiles } = createDocScanner(repo);
 
 // --- 6b. Dev-tooling detection by reachability ----------------------------------------
-// Deployed roots: files baked into service images, Dockerfile entry points,
-// the wrangler worker entry, package bin/main files, and web-app entry dirs.
-// Script roots: files referenced from package.json scripts commands.
-// A room whose files are reachable only from script roots is dev tooling.
 
-function reachableFrom(roots) {
-    const importsOf = new Map();
-    for (const { from, to } of fileEdges) {
-        importsOf.set(from, [...(importsOf.get(from) ?? []), to]);
-    }
-    const seen = new Set(roots);
-    const queue = [...roots];
-    while (queue.length) {
-        for (const next of importsOf.get(queue.pop()) ?? []) {
-            if (!seen.has(next)) {
-                seen.add(next);
-                queue.push(next);
-            }
-        }
-    }
-    return seen;
-}
-
-function resolvePathToken(pkgDir, token) {
-    const clean = token.replace(/^["']|["']$/g, "");
-    if (!/[./]/.test(clean) || clean.startsWith("-")) return null;
-    const candidate = join(pkgDir === "." ? "" : pkgDir, clean);
-    return fileToRoom.has(candidate) ? candidate : null;
-}
-
-// package.json script entries split by naming convention: QA/codebase
-// utilities (checks, linting, tests, packaging, doc indexes) versus
-// operational tooling (bootstrap, certificates, backfill, deploys).
-// A QA keyword in ANY segment of the script name marks it QA
-// (tool:test:coverage is QA even though it starts with "tool").
-const QA_SCRIPT_PATTERN =
-    /(^|[:._-])(check|lint|test|typecheck|coverage|knip|audit|format|fmt|quality|adr|rfc|docs?|prepare|prepack|postinstall|release|clean|proof|prove|uat|spike|poc|bench(mark)?|inventory|crap)([:._-]|$)/i;
-
-const deployRoots = new Set();
-const scriptRoots = new Set();
-const operationalRoots = new Set();
-
-for (const host of hosts) {
-    for (const service of host.services) {
-        if (service.entryFile) deployRoots.add(service.entryFile);
-        for (const copy of service.copies) {
-            for (const f of sourceFiles) if (f.startsWith(`${copy.replace(/\/$/, "")}/`)) deployRoots.add(f);
-        }
-    }
-}
-if (edgeHost?.main && fileToRoom.has(edgeHost.main)) deployRoots.add(edgeHost.main);
-
-for (const pkg of packages) {
-    const json = readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {};
-    for (const binPath of Object.values(json.bin ?? {})) {
-        const resolved = resolvePathToken(pkg.dir, String(binPath));
-        if (resolved) deployRoots.add(resolved);
-    }
-    for (const field of ["main", "module"]) {
-        const resolved = json[field] && resolvePathToken(pkg.dir, String(json[field]));
-        if (resolved) deployRoots.add(resolved);
-    }
-    if (pkg.role === "web") {
-        for (const entryDir of ["app", "pages", "src/app", "src/pages"]) {
-            const prefix = pkg.dir === "." ? entryDir : join(pkg.dir, entryDir);
-            for (const f of sourceFiles) if (f.startsWith(`${prefix}/`)) deployRoots.add(f);
-        }
-    }
-    for (const [scriptName, command] of Object.entries(json.scripts ?? {})) {
-        const qa = QA_SCRIPT_PATTERN.test(scriptName);
-        for (const token of String(command).split(/\s+/)) {
-            const resolved = resolvePathToken(pkg.dir, token);
-            if (!resolved) continue;
-            scriptRoots.add(resolved);
-            if (!qa) operationalRoots.add(resolved);
-        }
-    }
-}
-
-const deployReachable = reachableFrom(deployRoots);
-const scriptReachable = reachableFrom(scriptRoots);
-const operationalReachable = reachableFrom(operationalRoots);
-
-// Dev tooling, at file granularity: reachable only from QA-named package.json
-// scripts and imported by nothing that deploys. Stripped from rooms before
-// assembly so one operational CLI does not shield a directory of QA scripts;
-// rooms emptied entirely disappear from the map.
-const devToolingWarnings = [];
-function isDevToolingFile(f) {
-    return !deployReachable.has(f) && scriptReachable.has(f) && !operationalReachable.has(f);
-}
-for (const room of rooms.values()) {
-    const excluded = room.files.filter(isDevToolingFile);
-    if (!excluded.length) continue;
-    room.files = room.files.filter((f) => !isDevToolingFile(f));
-    // A room that lost QA files also sheds its file-level orphans: files
-    // referenced by no root whose importers are all themselves stripped are
-    // residue of the QA directory (an unwired coverage helper), not operational
-    // code. Iterated to a fixed point so residue-importing-residue goes too.
-    // OTLP producers stay, as in R3.
-    const strippedFiles = new Set(excluded);
-    const isQaResidue = (f) =>
-        !deployReachable.has(f) &&
-        !scriptReachable.has(f) &&
-        fileEdges.every(({ from, to }) => to !== f || strippedFiles.has(from)) &&
-        !OTLP_PATTERN.test(readText(join(repo, f)));
-    const residue = [];
-    for (;;) {
-        const next = room.files.filter((f) => !strippedFiles.has(f) && isQaResidue(f));
-        if (!next.length) break;
-        for (const f of next) strippedFiles.add(f);
-        residue.push(...next);
-    }
-    room.files = room.files.filter((f) => !strippedFiles.has(f));
-    room.loc = room.files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
-    const strippedCount = excluded.length + residue.length;
-    devToolingWarnings.push(
-        room.files.length
-            ? `Dev tooling stripped from ${room.segment}: ${strippedCount} QA-script file${strippedCount === 1 ? "" : "s"} (kept ${room.files.length} operational).`
-            : `Dev tooling excluded (reachable only from QA package.json scripts): ${room.segment} (${strippedCount} files).`,
-    );
-}
+const reachability = analyseReachability(repo, packages, hosts, edgeHost, sourceFiles, fileEdges, fileToRoom);
+const { deployReachable, scriptReachable, scriptReferencedFiles } = reachability;
+const devToolingWarnings = stripDevTooling(repo, rooms, reachability, fileEdges);
 
 // --- Overview mode (--overview) ------------------------------------------------
 // A whole-codebase module overview: districts are directories (or packages in
