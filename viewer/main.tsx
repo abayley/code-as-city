@@ -2,4 +2,6 @@ import { createRoot } from "react-dom/client";
 import RepoCity from "./RepoCity";
 import "./globals.css";
 
-createRoot(document.getElementById("root")!).render(<RepoCity />);
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Missing #root element.");
+createRoot(rootElement).render(<RepoCity />);

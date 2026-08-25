@@ -1,0 +1,7 @@
+{
+    "name": "@mini/web",
+    "version": "0.1.0",
+    "dependencies": {
+        "@mini/shared": "workspace:*"
+    }
+}

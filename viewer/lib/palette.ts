@@ -24,7 +24,6 @@ export const COVERAGE_GAP = "#3F93C7"; // uncovered fraction of a building
 export const EDGE_OBSERVED = "#2e6b52"; // runtime evidence (hand-made maps only)
 export const EDGE_INFERRED = INK; // data flow draws in one charcoal, declared or inferred
 export const IMPORTS_OUT = "#3F93C7"; // what the selected node imports
-export const IMPORTED_BY = "#3F93C7"; // what imports the selected node (dashed)
 
 // --- Districts and rails -----------------------------------------------------
 // Accents cycle per neighbourhood; plot fills are their pale companions.

@@ -1,11 +1,36 @@
 # code-as-city
 
-Prototype answering one question: **how useful is a fully deterministic
-(agent-free) generator for Functionary city maps?**
-
-Throwaway code. No tests, minimal error handling, mechanical naming by design.
+Started as a prototype answering one question: **how useful is a fully
+deterministic (agent-free) generator for Functionary city maps?** Now
+graduating to a maintained project.
 
 Copied and tweaked the renderer from <https://github.com/nem035/functionary.dev>.
+
+## Quality checks
+
+```bash
+bun run check       # typecheck + lint + knip + tests
+bun run typecheck   # tsc --noEmit (strict)
+bun run lint        # biome check .
+bun run format      # biome format --write .
+bun run knip        # unused files/exports/dependencies
+bun run test        # vitest (golden-master tests over test/fixtures/mini-repo)
+```
+
+The golden-master tests in `test/generate-map.test.ts` run the generator over
+the committed fixture repo `test/fixtures/mini-repo`, validate the output with
+the vendored functionary validator, and compare against the golden maps in
+`test/golden/` (ignoring `generatedAt`). If a generator change intentionally
+alters output, regenerate the goldens:
+
+```bash
+node src/generate-map.mjs test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt)' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
+node src/generate-map.mjs test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
+```
+
+Knip's duplicate-export check is excluded: `viewer/lib/palette.ts` aliases
+`EDGE_INFERRED = INK` deliberately (one charcoal for declared and inferred
+data flow, for now).
 
 ## Inspiration
 
