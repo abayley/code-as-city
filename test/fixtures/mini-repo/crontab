@@ -1,0 +1,2 @@
+# nightly maintenance
+0 3 * * * cd /srv/mini && docker compose run --rm api node dist/cleanup.js

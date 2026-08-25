@@ -19,9 +19,9 @@
       "id": "host-host-api",
       "label": "Api",
       "kind": "deployable",
-      "archetype": "gateway",
+      "archetype": "worker",
       "parentId": "host-host",
-      "description": "",
+      "description": "Scheduled job: 0 3 * * *",
       "attributes": {
         "service-source": "packages/api/Dockerfile"
       },
@@ -31,6 +31,7 @@
         }
       ],
       "tags": [
+        "cron",
         "listens"
       ],
       "display": {
