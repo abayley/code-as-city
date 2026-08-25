@@ -427,7 +427,7 @@
       "label": "Host host",
       "kind": "scope",
       "archetype": "district",
-      "description": "Host host: 3 nodes.",
+      "description": "Host host: 4 nodes.",
       "tags": [
         "band:Host host"
       ],
@@ -481,6 +481,25 @@
       "archetype": "queue",
       "parentId": "host-host",
       "description": "redis:7 declared in docker-compose.dev.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.dev.yml"
+        }
+      ],
+      "tags": [
+        "host:host"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-broker",
+      "label": "Broker",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-host",
+      "description": "container declared in docker-compose.dev.yml.",
       "sourceRefs": [
         {
           "path": "docker-compose.dev.yml"

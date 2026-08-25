@@ -20,14 +20,6 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   vitest/istanbul summaries) and map file coverage onto modules. aria-evals
   has coverage/ and reports/ folders to prototype against.
 
-## Known quirks (found during RFC-0001, behaviour preserved)
-
-- assemble-deployment quirks preserved during RFC-0001 extraction (2026-08-25):
-  the service flowLayer ternary ends `service.dockerfile ? 1 : 1` (both arms
-  1); 7a-ii can interpolate "image undefined" into a backing-service
-  description when a variant service has no image; the drizzle-edge condition
-  keeps a redundant nodes.some() arm.
-
 ## Done since listed
 
 - Viewer rotation around the vertical axis (MapControls enableRotate), with

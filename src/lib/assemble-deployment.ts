@@ -275,11 +275,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     ? 2
                     : service.hasPorts && !service.dockerfile
                       ? 0
-                      : isScheduled
-                        ? 1
-                        : service.dockerfile
-                          ? 1
-                          : 1;
+                      : 1;
             // A service whose entrypoint is a *-command file is labelled by that
             // command (Delivery Command, not the compose service name delivery-worker).
             const entryName = service.entryFile ? basename(service.entryFile).replace(/\.[a-z]+$/, "") : null;
@@ -395,7 +391,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                         kind: "infra",
                         archetype: variantArchetype,
                         parentId: host.id,
-                        description: `Backing service (image ${variant.image}) declared in a compose variant; the deployed host provides it via configuration.`,
+                        description: `Backing service${variant.image !== undefined ? ` (image ${variant.image})` : ""} declared in a compose variant; the deployed host provides it via configuration.`,
                         sourceRefs: [{ path: host.file }],
                         display: { flowLayer: 2 },
                     });
@@ -922,7 +918,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 display: { flowLayer: 1 },
             });
             const from = edgeHost ? "edge-worker" : owner?.id;
-            if (from !== undefined && (nodeIds.has(from) || nodes.some((n) => n.id === from))) {
+            // nodeIds is a snapshot taken before this section; nodes.some also
+            // covers anything pushed since, so it subsumes the snapshot check.
+            if (from !== undefined && nodes.some((n) => n.id === from)) {
                 addEdge({
                     id: `${from}--drizzle-database`,
                     from,
