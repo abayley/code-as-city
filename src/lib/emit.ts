@@ -10,6 +10,65 @@ import { type Room, roomDir } from "./rooms.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { EdgeHost } from "./wrangler.ts";
 
+export type MapEnvelope = {
+    schemaVersion: number;
+    id: string;
+    name: string;
+    repository: string;
+    summary: string;
+    generatedAt: string;
+    nodes: MapNode[];
+    edges: MapEdge[];
+    warnings: string[];
+};
+
+export type EmitMapOptions = {
+    repo: string;
+    outDir: string;
+    nodes: MapNode[];
+    edges: MapEdge[];
+    warnings: string[];
+    /** Appended to the repo basename before kebab-casing ("" or "-overview"). */
+    idSuffix: string;
+    /** Appended to the title-cased repo name ("" or " overview"). */
+    nameSuffix: string;
+    summary: string;
+    /** Body of map.md, built from the swept envelope; the trailing newline is appended here. */
+    mermaidBody: (map: MapEnvelope) => string;
+    /** Console summary lines, printed after the writes. */
+    consoleLines: (map: MapEnvelope) => string[];
+};
+
+/**
+ * Shared final step for both modes: sweeps edges with missing endpoints (M4),
+ * builds the map envelope (field order is the JSON field order — do not
+ * reorder), writes map.json and map.md, and prints the console summary.
+ */
+export async function emitMap(options: EmitMapOptions): Promise<MapEnvelope> {
+    // Final sweep: an edge may have been declared from a node that a later rule
+    // excluded (dev tooling, orphan); drop any edge with a missing endpoint.
+    const finalNodeIds = new Set(options.nodes.map((n) => n.id));
+    const finalEdges = options.edges.filter((e) => finalNodeIds.has(e.from) && finalNodeIds.has(e.to));
+
+    const map: MapEnvelope = {
+        schemaVersion: 1,
+        id: kebab(`${basename(options.repo)}${options.idSuffix}`),
+        name: `${titleCase(basename(options.repo))}${options.nameSuffix}`,
+        repository: options.repo,
+        summary: options.summary,
+        generatedAt: new Date().toISOString(),
+        nodes: options.nodes,
+        edges: finalEdges,
+        warnings: options.warnings,
+    };
+    await Promise.all([
+        writeFile(join(options.outDir, "map.json"), `${JSON.stringify(map, null, 2)}\n`),
+        writeFile(join(options.outDir, "map.md"), `${options.mermaidBody(map)}\n`),
+    ]);
+    for (const line of options.consoleLines(map)) console.log(line);
+    return map;
+}
+
 export type EmitContext = {
     repo: string;
     outDir: string;
@@ -56,22 +115,7 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
         eliminatedRooms,
     } = context;
 
-    // Final sweep: an edge may have been declared from a room that a later rule
-    // excluded (dev tooling, orphan); drop any edge with a missing endpoint.
-    const finalNodeIds = new Set(nodes.map((n) => n.id));
-    const finalEdges = edges.filter((e) => finalNodeIds.has(e.from) && finalNodeIds.has(e.to));
-
-    const map = {
-        schemaVersion: 1,
-        id: kebab(basename(repo)),
-        name: titleCase(basename(repo)),
-        repository: repo,
-        summary: "Deterministic draft map generated without an agent (prototype).",
-        generatedAt: new Date().toISOString(),
-        nodes,
-        edges: finalEdges,
-        warnings,
-    };
+    const mapName = titleCase(basename(repo));
 
     const deployShape = {
         hosts: hosts.map((h) => ({
@@ -135,31 +179,36 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
         ];
     };
     const renderedIds = new Set(nodes.filter((n) => n.kind !== "scope").map((n) => n.id));
-    const mapMermaid = [
-        "```mermaid",
-        "flowchart TB",
-        ...nodes
-            .filter((n) => n.kind === "scope")
-            .flatMap((scope) => [
-                `  subgraph ${mermaidId(scope.id)}["${mermaidLabel(scope.label)}"]`,
-                ...nodes.filter((n) => n.parentId === scope.id).flatMap((n) => campusNodeLines(n, "    ")),
-                "  end",
-            ]),
-        ...nodes.filter((n) => isCampus(n) && !n.parentId).flatMap((n) => campusNodeLines(n, "  ", ", no district")),
-        ...finalEdges
-            .filter((e) => renderedIds.has(e.from) && renderedIds.has(e.to))
-            .map((e) => {
-                const label = mermaidLabel(e.label ?? e.kind);
-                const arrow =
-                    e.kind === "data_flow"
-                        ? `-. "${label}" .->`
-                        : e.kind === "deploys"
-                          ? `== "${label}" ==>`
-                          : `-- "${label}" -->`;
-                return `  ${mermaidId(e.from)} ${arrow} ${mermaidId(e.to)}`;
-            }),
-        "```",
-    ].join("\n");
+    const mapMermaidBody = (map: MapEnvelope) => {
+        const mapMermaid = [
+            "```mermaid",
+            "flowchart TB",
+            ...nodes
+                .filter((n) => n.kind === "scope")
+                .flatMap((scope) => [
+                    `  subgraph ${mermaidId(scope.id)}["${mermaidLabel(scope.label)}"]`,
+                    ...nodes.filter((n) => n.parentId === scope.id).flatMap((n) => campusNodeLines(n, "    ")),
+                    "  end",
+                ]),
+            ...nodes
+                .filter((n) => isCampus(n) && !n.parentId)
+                .flatMap((n) => campusNodeLines(n, "  ", ", no district")),
+            ...map.edges
+                .filter((e) => renderedIds.has(e.from) && renderedIds.has(e.to))
+                .map((e) => {
+                    const label = mermaidLabel(e.label ?? e.kind);
+                    const arrow =
+                        e.kind === "data_flow"
+                            ? `-. "${label}" .->`
+                            : e.kind === "deploys"
+                              ? `== "${label}" ==>`
+                              : `-- "${label}" -->`;
+                    return `  ${mermaidId(e.from)} ${arrow} ${mermaidId(e.to)}`;
+                }),
+            "```",
+        ].join("\n");
+        return `# ${map.name}: generated map\n\n${mapMermaid}`;
+    };
 
     // Breakdown of the eliminated shared utility dirs: the modules inside each
     // (subdirs and standalone files), with per-module coupling and the import
@@ -236,21 +285,28 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
     };
 
     await Promise.all([
-        writeFile(join(outDir, "map.json"), `${JSON.stringify(map, null, 2)}\n`),
         writeFile(join(outDir, "deploy-shape.json"), `${JSON.stringify(deployShape, null, 2)}\n`),
         writeFile(join(outDir, "deps-files.json"), `${JSON.stringify(fileEdges, null, 2)}\n`),
         writeFile(join(outDir, "deps-rooms.json"), `${JSON.stringify(roomEdgeList, null, 2)}\n`),
         writeFile(join(outDir, "deps-rooms.dot"), `${dot}\n`),
-        writeFile(join(outDir, "map.md"), `# ${map.name}: generated map\n\n${mapMermaid}\n`),
         ...(sharedBreakdown ? [writeFile(join(outDir, "shared-libraries.md"), `${sharedBreakdown}\n`)] : []),
-        writeFile(join(outDir, "deps-rooms.md"), `# ${map.name}: room-level import graph\n\n${roomsMermaid}\n`),
+        writeFile(join(outDir, "deps-rooms.md"), `# ${mapName}: room-level import graph\n\n${roomsMermaid}\n`),
         writeFile(join(outDir, "coupling.json"), `${JSON.stringify(coupling, null, 2)}\n`),
     ]);
 
-    console.log(
-        `Wrote ${outDir}/{map,deploy-shape,deps-files,deps-rooms,coupling}.json + deps-rooms.dot + {map,deps-rooms}.md`,
-    );
-    console.log(
-        `nodes=${nodes.length} edges=${edges.length} hosts=${hosts.length} scheduled=${schedules.size} eliminated=${eliminatedRooms.length}`,
-    );
+    await emitMap({
+        repo,
+        outDir,
+        nodes,
+        edges,
+        warnings,
+        idSuffix: "",
+        nameSuffix: "",
+        summary: "Deterministic draft map generated without an agent (prototype).",
+        mermaidBody: mapMermaidBody,
+        consoleLines: () => [
+            `Wrote ${outDir}/{map,deploy-shape,deps-files,deps-rooms,coupling}.json + deps-rooms.dot + {map,deps-rooms}.md`,
+            `nodes=${nodes.length} edges=${edges.length} hosts=${hosts.length} scheduled=${schedules.size} eliminated=${eliminatedRooms.length}`,
+        ],
+    });
 }

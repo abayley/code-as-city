@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
@@ -11,6 +10,7 @@ import {
     uniqueId,
 } from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
+import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
 import {
@@ -189,6 +189,11 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         return hostName !== undefined ? `${titleCase(hostName)} host` : `Strip ${band}`;
     };
 
+    // These stay local rather than reading the C1 fileCoupling in context: they
+    // count EDGES crossing the module's file-set boundary, while
+    // couplingFromEdges counts DISTINCT neighbours (Sets) and includes
+    // self-edges; multi-file modules (collapsed migrations) also aggregate over
+    // a file-set that has no per-module entry in fileCoupling. Not equivalent.
     const externalFanIn = (files: readonly string[]) => {
         const set = new Set(files);
         return fileEdges.filter(({ from, to }) => set.has(to) && !set.has(from)).length;
@@ -637,18 +642,11 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         });
     }
 
-    const emittedOverviewIds = new Set(overviewNodes.map((n) => n.id));
-    const finalMapEdges = overviewEdges.filter((e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to));
-
-    const overviewMap = {
-        schemaVersion: 1,
-        id: kebab(`${basename(repo)}-overview`),
-        name: `${titleCase(basename(repo))} overview`,
-        repository: repo,
-        summary: "Module overview: every module as a structure, grouped by directory; no dependency edges.",
-        generatedAt: new Date().toISOString(),
+    await emitMap({
+        repo,
+        outDir,
         nodes: overviewNodes,
-        edges: finalMapEdges,
+        edges: overviewEdges,
         warnings: [
             "Overview mode: orphan exclusion is intentionally skipped; QA-only dev tooling is stripped as in the deployment map.",
             ...devToolingWarnings,
@@ -656,28 +654,32 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             "Shared-code districts (>=60% high fan-in / low fan-out modules) are coloured differently.",
             "Complexity is the module's worst single function (McCabe-style decision-point count), not a module-wide sum.",
         ],
-    };
-    const overviewMermaid = [
-        `# ${overviewMap.name}`,
-        "",
-        "```mermaid",
-        "flowchart TB",
-        ...overviewNodes
-            .filter((n) => n.kind === "scope")
-            .flatMap((scope) => [
-                `  subgraph ${mermaidId(scope.id)}["${scope.label}${(scope.description ?? "").startsWith("Shared") ? " (shared code)" : ""}"]`,
+        idSuffix: "-overview",
+        nameSuffix: " overview",
+        summary: "Module overview: every module as a structure, grouped by directory; no dependency edges.",
+        mermaidBody: (map) =>
+            [
+                `# ${map.name}`,
+                "",
+                "```mermaid",
+                "flowchart TB",
                 ...overviewNodes
-                    .filter((n) => n.parentId === scope.id)
-                    .map(
-                        (n) =>
-                            `    ${mermaidId(n.id)}["${n.label}<br/><i>${n.metrics ? `${n.metrics.loc} loc, cx ${n.metrics.complexity}` : n.archetype}</i><br/>${(n.sourceRefs?.[0]?.path ?? "").replace(/"/g, "'")}"]`,
-                    ),
-                "  end",
-            ]),
-        "```",
-    ].join("\n");
-    await writeFile(join(outDir, "map.json"), `${JSON.stringify(overviewMap, null, 2)}\n`);
-    await writeFile(join(outDir, "map.md"), `${overviewMermaid}\n`);
-    console.log(`Wrote ${outDir}/map.json + map.md (overview mode)`);
-    console.log(`districts=${districts.length + (uniqueInfra.length ? 1 : 0)} nodes=${overviewNodes.length}`);
+                    .filter((n) => n.kind === "scope")
+                    .flatMap((scope) => [
+                        `  subgraph ${mermaidId(scope.id)}["${scope.label}${(scope.description ?? "").startsWith("Shared") ? " (shared code)" : ""}"]`,
+                        ...overviewNodes
+                            .filter((n) => n.parentId === scope.id)
+                            .map(
+                                (n) =>
+                                    `    ${mermaidId(n.id)}["${n.label}<br/><i>${n.metrics ? `${n.metrics.loc} loc, cx ${n.metrics.complexity}` : n.archetype}</i><br/>${(n.sourceRefs?.[0]?.path ?? "").replace(/"/g, "'")}"]`,
+                            ),
+                        "  end",
+                    ]),
+                "```",
+            ].join("\n"),
+        consoleLines: () => [
+            `Wrote ${outDir}/map.json + map.md (overview mode)`,
+            `districts=${districts.length + (uniqueInfra.length ? 1 : 0)} nodes=${overviewNodes.length}`,
+        ],
+    });
 }

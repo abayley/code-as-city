@@ -182,10 +182,20 @@ None externally; module boundaries change inside src/lib only.
 
 ### Phase 3 — envelope and emit
 
-- [ ] Move the map envelope, M4 edge sweep, and mermaid id sanitiser into
+- [x] Move the map envelope, M4 edge sweep, and mermaid id sanitiser into
       emit.ts, parameterised by mode; runOverview calls it.
-- [ ] Replace the overview's local coupling re-derivations with fileCoupling
+      (`emitMap` in emit.ts: sweep + envelope + map.json/map.md writes +
+      console summary, parameterised by id/name suffix, summary text, and
+      per-mode mermaid-body and console-line closures. The mermaid id
+      sanitiser was already shared in assembly-helpers.ts from Phase 1.)
+- [x] Replace the overview's local coupling re-derivations with fileCoupling
       reads, golden-verified (revert and document if outputs differ).
+      NOT replaced: the local helpers count edges crossing the module
+      file-set boundary and exclude self-edges, while couplingFromEdges
+      counts distinct neighbours and includes self-edges, and multi-file
+      modules (collapsed migrations) have no per-module entry in the
+      per-file fileCoupling. Not provably identical; the local copy stays
+      with a code comment explaining why.
 
 ### Phase 4 — close out
 
