@@ -40,3 +40,9 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   a wrangler.toml name is ignored (regex fallback exists for `main` only),
   so TOML workers are labelled "Worker". Found while testing RFC-0001
   Phase 3 (2026-08-25).
+
+- assemble-deployment quirks preserved during RFC-0001 extraction (2026-08-25):
+  the service flowLayer ternary ends `service.dockerfile ? 1 : 1` (both arms
+  1); 7a-ii can interpolate "image undefined" into a backing-service
+  description when a variant service has no image; the drizzle-edge condition
+  keeps a redundant nodes.some() arm.
