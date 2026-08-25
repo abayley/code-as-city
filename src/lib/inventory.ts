@@ -25,6 +25,10 @@ const IGNORED_DIRS = new Set([
 // Codebase/dev utilities are detected by reachability, not by name: code
 // reachable only from package.json scripts and imported by nothing that
 // deploys is excluded from the map (see the reachability section).
+// Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
+// suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
+// map modes.
+export const ENTRY_FILE_PATTERN = /(^|[-_.])(cli|cmd|command|main)$/;
 export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const TEST_DIRS = new Set(["test", "tests", "__tests__", "test-database", "testing"]);
 const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;

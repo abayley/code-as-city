@@ -210,12 +210,12 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 3 — deployment shape and scans
 
-- [ ] Extract compose parsing with unit tests (indentation cases, depends_on
+- [x] Extract compose parsing with unit tests (indentation cases, depends_on
       forms, the 2-space-only limitation pinned by a test).
-- [ ] Extract Dockerfile parsing and service binding.
-- [ ] Extract crontab, wrangler, and CI workflow scans.
-- [ ] Extract host construction and variant dedupe.
-- [ ] Extract the coverage, TSDoc, and embedded-database scans.
+- [x] Extract Dockerfile parsing and service binding.
+- [x] Extract crontab, wrangler, and CI workflow scans.
+- [x] Extract host construction and variant dedupe.
+- [x] Extract the coverage, TSDoc, and embedded-database scans.
 
 ### Phase 4 — reachability
 

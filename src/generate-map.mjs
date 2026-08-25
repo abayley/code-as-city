@@ -15,19 +15,16 @@ import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
 import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
-import { extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
+import { ENTRY_FILE_PATTERN, extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
 import { readJson, readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
+import { createDocScanner, findEmbeddedDatabases, scanCoverage } from "./lib/scans.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
 import { findEdgeHost } from "./lib/wrangler.ts";
 
 const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", "api"]);
-// Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
-// suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
-// map modes.
-const ENTRY_FILE_PATTERN = /(^|[-_.])(cli|cmd|command|main)$/;
 
 const parsedArguments = parseArguments(process.argv.slice(2));
 if (!parsedArguments) {
@@ -212,32 +209,7 @@ const edgeHost = findEdgeHost(repo, allFiles);
 
 const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
 
-// Embedded databases declared as package dependencies (LanceDB, SQLite,
-// DuckDB, Chroma) are deployment shape in both map modes. One entry per
-// dependency repo-wide: several manifests declaring the same store share it.
-const EMBEDDED_DB_DEPS = [
-    [/^@lancedb\//, "LanceDB vector database"],
-    [/^chromadb$/, "Chroma vector database"],
-    [/^(better-sqlite3|sqlite3)$/, "SQLite database"],
-    [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
-];
-const embeddedDatabases = [];
-for (const pkg of packages) {
-    for (const dep of Object.keys(pkg.deps ?? {})) {
-        const match = EMBEDDED_DB_DEPS.find(([pattern]) => pattern.test(dep));
-        if (!match) continue;
-        const id = kebab(`infra-${dep}`);
-        if (embeddedDatabases.some((db) => db.id === id)) continue;
-        const pkgManifest = pkg.dir === "." ? "package.json" : `${pkg.dir}/package.json`;
-        embeddedDatabases.push({
-            id,
-            label: match[1],
-            depName: dep,
-            path: pkgManifest,
-            description: `Embedded database (${dep}) declared in ${pkgManifest}.`,
-        });
-    }
-}
+const embeddedDatabases = findEmbeddedDatabases(packages);
 
 const ciWorkflows = scanCiWorkflows(repo, allFiles);
 
@@ -363,91 +335,8 @@ for (const pkg of packages) {
     }
 }
 
-// Code coverage: Istanbul coverage-summary.json files under coverage/ dirs
-// (repo root or package roots, one suite subdir deep). Suites merge by best
-// per-file line coverage; node coverage is line-weighted over its files.
-// The coverage dir is I3-ignored for inventory, so this scan targets it
-// directly.
-const coverageByFile = new Map(); // repo-relative file -> { covered, total, pct }
-for (const base of new Set([".", ...packageDirs])) {
-    const coverageDir = join(repo, base === "." ? "" : base, "coverage");
-    if (!existsSync(coverageDir)) continue;
-    let suiteDirs = [];
-    try {
-        suiteDirs = readdirSync(coverageDir, { withFileTypes: true })
-            .filter((e) => e.isDirectory())
-            .map((e) => join(coverageDir, e.name));
-    } catch {
-        /* unreadable */
-    }
-    for (const candidate of [coverageDir, ...suiteDirs].map((dir) => join(dir, "coverage-summary.json"))) {
-        if (!existsSync(candidate)) continue;
-        for (const [file, stats] of Object.entries(readJson(candidate) ?? {})) {
-            if (file === "total") continue;
-            const rel = relative(repo, file);
-            if (rel.startsWith("..")) continue;
-            const lines = stats.lines ?? {};
-            const previous = coverageByFile.get(rel);
-            if (!previous || (lines.pct ?? 0) > previous.pct) {
-                coverageByFile.set(rel, { covered: lines.covered ?? 0, total: lines.total ?? 0, pct: lines.pct ?? 0 });
-            }
-        }
-    }
-}
-// TSDoc extraction: the first /** */ block that is file-level (only comments
-// or whitespace before it) or attached to an export becomes the node's prose.
-// First paragraph only, tags dropped, capped at 280 characters.
-const docCache = new Map();
-function fileDocSummary(file) {
-    if (docCache.has(file)) return docCache.get(file);
-    const text = readText(join(repo, file));
-    let summary = null;
-    const match = /\/\*\*([\s\S]*?)\*\//.exec(text.slice(0, 4000));
-    if (match) {
-        const before = text.slice(0, match.index);
-        const fileLevel = /^\s*(?:\/\/[^\n]*\n|\s)*$/.test(before);
-        const onExport = /^\s*export\b/.test(text.slice(match.index + match[0].length));
-        if (fileLevel || onExport) {
-            const paragraph = [];
-            for (const raw of match[1].split("\n")) {
-                const line = raw.replace(/^\s*\*? ?/, "");
-                if (/^@\w/.test(line)) break;
-                if (!line.trim() && paragraph.length) break;
-                if (line.trim()) paragraph.push(line.trim());
-            }
-            const joined = paragraph.join(" ").trim();
-            if (joined) summary = joined.length > 280 ? `${joined.slice(0, 277)}...` : joined;
-        }
-    }
-    docCache.set(file, summary);
-    return summary;
-}
-// For a multi-file node, prefer the entry-like file's doc.
-function docForFiles(files) {
-    const ordered = [...files].sort(
-        (a, b) =>
-            Number(ENTRY_FILE_PATTERN.test(basename(b).replace(/\.[a-z]+$/, ""))) -
-            Number(ENTRY_FILE_PATTERN.test(basename(a).replace(/\.[a-z]+$/, ""))),
-    );
-    for (const file of ordered) {
-        const summary = fileDocSummary(file);
-        if (summary) return summary;
-    }
-    return null;
-}
-
-function coverageForFiles(files) {
-    let covered = 0;
-    let total = 0;
-    for (const file of files) {
-        const entry = coverageByFile.get(file);
-        if (entry) {
-            covered += entry.covered;
-            total += entry.total;
-        }
-    }
-    return total ? Math.round((covered / total) * 1000) / 10 : null;
-}
+const { coverageForFiles } = scanCoverage(repo, packageDirs);
+const { fileDocSummary, docForFiles } = createDocScanner(repo);
 
 // --- 6b. Dev-tooling detection by reachability ----------------------------------------
 // Deployed roots: files baked into service images, Dockerfile entry points,
