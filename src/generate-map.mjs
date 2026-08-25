@@ -14,6 +14,7 @@ import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { createComplexityScanner } from "./lib/complexity.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
+import { layerHosts, scanHostConfigs } from "./lib/host-config.ts";
 import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { ENTRY_FILE_PATTERN, extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
@@ -136,111 +137,8 @@ const embeddedDatabases = findEmbeddedDatabases(packages);
 
 const ciWorkflows = scanCiWorkflows(repo, allFiles);
 
-// Host config scan: externals, host-to-host forwarding, host-to-service
-// forwarding — computed once, used for districts, infra, and edges.
-const hostScan = hosts.map((host) => {
-    const hostDir = dirname(host.file);
-    const hostQualifiers = host.name.split(" ").filter(Boolean);
-    const result = { host, externals: [], hostTargets: new Set(), serviceTargets: [], configs: [] };
-    const internalNames = new Set(
-        [...hosts.flatMap((h) => h.name.split(" ")), ...hosts.flatMap((h) => h.services.map((s) => s.name))]
-            .map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, ""))
-            .filter(Boolean),
-    );
-    for (const config of allFiles.filter(
-        (f) =>
-            dirname(f) === hostDir &&
-            /\.ya?ml$/.test(f) &&
-            !/docker-compose/.test(basename(f)) &&
-            hostQualifiers.some((token) => basename(f).includes(token)),
-    )) {
-        result.configs.push(config);
-        const rawLines = readText(join(repo, config)).split("\n");
-        rawLines.forEach((line, index) => {
-            const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
-            if (!envToken) return;
-            const windowText = rawLines
-                .slice(Math.max(0, index - 4), index + 5)
-                .join(" ")
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, "");
-            if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
-            const candidate = envToken
-                .split("_")
-                .filter(
-                    (word) =>
-                        ![
-                            "OTLP",
-                            "HTTP",
-                            "GRPC",
-                            "ENDPOINT",
-                            "URL",
-                            "ADDR",
-                            "HOST",
-                            "PROD",
-                            "UAT",
-                            "DEV",
-                            "TEST",
-                            "STAGING",
-                        ].includes(word),
-                )
-                .join(" ")
-                .toLowerCase();
-            if (candidate.length >= 4 && !result.externals.some((e) => e.candidate === candidate)) {
-                result.externals.push({ candidate, config });
-            }
-        });
-        const exportLines = rawLines
-            .filter((l) => /endpoint:|\$\{env:/.test(l))
-            .map((l) => l.toLowerCase().replace(/[^a-z0-9]/g, ""));
-        for (const other of hosts) {
-            if (other === host) continue;
-            const distinct = other.name
-                .split(" ")
-                .filter((t) => t && !hostQualifiers.includes(t))
-                .map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
-            if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
-                result.hostTargets.add(other.name);
-            }
-            for (const service of other.services) {
-                const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-                if (normalised.length >= 6 && exportLines.some((l) => l.includes(normalised))) {
-                    result.serviceTargets.push({ service, otherHost: other.name, config });
-                    result.hostTargets.add(other.name);
-                }
-            }
-        }
-    }
-    return result;
-});
-
-// Host flow bands from the declared forwarding chain: gateway 1, stack 2,
-// evaluation 3, ... (band 0 is reserved for producers, externals go behind
-// the last host, shared code behind that).
-const hostLayer = new Map();
-const forwardingHosts = new Set(
-    hostScan.flatMap((scan) => (scan.hostTargets.size ? [scan.host.name, ...scan.hostTargets] : [])),
-);
-for (const scan of hostScan) {
-    if (forwardingHosts.has(scan.host.name) && ![...hostScan].some((other) => other.hostTargets.has(scan.host.name))) {
-        hostLayer.set(scan.host.name, 0);
-    }
-}
-for (let pass = 0; pass <= hosts.length; pass += 1) {
-    let changed = false;
-    for (const scan of hostScan) {
-        if (!hostLayer.has(scan.host.name)) continue;
-        for (const target of scan.hostTargets) {
-            const proposed = hostLayer.get(scan.host.name) + 1;
-            if ((hostLayer.get(target) ?? -1) < proposed && proposed <= hosts.length) {
-                hostLayer.set(target, proposed);
-                changed = true;
-            }
-        }
-    }
-    if (!changed) break;
-}
-for (const host of hosts) if (!hostLayer.has(host.name)) hostLayer.set(host.name, 0);
+const hostScan = scanHostConfigs(repo, allFiles, hosts);
+const hostLayer = layerHosts(hostScan, hosts);
 
 const { coverageForFiles } = scanCoverage(repo, packageDirs);
 const { fileDocSummary, docForFiles } = createDocScanner(repo);

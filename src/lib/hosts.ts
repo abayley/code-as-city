@@ -14,7 +14,7 @@ const IMAGE_CLASSES = [
     { pattern: /langfuse|latitude|grafana|prometheus|otel|collector/, archetype: "cloud" },
 ] as const;
 
-type HostService = ComposeService & {
+export type HostService = ComposeService & {
     dockerfile?: string | undefined;
     copies: string[];
     entryFile: string | null;
