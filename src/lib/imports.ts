@@ -1,3 +1,6 @@
+// Import scanning and resolution: the file/package/room dependency graph
+// every later stage consumes (HEURISTICS.md rule S3).
+
 import { dirname, join } from "node:path";
 import { owningPackage, type Package } from "./packages.ts";
 import { readText } from "./read.ts";
@@ -22,6 +25,16 @@ export type ImportScan = {
  * resolution included), package names to local packages, anything else bare.
  * Produces file-level edges, cross-package edges, bare-import users, and
  * room-level edge counts.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packages - The discovered packages, for "@/" alias roots and bare
+ *   specifiers naming sibling packages.
+ * @param rooms - The room map; only files placed in a room are scanned and
+ *   resolvable as import targets.
+ * @param sourceFiles - Repo-relative paths of the source files to scan.
+ * @returns The file-to-room index, the import resolver, file-level edges,
+ *   cross-package edges, bare-import users per specifier, and room-level
+ *   edge counts keyed "from->to".
  */
 export function scanImports(
     repo: string,
@@ -32,7 +45,25 @@ export function scanImports(
     const fileToRoom = new Map<string, Room>();
     for (const room of rooms.values()) for (const f of room.files) fileToRoom.set(f, room);
 
+    /**
+     * S3: resolves one import specifier from the importing file — relative
+     * and "@/" specifiers to inventoried files, bare specifiers matching a
+     * sibling package name to that package, anything else left bare.
+     *
+     * @param fromFile - Repo-relative path of the importing file.
+     * @param specifier - The import/require specifier as written.
+     * @returns The resolved file, local package, or bare specifier; null
+     *   when a relative or aliased path resolves to nothing inventoried.
+     */
     function resolveImport(fromFile: string, specifier: string): ResolvedImport | null {
+        /**
+         * Tries the raw path against the room index with the usual
+         * extension and index-file candidates (NodeNext .js-to-.ts
+         * included).
+         *
+         * @param raw - The repo-relative path to probe.
+         * @returns The first inventoried candidate, or null.
+         */
         const tryFile = (raw: string): string | null => {
             const candidates = [
                 raw,

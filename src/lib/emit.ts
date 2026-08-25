@@ -1,3 +1,9 @@
+/**
+ * Map emission: the shared map envelope written by both modes (emitMap), and
+ * the deployment mode's full artefact set (emitArtefacts) — map.json, the
+ * deploy shape, dependency graphs, coupling data, and mermaid views for
+ * following the mapping rules by eye. Rule ID M4 refers to HEURISTICS.md.
+ */
 import { writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { mermaidId, splitEdgeKey } from "./assembly-helpers.ts";
@@ -43,6 +49,12 @@ export type EmitMapOptions = {
  * Shared final step for both modes: sweeps edges with missing endpoints (M4),
  * builds the map envelope (field order is the JSON field order — do not
  * reorder), writes map.json and map.md, and prints the console summary.
+ *
+ * @param options - The assembled nodes, edges, and warnings; the repository
+ *   path and output directory; the mode's id/name suffixes and summary line;
+ *   and the mermaidBody and consoleLines callbacks that render map.md and
+ *   the console output from the swept envelope.
+ * @returns The map envelope that was written to map.json.
  */
 export async function emitMap(options: EmitMapOptions): Promise<MapEnvelope> {
     // Final sweep: an edge may have been declared from a node that a later rule
@@ -93,6 +105,13 @@ export type EmitContext = {
  * Section 8 of the generator: emits map.json plus the intermediate artefacts
  * (deploy shape, dependency graphs, coupling, mermaid views) into outDir and
  * prints the final console summary.
+ *
+ * @param context - The assembled deployment map (nodes, edges, warnings) plus
+ *   the intermediate data the artefacts serialise: the room and package
+ *   structure, deployment shape (hosts, crontabs, wrangler, drizzle),
+ *   schedules, room/file import graphs, coupling analysis, and the
+ *   eliminated shared-utility rooms.
+ * @returns Resolves once every artefact has been written.
  */
 export async function emitArtefacts(context: EmitContext): Promise<void> {
     const {
@@ -154,20 +173,60 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
     ].join("\n");
 
     // Mermaid views of the result, for following the mapping rules by eye.
+    /**
+     * Escapes a label for use inside a double-quoted mermaid node label.
+     *
+     * @param text - Raw label text.
+     * @returns The text with double quotes replaced by single quotes.
+     */
     function mermaidLabel(text: string): string {
         return text.replace(/"/g, "'");
     }
+    /**
+     * Tests whether a node is a campus-level structure: not a district, and
+     * either parentless or parented directly by a district.
+     *
+     * @param n - Map node to test.
+     * @returns True for campus-level structures.
+     */
     const isCampus = (n: MapNode) =>
         n.kind !== "scope" && (!n.parentId || nodes.some((s) => s.id === n.parentId && s.kind === "scope"));
+    /**
+     * Summarises a node's source references for display: the first two paths,
+     * with an ellipsis when more exist.
+     *
+     * @param n - Map node whose provenance is being rendered.
+     * @returns The joined path summary, or undefined when the node has no
+     *   source refs.
+     */
     const nodePath = (n: MapNode): string | undefined => {
         const paths = (n.sourceRefs ?? []).map((ref) => ref.path).filter(Boolean);
         return paths.length ? paths.slice(0, 2).join(", ") + (paths.length > 2 ? ", …" : "") : undefined;
     };
+    /**
+     * Renders one node as a single mermaid node line with its label,
+     * archetype, and source-path summary.
+     *
+     * @param n - Map node to render.
+     * @param indent - Leading whitespace for the current nesting level.
+     * @param extra - Suffix appended after the archetype (e.g. ", no
+     *   district").
+     * @returns The mermaid node definition line.
+     */
     const campusNodeLine = (n: MapNode, indent: string, extra = "") => {
         const path = nodePath(n);
         return `${indent}${mermaidId(n.id)}["${mermaidLabel(n.label)}<br/><i>${n.archetype}${extra}</i>${path ? `<br/>${mermaidLabel(path)}` : ""}"]`;
     };
-    // A building with rooms renders as a nested subgraph so interiors are visible.
+    /**
+     * Renders a campus node, expanding interiors: a building with rooms
+     * renders as a nested subgraph so interiors are visible; a roomless node
+     * renders as a single line.
+     *
+     * @param n - Campus-level map node to render.
+     * @param indent - Leading whitespace for the current nesting level.
+     * @param extra - Suffix appended after the archetype.
+     * @returns The mermaid lines for the node (and its rooms, when any).
+     */
     const campusNodeLines = (n: MapNode, indent: string, extra = ""): string[] => {
         const roomsOf = nodes.filter((r) => r.parentId === n.id);
         if (!roomsOf.length) return [campusNodeLine(n, indent, extra)];
@@ -179,6 +238,15 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
         ];
     };
     const renderedIds = new Set(nodes.filter((n) => n.kind !== "scope").map((n) => n.id));
+    /**
+     * Renders map.md's body for the deployment map: every district as a
+     * subgraph, district-less campuses at top level, and the swept edges with
+     * arrow styles by kind (dotted data_flow, thick deploys, plain
+     * depends_on/calls).
+     *
+     * @param map - The swept map envelope being emitted.
+     * @returns The markdown document body.
+     */
     const mapMermaidBody = (map: MapEnvelope) => {
         const mapMermaid = [
             "```mermaid",
@@ -215,12 +283,27 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
     // edges among them.
     let sharedBreakdown: string | null = null;
     if (eliminatedRooms.length) {
+        /**
+         * Looks up an eliminated room by id, failing loudly when the coupling
+         * analysis and the room structure disagree.
+         *
+         * @param id - Room id from the eliminated-rooms list.
+         * @returns The room.
+         */
         const roomById = (id: string): Room => {
             const room = rooms.get(id);
             if (!room) throw new Error(`Eliminated room missing from rooms: ${id}`);
             return room;
         };
         const memberFiles = new Set(eliminatedRooms.flatMap((r) => roomById(r.id).files));
+        /**
+         * Renders one shared-utility file as a mermaid node line with its
+         * repository-wide in/out coupling counts.
+         *
+         * @param room - Eliminated room the file belongs to.
+         * @param file - Repository-relative source file inside the room.
+         * @returns The mermaid node definition line.
+         */
         const fileLine = (room: Room, file: string) => {
             const local = relative(roomDir(room), file).replace(/\.[a-z]+$/, "");
             const c = fileCoupling.get(file);

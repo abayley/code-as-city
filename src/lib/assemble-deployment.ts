@@ -1,3 +1,10 @@
+/**
+ * Deployment-map assembly (section 7 of the generator). Turns the deployment
+ * shape (compose hosts, wrangler edge config, CI workflows), the room/package
+ * structure, and the import graph into the city map's nodes, edges, and
+ * warnings. Rule IDs (7a-7f, D9-D12, C2, O-series parallels) refer to
+ * HEURISTICS.md.
+ */
 import { basename, join, relative, sep } from "node:path";
 import {
     addEdge,
@@ -93,6 +100,14 @@ const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
  * Section 7 of the generator: assembles the deployment map's nodes, edges,
  * and warnings from the deployment shape, room structure, import graph, CI
  * workflows, and static I/O classification.
+ *
+ * @param context - Everything the assembly reads: the repository path and file
+ *   inventory, the room/package structure and coupling analysis, the resolved
+ *   deployment shape (hosts, compose variants, wrangler edge host, drizzle and
+ *   embedded databases, CI workflows), reachability sets, and the metric and
+ *   documentation lookups used to size and describe nodes.
+ * @returns The assembled deployment map: its nodes, edges, and the warnings
+ *   accumulated while applying the mapping rules.
  */
 export function assembleDeployment(context: DeploymentContext): AssembledMap {
     const {
@@ -134,8 +149,27 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         dbReadPattern,
     } = context;
 
+    /**
+     * Tests whether a repository-relative path is part of the scanned file
+     * inventory.
+     *
+     * @param p - Repository-relative path to look up.
+     * @returns True when the path was found by the file scan.
+     */
     const fileExists = (p: string) => allFiles.includes(p);
+    /**
+     * Reads a source file's text for pattern scans and inference passes.
+     *
+     * @param file - Repository-relative path of the file to read.
+     * @returns The file's contents.
+     */
     const fileText = (file: string) => readText(join(repo, file));
+    /**
+     * Finds which package a file or directory belongs to.
+     *
+     * @param file - Repository-relative path to attribute.
+     * @returns The owning package, or null when no package claims the path.
+     */
     const owningPackage = (file: string): Package | null => owningPackageOf(packages, file);
 
     const nodes: MapNode[] = [];
@@ -155,14 +189,26 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // Experimental (--modules-as-buildings): every module node with >=2 files
     // becomes a building whose rooms are its files — a preview of "buildings
     // depict modules" while the room semantics are still undecided.
-    // Kebab-flattened ids can collide across mechanisms (the file src/node.ts
-    // and the room src/node/ both yield ...-src-node): suffix until free,
-    // checking both emitted nodes and the room-id namespace still to be
-    // emitted.
+    /**
+     * Allocates a node id that is free in both the emitted-node set and the
+     * room-id namespace still to be emitted. Kebab-flattened ids can collide
+     * across mechanisms (the file src/node.ts and the room src/node/ both
+     * yield ...-src-node): suffixes until free.
+     *
+     * @param base - Preferred kebab-cased id.
+     * @returns The base id, or the base with a numeric suffix when taken.
+     */
     function uniqueNodeId(base: string): string {
         return uniqueId(base, (id) => rooms.has(id) || nodes.some((x) => x.id === id));
     }
 
+    /**
+     * Emits one room node per source file inside a building (the experimental
+     * --modules-as-buildings interior view).
+     *
+     * @param parentId - Node id of the building the rooms belong to.
+     * @param files - Repository-relative source files to render as rooms.
+     */
     function pushFileRooms(parentId: string, files: readonly string[]): void {
         for (const file of files) {
             const name = fileModuleName(file);
@@ -178,6 +224,12 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         }
     }
 
+    /**
+     * Creates the shared "External systems" district on first use (externals
+     * share one district behind the host chain, as overview mode's O7 does).
+     *
+     * @returns The externals district's node id.
+     */
     const ensureExternalsDistrict = () => {
         if (!nodes.some((n) => n.id === EXTERNALS_DISTRICT_ID)) {
             nodes.push({
@@ -211,6 +263,14 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 .map((copy) => copy.replace(/\/$/, ""))
                 .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`));
             // Coupling filter: drop shared lib-like dirs (high fan-in, low fan-out).
+            /**
+             * Resolves a COPY'd source directory to its room id by sampling a
+             * file inside it.
+             *
+             * @param copy - Source directory named by a Dockerfile COPY.
+             * @returns The room id owning that directory, or null when no
+             *   source file lives under it.
+             */
             const roomIdForCopy = (copy: string) => {
                 const sample = sourceFiles.find((f) => f.startsWith(`${copy}/`));
                 return sample ? fileToRoom.get(sample)?.id : null;
@@ -368,6 +428,15 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // 7a-iii. Host forwarding: a host's own config file declaring an exporter
     // endpoint that names another host (e.g. the collector gateway's
     // STACK_OTLP_ENDPOINT) links the two hosts' primary services with data_flow.
+    /**
+     * Picks the service node that represents a host in host-to-host wiring:
+     * the collector/gateway/ingest-named service when one exists, else the
+     * first service.
+     *
+     * @param host - Deployment host whose representative service is wanted.
+     * @returns The primary service's node id, or null for a host with no
+     *   services.
+     */
     function primaryServiceId(host: Host): string | null {
         const preferred = host.services.find((s) => /collector|gateway|ingest/.test(s.name)) ?? host.services[0];
         return preferred ? kebab(`${host.id}-${preferred.name}`) : null;
@@ -495,6 +564,16 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // everything, so it is flattened: its rooms are promoted to campus-level
     // structures, each expandable into a building when its directory has
     // internal structure.
+    /**
+     * Groups a room's files into child modules: one group per immediate
+     * subdirectory, an own-named group for each loose file nothing imports (a
+     * CLI, an installer — its own module, not filing material), and a
+     * "(files)" group for loose files the entries import (support code).
+     *
+     * @param room - Directory-backed room to split into children.
+     * @returns One entry per child segment with the files it holds; empty for
+     *   the package-root pseudo-room.
+     */
     function childRoomsOf(room: Room): { seg: string; files: string[] }[] {
         const prefix =
             room.segment === "(root)" ? null : room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
@@ -519,8 +598,15 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         return [...groups.entries()].map(([seg, files]) => ({ seg, files }));
     }
 
-    // Source refs for a child of a room: the subdirectory when dir-backed, the
-    // concrete files (capped) when it is a loose-file group.
+    /**
+     * Source refs for a child of a room: the subdirectory when dir-backed, the
+     * concrete files (capped at five) when it is a loose-file group.
+     *
+     * @param room - Room the child was split from.
+     * @param child - Child segment and the files it holds, as produced by
+     *   childRoomsOf.
+     * @returns Source references pointing at the child's directory or files.
+     */
     function childSourceRefs(room: Room, child: { seg: string; files: string[] }): SourceRef[] {
         const dir = roomDir(room);
         if (child.files.length === 1) {
@@ -534,7 +620,13 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         return child.files.slice(0, 5).map((path) => ({ path }));
     }
 
-    // Interior structure: two subdirs, or one subdir plus loose files.
+    /**
+     * Decides whether a room has interior structure worth expanding into a
+     * building: two subdirs, or one subdir plus loose files.
+     *
+     * @param room - Room to test.
+     * @returns True when the room should expand into child structures.
+     */
     function hasInteriorStructure(room: Room): boolean {
         const allChildren = childRoomsOf(room);
         const dirChildren = allChildren.filter(({ seg }) => seg !== "(files)");
@@ -856,6 +948,15 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // district. Object-storage traffic becomes an external store with directional
     // data flow; an invoked entry's Commander subcommand resolves to its handler
     // module for a `runs` edge.
+    /**
+     * Finds the emitted campus node that owns a source file: the direct
+     * fileNodeOwner mapping when present, else the non-scope node whose
+     * longest sourceRef path contains the file.
+     *
+     * @param file - Repository-relative source file to attribute.
+     * @returns The owning node's id, or null when nothing on the map claims
+     *   the file.
+     */
     const nodeOwningFile = (file: string): string | null => {
         const direct = fileNodeOwner.get(file);
         if (direct && nodes.some((n) => n.id === direct)) return direct;
@@ -871,8 +972,17 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         }
         return best?.id ?? null;
     };
-    // Commander registration: the handler is the first imported identifier used
-    // inside the `.command('<sub>')` chunk of the entry file.
+    /**
+     * Resolves a Commander subcommand to the module that implements it: the
+     * handler is the first imported identifier used inside the
+     * `.command('<sub>')` chunk of the entry file, resolved back through the
+     * import graph.
+     *
+     * @param entryFile - CLI entry file that registers the subcommand.
+     * @param sub - Subcommand name as invoked by the CI workflow.
+     * @returns The handler module's repository-relative path, or null when
+     *   the subcommand or its handler cannot be resolved.
+     */
     const subcommandHandlerFile = (entryFile: string, sub: string): string | null => {
         const text = readText(join(repo, entryFile));
         const importedNames = new Map<string, string>(); // identifier -> specifier

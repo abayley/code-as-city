@@ -1,3 +1,6 @@
+// The coverage, TSDoc, and embedded-database scans shared by both map modes
+// (HEURISTICS.md rules M12, M13, and D13/O11).
+
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
@@ -19,6 +22,12 @@ export type CoverageScan = {
  * (repo root or package roots, one suite subdir deep). Suites merge by best
  * per-file line coverage; node coverage is line-weighted over its files.
  * The coverage dir is inventory-ignored, so this scan targets it directly.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packageDirs - Repo-relative package directories, each a candidate
+ *   coverage/ location alongside the repo root.
+ * @returns The per-file coverage index and an aggregator producing a node's
+ *   line-weighted coverage percentage over its files.
  */
 export function scanCoverage(repo: string, packageDirs: readonly string[]): CoverageScan {
     const coverageByFile = new Map<string, FileCoverage>();
@@ -52,6 +61,13 @@ export function scanCoverage(repo: string, packageDirs: readonly string[]): Cove
             }
         }
     }
+    /**
+     * Line-weighted coverage over the node's files.
+     *
+     * @param files - Repo-relative paths of the node's files.
+     * @returns The percentage (one decimal place), or null when no file has
+     *   coverage data.
+     */
     const coverageForFiles = (files: readonly string[]): number | null => {
         let covered = 0;
         let total = 0;
@@ -77,9 +93,20 @@ export type DocScanner = {
  * comments or whitespace before it) or attached to an export becomes the
  * node's prose. First paragraph only, tags dropped, capped at 280 characters.
  * For a multi-file node, the entry-like file's doc is preferred.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @returns Accessors for one file's doc summary and for the best summary
+ *   across a node's files, memoised per file.
  */
 export function createDocScanner(repo: string): DocScanner {
     const docCache = new Map<string, string | null>();
+    /**
+     * M13 for one file: the first qualifying TSDoc block's first paragraph,
+     * tags dropped, capped at 280 characters.
+     *
+     * @param file - Repo-relative path of the source file.
+     * @returns The summary, or null when no qualifying block exists.
+     */
     const fileDocSummary = (file: string): string | null => {
         const cached = docCache.get(file);
         if (cached !== undefined) return cached;
@@ -106,6 +133,13 @@ export function createDocScanner(repo: string): DocScanner {
         docCache.set(file, summary);
         return summary;
     };
+    /**
+     * The best doc summary for a multi-file node: entry-named files are
+     * tried first, then the rest in given order.
+     *
+     * @param files - Repo-relative paths of the node's files.
+     * @returns The first summary found, or null.
+     */
     const docForFiles = (files: readonly string[]): string | null => {
         const ordered = [...files].sort(
             (a, b) =>
@@ -139,7 +173,15 @@ const EMBEDDED_DB_DEPS: readonly (readonly [RegExp, string])[] = [
     [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
 ];
 
-/** Finds embedded-database dependencies (LanceDB, SQLite, DuckDB, Chroma) across package manifests. */
+/**
+ * Finds embedded-database dependencies (LanceDB, SQLite, DuckDB, Chroma) across package manifests
+ * (the D13/O11 scan).
+ *
+ * @param packages - The discovered packages, whose merged dependencies are
+ *   matched against the known embedded-database SDKs.
+ * @returns One database per dependency repo-wide, each carrying its id,
+ *   label, dependency name, and the manifest declaring it.
+ */
 export function findEmbeddedDatabases(packages: readonly Package[]): EmbeddedDatabase[] {
     const embeddedDatabases: EmbeddedDatabase[] = [];
     for (const pkg of packages) {

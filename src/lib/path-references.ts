@@ -1,3 +1,6 @@
+// Path-reference reassignment: string literals claiming another package's
+// area pull it into the referencing district (HEURISTICS.md rule R4).
+
 import { dirname, join, sep } from "node:path";
 import { IMPORT_PATTERN } from "./imports.ts";
 import { owningPackage, type Package } from "./packages.ts";
@@ -14,6 +17,15 @@ export type PathReassignment = { pkg: Package | null; fromFile: string };
  * edges), not area claims — only non-import path literals reassign. The
  * literal may be relative to the file's directory or to the package root
  * (the resolve(packageRoot, "...") idiom): both bases are tried.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packages - The discovered packages, for owning-package lookup.
+ * @param rooms - Every room; candidate targets for reassignment (a file's
+ *   own package and "(root)" rooms are never claimed).
+ * @param sourceFiles - Repo-relative paths of the source files to scan for
+ *   "../"-prefixed string literals.
+ * @returns Room id to its reassignment: the claiming package and the file
+ *   containing the literal (first claim wins).
  */
 export function findPathReassignments(
     repo: string,

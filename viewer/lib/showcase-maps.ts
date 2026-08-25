@@ -1,3 +1,5 @@
+// Hand-curated showcase maps (React, Kubernetes, Redis) bundled with the
+// viewer so it demonstrates well-known codebases without any generation step.
 import type { CityMap, CityNode } from "./city-map";
 
 export type Showcase = {
@@ -8,6 +10,15 @@ export type Showcase = {
     accent: string;
 };
 
+/**
+ * Builds a district-level scope node, the top-level grouping the showcase
+ * maps hang their buildings off.
+ *
+ * @param id - Stable node id referenced by children's parentId.
+ * @param label - District name shown on the map sign.
+ * @param description - One-line summary shown in the inspector panel.
+ * @returns A CityNode with kind "scope" and archetype "district".
+ */
 const scope = (id: string, label: string, description: string): CityNode => ({
     id,
     label,

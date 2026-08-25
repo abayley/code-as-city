@@ -1,3 +1,6 @@
+// Deterministic ground-plane layout for the city view: assigns nodes to
+// front-to-back flow layers, packs them into district neighbourhoods, and
+// routes edges around the resulting buildings.
 import type { CityEdge, CityNode } from "./city-map";
 
 export type FlowLayout = {
@@ -27,6 +30,14 @@ const STAGE_HINTS: Array<[RegExp, number]> = [
     [/\b(database|postgres|mysql|sqlite|redis|cache|storage|bucket|filesystem|persistence|etcd|warehouse|index)\b/i, 4],
 ];
 
+/**
+ * Guesses which flow stage (0 = ingress, 4 = persistence) a node belongs to.
+ * An explicit display.flowLayer wins; otherwise kind/archetype rules apply,
+ * then keyword hints over the label, description, and tags.
+ *
+ * @param node - The node to place.
+ * @returns The zero-based stage index, front of the map first.
+ */
 function hintedStage(node: CityNode) {
     const explicitLayer = node.display?.flowLayer;
     if (explicitLayer !== undefined && Number.isInteger(explicitLayer)) return Math.max(0, explicitLayer);
@@ -42,12 +53,34 @@ function hintedStage(node: CityNode) {
     return 1;
 }
 
+/**
+ * Selects the edges that should drive flow layering: edges between the given
+ * nodes, preferring non-deploy edges and falling back to all in-scope edges
+ * when a map has nothing but deploy relationships.
+ *
+ * @param nodes - The nodes being laid out; edges to anything else are ignored.
+ * @param edges - The full edge list to filter.
+ * @returns The edges to use for layering and affinity decisions.
+ */
 function flowEdges(nodes: CityNode[], edges: CityEdge[]) {
     const ids = new Set(nodes.map((node) => node.id));
     const primary = edges.filter((edge) => edge.kind !== "deploys" && ids.has(edge.from) && ids.has(edge.to));
     return primary.length ? primary : edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
 }
 
+/**
+ * Computes the whole ground-plane layout: each node's flow layer (front to
+ * back), its 2D position, the district neighbourhoods with their plot bounds,
+ * and the overall map bounds. Deterministic for a given map, so the camera
+ * and edge router can rely on stable coordinates.
+ *
+ * @param nodes - The nodes to place (the current view's visible structures).
+ * @param edges - Edges between those nodes, used for layering and affinity.
+ * @param allNodes - Every node in the map, used to resolve district scopes
+ *   and to detect interiors when sizing nameplate clearances.
+ * @returns The positions, layer assignments, neighbourhood descriptors, and
+ *   bounding box for the laid-out map.
+ */
 export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes: CityNode[]): FlowLayout {
     if (!nodes.length) {
         return {
@@ -115,6 +148,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
             return [id, compact];
         }),
     );
+    /**
+     * Looks up a node's compacted global flow layer.
+     *
+     * @param node - A node already present in the layer map.
+     * @returns Its zero-based compacted layer index.
+     */
     const globalLayerOf = (node: CityNode): number => {
         const layer = layers.get(node.id);
         if (layer === undefined) throw new Error("Node missing from layer map.");
@@ -144,12 +183,27 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
         if (best) affinity.set(node.id, best[0]);
     });
+    /**
+     * Resolves the neighbourhood a node lays out in: its parent district, a
+     * satellite strip near its most-connected district, or the "__system"
+     * fallback.
+     *
+     * @param node - The node to group.
+     * @returns The neighbourhood id (a scope id, "__near:<scope>", or "__system").
+     */
     const neighborhoodFor = (node: CityNode) =>
         node.parentId && scopeById.has(node.parentId)
             ? node.parentId
             : affinity.has(node.id)
               ? `__near:${affinity.get(node.id)}`
               : "__system";
+    /**
+     * Orders neighbourhoods: districts in scope order, each satellite strip
+     * directly after its district, and the system fallback last.
+     *
+     * @param id - A neighbourhood id from neighborhoodFor.
+     * @returns A sortable rank; lower ranks lay out first.
+     */
     const neighborhoodRank = (id: string) => {
         const order = scopeOrder.get(id);
         if (order !== undefined) return order * 2;
@@ -167,6 +221,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     const nodeStepX = 2.0;
     const nodeStepZ = 1.7;
     // Local change: districts grow roughly square instead of two fixed columns.
+    /**
+     * Chooses how many columns a group of structures packs into.
+     *
+     * @param count - Number of structures in the group.
+     * @returns The column count that keeps the group roughly square.
+     */
     const columnsFor = (count: number) => Math.max(1, Math.ceil(Math.sqrt(count)));
     // Local change: tighter packing for many-district maps. A single-structure
     // neighbourhood only needs its own footprint, and the gap between
@@ -230,6 +290,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
 
     // Local change: stable, legible ordering — band (front to back), then
     // label. Drives both the rail listing and left-to-right order within rows.
+    /**
+     * Produces the human-readable name for a neighbourhood.
+     *
+     * @param id - The neighbourhood id.
+     * @returns The scope's label, "Near <scope>" for satellite strips, or "System".
+     */
     const groupLabel = (id: string) =>
         scopeById.get(id)?.label ??
         (id.startsWith("__near:") ? `Near ${scopeById.get(id.slice(7))?.label ?? ""}` : "System");
@@ -242,6 +308,13 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     // Local change: a district whose flow layers are all tiny (1-2 nodes each)
     // would pack as a skinny 1xN strip; flatten its layers and pack it square
     // instead, keeping layer order as the placement order.
+    /**
+     * Decides whether a district's flow layers should collapse into one, so a
+     * district of many tiny layers packs square instead of as a skinny strip.
+     *
+     * @param neighborhoodNodes - The district's structures.
+     * @returns True when every layer holds at most two nodes and flattening helps.
+     */
     const flattenLayers = (neighborhoodNodes: CityNode[]) => {
         if (neighborhoodNodes.length < 4) return false;
         const counts = new Map<number, number>();
@@ -254,6 +327,14 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     const flattened = new Map(
         neighborhoodEntries.map(([id, neighborhoodNodes]) => [id, flattenLayers(neighborhoodNodes)]),
     );
+    /**
+     * A node's layer within its own district: zero everywhere in a flattened
+     * district, the global layer otherwise.
+     *
+     * @param neighborhoodId - The district the node belongs to.
+     * @param node - The node being placed.
+     * @returns The layer index used for in-district depth packing.
+     */
     const localLayerOf = (neighborhoodId: string, node: CityNode) =>
         flattened.get(neighborhoodId) ? 0 : globalLayerOf(node);
 
@@ -266,6 +347,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         );
         return Math.max(3.2, columnsFor(largestCell) * nodeStepX + 0.7);
     });
+    /**
+     * Looks up a neighbourhood's computed plot width.
+     *
+     * @param index - Position in neighborhoodEntries.
+     * @returns The width in world units.
+     */
     const widthAt = (index: number): number => {
         const width = neighborhoodWidths[index];
         if (width === undefined) throw new Error("Neighbourhood width missing.");
@@ -303,6 +390,13 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         const depth = Math.max(0, offset - layerGap - nodeStepZ);
         localInfo.set(index, { layerIndex, layerOffsets, depth });
     });
+    /**
+     * Looks up a neighbourhood's per-layer packing info (layer order, depth
+     * offsets, and total depth).
+     *
+     * @param index - Position in neighborhoodEntries.
+     * @returns The neighbourhood's local layout info.
+     */
     const infoAt = (index: number) => {
         const info = localInfo.get(index);
         if (info === undefined) throw new Error("Neighbourhood layout info missing.");
@@ -458,6 +552,16 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
 // once per layout, route individual edges on demand (cached per edge id).
 // Import edges are routed lazily this way when a node is selected.
 export type EdgeRouter = { route: (edge: CityEdge) => Array<[number, number]> | null };
+/**
+ * Builds the edge router for a computed layout: rasterises district plots and
+ * building footprints into a cost grid once, then routes individual edges on
+ * demand with A*, caching each result by edge id.
+ *
+ * @param layout - The layout whose positions and bounds the grid covers.
+ * @param allNodes - Nodes whose rendered footprints become obstacles.
+ * @returns A router whose route() yields the simplified ground-plane waypoints
+ *   for an edge, or null when no path exists (or the map is absurdly large).
+ */
 export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): EdgeRouter {
     const cache = new Map<string, Array<[number, number]> | null>();
     const cell = 0.45;
@@ -484,6 +588,14 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
     const TURN_COST = 2.5;
 
     const cost = new Float32Array(cols * rows).fill(1);
+    /**
+     * Stamps a rectangle into the cost grid, raising each covered cell to at
+     * least the given traversal cost.
+     *
+     * @param bounds - The world-space rectangle to stamp.
+     * @param value - The traversal cost to impose within it.
+     * @param cells - Optional set that collects the covered cell indices.
+     */
     const rasterise = (
         bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
         value: number,
@@ -534,6 +646,12 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
     // Binary min-heap over [priority, state] pairs.
     const heapPriority: number[] = [];
     const heapState: number[] = [];
+    /**
+     * Pushes a search state onto the min-heap and sifts it up.
+     *
+     * @param priority - The A* f-score (cost so far plus heuristic).
+     * @param state - The encoded cell-and-direction state.
+     */
     const heapPush = (priority: number, state: number) => {
         let i = heapPriority.length;
         heapPriority.push(priority);
@@ -559,6 +677,11 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
             i = parent;
         }
     };
+    /**
+     * Removes the lowest-priority state from the min-heap and re-heapifies.
+     *
+     * @returns The encoded cell-and-direction state with the smallest f-score.
+     */
     const heapPop = (): number => {
         const top = heapState[0];
         const lastPriority = heapPriority.pop();
@@ -604,6 +727,14 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
     const DX = [1, -1, 0, 0];
     const DZ = [0, 0, 1, -1];
 
+    /**
+     * Routes one edge across the cost grid with turn-penalised A*, exempting
+     * the endpoint buildings' own cells so paths can leave and arrive.
+     *
+     * @param edge - The edge to route; results are cached by edge id.
+     * @returns Simplified [x, z] waypoints from source to target (exact
+     *   endpoints, collinear runs collapsed), or null when unroutable.
+     */
     const route = (edge: CityEdge): Array<[number, number]> | null => {
         const cached = cache.get(edge.id);
         if (cached !== undefined) return cached;

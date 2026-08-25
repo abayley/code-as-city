@@ -1,3 +1,7 @@
+// Deployment hosts from compose files: one host district per compose file,
+// with named, Dockerfile-bound, image-classified services (HEURISTICS.md
+// rules D1/D2/D3/D5/D6).
+
 import { basename, dirname, join, sep } from "node:path";
 import { type ComposeService, parseComposeServices } from "./compose.ts";
 import type { CrontabSchedule } from "./crontab.ts";
@@ -38,6 +42,14 @@ const ENV_RANK: readonly (readonly [RegExp, number])[] = [
     [/dev/, 1],
 ];
 
+/**
+ * D2: derives the host's name parts from the compose file's path — the
+ * informative directory segments (generic ones like "deploy" dropped) plus
+ * any filename qualifiers (docker-compose.<qualifier>.yml).
+ *
+ * @param file - Repo-relative path of the compose file.
+ * @returns The name parts in path order, deduplicated against the dirs.
+ */
 function hostNameParts(file: string): string[] {
     const qualifiers = basename(file)
         .replace(/\.ya?ml$/, "")
@@ -49,6 +61,13 @@ function hostNameParts(file: string): string[] {
     return [...dirParts, ...qualifiers.filter((q) => !dirParts.includes(q))];
 }
 
+/**
+ * D1's environment rank for host dedup: prod 5, uat/staging 4, example 3,
+ * unqualified 2, dev 1.
+ *
+ * @param file - Repo-relative path of the compose file.
+ * @returns The rank; higher-ranked variants win dedup ties.
+ */
 function envRank(file: string): number {
     for (const [pattern, rank] of ENV_RANK) if (pattern.test(file)) return rank;
     return 2;
@@ -69,6 +88,14 @@ export type HostShape = {
  * higher-ranked variant (prod > uat > example > unqualified > dev) is
  * dropped — while service-level depends_on is harvested across ALL variants
  * so wiring declared only in a deduped variant still informs edges.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param allFiles - The full repo inventory, used to resolve Dockerfile
+ *   paths and validate their contents.
+ * @param composeFiles - Repo-relative paths of the docker-compose files.
+ * @param schedules - Crontab schedules keyed by compose service name (D4).
+ * @returns The surviving hosts, every candidate variant (for cross-variant
+ *   harvesting), and depends_on unions per service name.
  */
 export function buildHosts(
     repo: string,

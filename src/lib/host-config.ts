@@ -1,3 +1,7 @@
+// Host config scanning: externals and host-to-host forwarding declared in a
+// host's own YAML configs (HEURISTICS.md rules M5/M6, shared with overview
+// O8), plus the host flow bands (M9).
+
 import { basename, dirname, join } from "node:path";
 import type { Host, HostService } from "./hosts.ts";
 import { readText } from "./read.ts";
@@ -36,6 +40,14 @@ const ENV_TOKEN_NOISE_WORDS = [
  * env-token endpoints not matching any internal name become external
  * candidates; export lines naming another host or a service (>=6 chars)
  * declare forwarding.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param allFiles - The full repo inventory, searched for each host dir's
+ *   config YAML files.
+ * @param hosts - The surviving deployment hosts, whose names and service
+ *   names define the internal vocabulary the scan matches against.
+ * @returns One scan result per host: external candidates, forwarded-to host
+ *   names, per-service forwarding targets, and the configs read.
  */
 export function scanHostConfigs(repo: string, allFiles: readonly string[], hosts: readonly Host[]): HostScanResult[] {
     return hosts.map((host) => {
@@ -111,6 +123,11 @@ export function scanHostConfigs(repo: string, allFiles: readonly string[], hosts
  * Host flow bands from the declared forwarding chain: roots that forward but
  * are forwarded to by nothing sit at layer 0, targets one deeper per hop;
  * hosts outside the chain default to 0.
+ *
+ * @param hostScan - The per-host config scan results carrying the declared
+ *   forwarding targets.
+ * @param hosts - All surviving hosts, so unchained hosts still get a layer.
+ * @returns Host name to its band in the forwarding chain (0 = front).
  */
 export function layerHosts(hostScan: readonly HostScanResult[], hosts: readonly Host[]): Map<string, number> {
     const hostLayer = new Map<string, number>();

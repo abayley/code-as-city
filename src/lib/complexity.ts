@@ -1,3 +1,6 @@
+// Per-file cyclomatic complexity for building heights and footprints
+// (HEURISTICS.md rule O6, feeding O5 and M11).
+
 import { join } from "node:path";
 import { readText } from "./read.ts";
 
@@ -22,9 +25,23 @@ export type ComplexityScanner = {
     fileMaxFunctionComplexity: (file: string) => number;
 };
 
-/** Creates a cached per-file complexity scanner rooted at the repo. */
+/**
+ * Creates a cached per-file complexity scanner rooted at the repo.
+ *
+ * @param repo - Absolute path of the repository being mapped; files handed
+ *   to the scanner are read relative to it.
+ * @returns Accessors for a file's summed complexity (all functions) and its
+ *   worst single-function complexity, memoised per file.
+ */
 export function createComplexityScanner(repo: string): ComplexityScanner {
     const complexityCache = new Map<string, ComplexityStats>();
+    /**
+     * Computes (and caches) the file's complexity stats: per-function McCabe
+     * values via the compiler API when available, else the regex fallback.
+     *
+     * @param file - Repo-relative path of the source file.
+     * @returns The file's summed and worst-single-function complexity.
+     */
     function fileComplexityStats(file: string): ComplexityStats {
         const cached = complexityCache.get(file);
         if (cached !== undefined) return cached;
@@ -61,6 +78,13 @@ export function createComplexityScanner(repo: string): ComplexityScanner {
             const topLevel = { complexity: 1 };
             const finished: { complexity: number }[] = [];
             const stack = [topLevel];
+            /**
+             * Walks the AST attributing each decision point to the innermost
+             * enclosing function (the top of the stack); entering a function
+             * node pushes a fresh counter starting at 1.
+             *
+             * @param node - The AST node being visited.
+             */
             const visit = (node: import("typescript").Node): void => {
                 if (functionKinds.has(node.kind)) {
                     stack.push({ complexity: 1 });

@@ -1,3 +1,7 @@
+// Repository file inventory: which files exist and which count as source
+// (HEURISTICS.md group I: git listing, nested-repo and ignore-set exclusion,
+// test and config filtering).
+
 import { spawnSync } from "node:child_process";
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -38,6 +42,9 @@ const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;
  * excludes vendored checkouts); fall back to a directory walk. Either way,
  * exclude nested git repositories (vendored third-party code) and
  * generated/dependency dirs. Sorted, repo-relative paths.
+ *
+ * @param root - Absolute path of the repository being mapped.
+ * @returns Sorted repo-relative paths of every inventoried file.
  */
 export function inventory(root: string): string[] {
     let files: string[] | null = null;
@@ -63,6 +70,13 @@ export function inventory(root: string): string[] {
         .sort();
 }
 
+/**
+ * Fallback directory walk for non-git repos: skips dotfiles (except
+ * .github), the ignore-set dirs, and nested git checkouts.
+ *
+ * @param root - Absolute path of the directory to walk.
+ * @returns Sorted root-relative paths of every file found.
+ */
 function walk(root: string): string[] {
     const files: string[] = [];
     const stack = [root];
@@ -88,12 +102,23 @@ function walk(root: string): string[] {
     return files.sort();
 }
 
-/** True when the file sits in a test directory or matches the test-file naming convention. */
+/**
+ * True when the file sits in a test directory or matches the test-file
+ * naming convention (I4).
+ *
+ * @param file - Repo-relative path of the file.
+ * @returns Whether the file is excluded from source analysis as a test.
+ */
 export function isTestPath(file: string): boolean {
     return file.split(sep).some((seg) => TEST_DIRS.has(seg)) || TEST_FILE_PATTERN.test(file);
 }
 
-/** The file's extension including the dot, or the empty string. */
+/**
+ * The file's extension including the dot, or the empty string.
+ *
+ * @param file - The file path or name.
+ * @returns The extension from the last dot onwards, or "" when dotless.
+ */
 export function extensionOf(file: string): string {
     const dot = file.lastIndexOf(".");
     return dot === -1 ? "" : file.slice(dot);

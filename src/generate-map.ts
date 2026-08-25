@@ -46,6 +46,12 @@ const DB_READ_PATTERN =
 /**
  * Runs the generator pipeline for the given CLI arguments and returns the
  * process exit code: 2 on usage error (USAGE printed to stderr), 0 otherwise.
+ *
+ * @param argumentsList - Raw CLI arguments (argv without the runtime and
+ *   script entries): the target repo plus optional --out-dir, --overview,
+ *   and --modules-as-buildings flags.
+ * @returns The process exit code: 2 when no target repo was given, 0 after a
+ *   successful map generation.
  */
 export async function runGenerator(argumentsList: readonly string[]): Promise<number> {
     const parsedArguments = parseArguments(argumentsList);

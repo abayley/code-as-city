@@ -1,3 +1,6 @@
+// CI workflow scanning: GitHub Actions jobs as deployment shape
+// (HEURISTICS.md rules D9/D10/D11).
+
 import { basename, join } from "node:path";
 import { extensionOf, SOURCE_EXTENSIONS } from "./inventory.ts";
 import { readText } from "./read.ts";
@@ -19,6 +22,13 @@ export type CiWorkflow = {
  * cron, workflow_run upstreams, run-step commands, repo entry invocations
  * (D10), and object-storage traffic (D11). Workflows with none of cron,
  * upstreams, or invocations are dropped.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param allFiles - The full repo inventory, used to find the workflow
+ *   files and validate invoked entry files.
+ * @returns The qualifying workflows: name, cron schedule, workflow_run
+ *   upstream names, repo entry invocations (file plus optional subcommand),
+ *   and any object-storage traffic.
  */
 export function scanCiWorkflows(repo: string, allFiles: readonly string[]): CiWorkflow[] {
     const fileExists = (p: string) => allFiles.includes(p);

@@ -1,3 +1,6 @@
+// Coupling metrics over the import graph and utility-room elimination
+// (HEURISTICS.md group C: C1 metrics, C2 elimination).
+
 import type { Room } from "./rooms.ts";
 
 export type Coupling = { in: number; out: number; instability: number };
@@ -15,9 +18,22 @@ export const COUPLING_THRESHOLDS = {
     utilityMaxInstability: UTILITY_MAX_INSTABILITY,
 } as const;
 
-/** archunitts-style fan-in/fan-out/instability per node from directed edge pairs. */
+/**
+ * archunitts-style fan-in/fan-out/instability per node from directed edge pairs.
+ *
+ * @param pairs - Directed [from, to] dependency pairs; duplicates collapse
+ *   (fan counts are over distinct neighbours).
+ * @returns Per-node coupling: distinct fan-in, fan-out, and instability
+ *   (out / (in + out), defaulting to 1 for isolated nodes).
+ */
 export function couplingFromEdges(pairs: Iterable<readonly [string, string]>): Map<string, Coupling> {
     const stats = new Map<string, { in: Set<string>; out: Set<string> }>();
+    /**
+     * Fetches (creating on first sight) the node's neighbour sets.
+     *
+     * @param id - The node whose stats entry is wanted.
+     * @returns The node's mutable in/out neighbour sets.
+     */
     const ensure = (id: string) => {
         let s = stats.get(id);
         if (!s) {
@@ -52,6 +68,13 @@ export type CouplingAnalysis = {
  * Couples files and rooms from the import graph. Utility rooms (high fan-in,
  * low fan-out, instability towards 0) are shared lib-like leaves eliminated
  * from the map, unless anchored by a mid-band file.
+ *
+ * @param fileEdges - File-level import edges from the import scan.
+ * @param roomEdges - Room-level edge counts keyed "from->to".
+ * @param rooms - The room map, consulted for each room's files when testing
+ *   the mid-band anchor.
+ * @returns File and room coupling maps, the mid-file and utility-room
+ *   predicates, and the rooms C2 eliminates (with their coupling figures).
  */
 export function analyseCoupling(
     fileEdges: readonly { from: string; to: string }[],
@@ -66,6 +89,14 @@ export function analyseCoupling(
         }),
     );
 
+    /**
+     * True when the file sits in the mid-coupling band (degree >= 5,
+     * instability strictly between the band bounds): such a file anchors its
+     * room against C2 elimination.
+     *
+     * @param file - Repo-relative path of the source file.
+     * @returns Whether the file is significantly mid-coupled.
+     */
     const isMidFile = (file: string): boolean => {
         const c = fileCoupling.get(file);
         return Boolean(
@@ -76,6 +107,14 @@ export function analyseCoupling(
         );
     };
 
+    /**
+     * True when the room aggregates as a shared utility leaf (fan-in >= 3,
+     * instability <= 0.25) and no mid-band file anchors it — the C2
+     * elimination condition.
+     *
+     * @param roomId - The room's node id.
+     * @returns Whether C2 eliminates the room from the deployment map.
+     */
     const isUtilityRoom = (roomId: string): boolean => {
         const c = roomCoupling.get(roomId);
         if (!c || c.in < UTILITY_MIN_FAN_IN || c.instability > UTILITY_MAX_INSTABILITY) return false;

@@ -31,6 +31,14 @@ export type NodeIndexEntry = {
  * emitted, letting the deployment map create the database node parented into
  * its importers' district; the overview creates its node elsewhere and emits
  * "-u"-suffixed edge ids where the deployment map uses none.
+ *
+ * @param options - The pass inputs: `databases` — the embedded databases
+ *   from the D13 scan; `entries` — the node-shaped records to test, in the
+ *   mode's own order; `edges` — the accumulating edge list, mutated in
+ *   place; `fileText` — reads a repo-relative file's text; `edgeSuffix` —
+ *   appended to each edge id ("" for the deployment map, "-u" for the
+ *   overview); `onImporters` — optional callback run per database with its
+ *   importer ids before the edges are emitted.
  */
 export function inferEmbeddedDatabaseUse(options: {
     databases: readonly EmbeddedDatabase[];
@@ -67,6 +75,11 @@ export function inferEmbeddedDatabaseUse(options: {
  * M10/O8: entries referencing an external system by SDK import or env-var
  * prefix deliver data to it. Entries that are the external itself or carry
  * no files are skipped in both modes.
+ *
+ * @param options - The pass inputs: `externals` — the external-system nodes
+ *   (M6/D11/D12) with display labels to match by; `entries` — the
+ *   node-shaped records to test; `edges` — the accumulating edge list,
+ *   mutated in place; `fileText` — reads a repo-relative file's text.
  */
 export function inferExternalDelivers(options: {
     externals: readonly { id: string; label: string }[];
@@ -102,6 +115,13 @@ export function inferExternalDelivers(options: {
  * (OTLP over promoted nodes, database flow over classification sets).
  * Collector selection stays per-mode; database targeting is shared — the
  * entry's district-local database wins, else the first declared.
+ *
+ * @param options - The pass inputs: `entries` — the node-shaped records to
+ *   test, in the mode's own order; `edges` — the accumulating edge list,
+ *   mutated in place; `fileText` — reads a repo-relative file's text;
+ *   `otlpTargetId` — the collector node OTLP producers export to (omit to
+ *   skip the M1 arm); `database` — the database nodes plus the SQL/ORM
+ *   write and read patterns (omit to skip the M8 arm).
  */
 export function inferModuleDataFlows(options: {
     entries: readonly NodeIndexEntry[];
@@ -167,6 +187,11 @@ export function inferModuleDataFlows(options: {
  * deployment map keeps the first service per name for depends_on backfill;
  * the overview keeps non-built store-class services and attributes them to
  * the surviving host sharing the variant's service names.
+ *
+ * @param candidateHosts - Every compose-variant host, including deduped
+ *   environment variants.
+ * @returns Each image-classified service paired with the variant declaring
+ *   it, in candidate-host then service order.
  */
 export function classifiedVariantServices(
     candidateHosts: readonly Host[],
@@ -188,6 +213,14 @@ export function classifiedVariantServices(
  * file, but only when not imported (support modules are plumbing); the
  * deployment map's residual children (M3) qualify only as a single
  * entry-named loose file.
+ *
+ * @param options - The classification inputs: `files` — the node's files;
+ *   `scriptReferencedFiles` — files named directly by package.json script
+ *   commands (R1's script roots); `nameArm` — the optional name-based arm:
+ *   for overview modules, the module path, its imported/support status, and
+ *   the entry-dir name set; for deployment residual children, the child's
+ *   path segment.
+ * @returns Whether the node classifies as a gateway (entry point).
  */
 export function isEntryPoint(options: {
     files: readonly string[];

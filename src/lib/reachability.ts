@@ -1,3 +1,6 @@
+// Reachability analysis over the import graph and dev-tooling stripping
+// (HEURISTICS.md rules R1 and R2).
+
 import { join } from "node:path";
 import type { Host } from "./hosts.ts";
 import type { Package } from "./packages.ts";
@@ -16,6 +19,13 @@ const QA_SCRIPT_PATTERN =
 
 type FileEdge = { from: string; to: string };
 
+/**
+ * Breadth-first closure of the import graph from the given roots.
+ *
+ * @param roots - The root files seeding the traversal.
+ * @param fileEdges - File-level import edges (from importer to imported).
+ * @returns Every file reachable from a root, roots included.
+ */
 function reachableFrom(roots: ReadonlySet<string>, fileEdges: readonly FileEdge[]): Set<string> {
     const importsOf = new Map<string, string[]>();
     for (const { from, to } of fileEdges) {
@@ -57,6 +67,20 @@ type PackageManifest = {
  * files referenced from package.json script commands; those from scripts NOT
  * named with a QA keyword are also operational roots. A file reachable only
  * from QA scripts and from nothing that deploys is dev tooling.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packages - The discovered packages, whose manifests supply
+ *   bin/main/module and script roots.
+ * @param hosts - The deployment hosts, whose service COPYs and entry files
+ *   supply deployed roots.
+ * @param edgeHost - The wrangler edge host, whose main entry deploys too
+ *   (null when the repo has no wrangler config).
+ * @param sourceFiles - Repo-relative paths of the analysable source files.
+ * @param fileEdges - File-level import edges to traverse.
+ * @param fileToRoom - Index of files placed in rooms; only such files can
+ *   resolve as script or bin roots.
+ * @returns The three reachability sets, the raw script-root files, and the
+ *   dev-tooling predicate combining them.
  */
 export function analyseReachability(
     repo: string,
@@ -67,6 +91,15 @@ export function analyseReachability(
     fileEdges: readonly FileEdge[],
     fileToRoom: ReadonlyMap<string, Room>,
 ): Reachability {
+    /**
+     * Resolves a manifest token (a bin/main value or a script-command word)
+     * to an inventoried source file within the package.
+     *
+     * @param pkgDir - The package's repo-relative directory ("." for root).
+     * @param token - The raw token; quotes stripped, flags and pathless
+     *   words rejected.
+     * @returns The repo-relative file it names, or null.
+     */
     const resolvePathToken = (pkgDir: string, token: string): string | null => {
         const clean = token.replace(/^["']|["']$/g, "");
         if (!/[./]/.test(clean) || clean.startsWith("-")) return null;
@@ -119,6 +152,13 @@ export function analyseReachability(
     const deployReachable = reachableFrom(deployRoots, fileEdges);
     const scriptReachable = reachableFrom(scriptRoots, fileEdges);
     const operationalReachable = reachableFrom(operationalRoots, fileEdges);
+    /**
+     * R1's dev-tooling test: reachable from QA scripts only — from nothing
+     * that deploys and from no operationally-named script.
+     *
+     * @param file - Repo-relative path of the source file.
+     * @returns Whether the file is dev tooling to strip.
+     */
     const isDevToolingFile = (file: string): boolean =>
         !deployReachable.has(file) && scriptReachable.has(file) && !operationalReachable.has(file);
 
@@ -139,6 +179,13 @@ export function analyseReachability(
  * residue: files referenced by no root whose importers are all themselves
  * stripped, iterated to a fixed point (OTLP producers exempt, as in R3).
  * Emptied rooms disappear from the map. Returns the warning lines.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param rooms - The room map, mutated in place: stripped rooms lose files
+ *   and have their loc recomputed.
+ * @param reachability - The R1 reachability sets and dev-tooling predicate.
+ * @param fileEdges - File-level import edges, used for the residue test.
+ * @returns Warning lines recording every strip, for the map's warnings.
  */
 export function stripDevTooling(
     repo: string,
@@ -153,6 +200,14 @@ export function stripDevTooling(
         if (!excluded.length) continue;
         room.files = room.files.filter((f) => !isDevToolingFile(f));
         const strippedFiles = new Set(excluded);
+        /**
+         * True when the file is residue of the strip: referenced by no
+         * root, imported only by already-stripped files, and not an OTLP
+         * producer (which R3's exemption keeps).
+         *
+         * @param f - Repo-relative path of a file remaining in the room.
+         * @returns Whether the file should be stripped as residue.
+         */
         const isQaResidue = (f: string) =>
             !deployReachable.has(f) &&
             !scriptReachable.has(f) &&

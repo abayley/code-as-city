@@ -1,3 +1,6 @@
+// Room construction: grouping each package's source files by first path
+// segment, with dominant-segment expansion (HEURISTICS.md rule S2).
+
 import { join, relative, sep } from "node:path";
 import { owningPackage, type Package } from "./packages.ts";
 import { readText } from "./read.ts";
@@ -11,6 +14,16 @@ export type Room = {
     loc: number;
 };
 
+/**
+ * S2's dominant-segment test for one package: a first segment holding >60%
+ * of the package's files (with real depth beneath it) gets expanded one
+ * level when rooms are keyed.
+ *
+ * @param pkg - The package being segmented.
+ * @param packages - All packages, for owning-package attribution.
+ * @param sourceFiles - Repo-relative paths of every source file.
+ * @returns The dominant first segment, or null when none qualifies.
+ */
 function segmentsFor(pkg: Package, packages: readonly Package[], sourceFiles: readonly string[]) {
     const locals = sourceFiles
         .filter((f) => owningPackage(packages, f) === pkg)
@@ -29,7 +42,12 @@ function segmentsFor(pkg: Package, packages: readonly Package[], sourceFiles: re
     return { dominant: dominant?.[0] ?? null };
 }
 
-/** The repository-relative directory a room represents ("(root)" -> package dir). */
+/**
+ * The repository-relative directory a room represents ("(root)" -> package dir).
+ *
+ * @param room - The room whose directory is wanted.
+ * @returns The repo-relative directory ("." for the root package's root room).
+ */
 export function roomDir(room: Room): string {
     if (room.segment === "(root)") return room.pkg.dir === "." ? "." : room.pkg.dir;
     return room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
@@ -40,6 +58,12 @@ export function roomDir(room: Room): string {
  * package; a dominant segment holding most of the package's files (e.g. src/)
  * is expanded one level deeper. Rooms are mutable downstream (dev-tooling
  * stripping rewrites files and loc).
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packages - The discovered packages files are attributed to.
+ * @param sourceFiles - Repo-relative paths of the source files to group.
+ * @returns Room id to room, each carrying its package, path segment, files,
+ *   and summed lines of code.
  */
 export function buildRooms(
     repo: string,

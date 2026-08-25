@@ -1,3 +1,6 @@
+// CLI argument parsing for the generator entry point: the target repo,
+// output directory, and mode flags (no HEURISTICS.md rule group of its own).
+
 import { basename, join, resolve } from "node:path";
 
 export type GeneratorArguments = {
@@ -13,6 +16,11 @@ export const USAGE = "Usage: generate-map.ts <target-repo> [--out-dir path] [--m
  * Parses the generator's CLI arguments. Returns null when no target repo is
  * given (the caller prints USAGE and exits); paths are resolved absolute, and
  * the default out dir is out/<repo-basename>[-overview].
+ *
+ * @param argv - Raw CLI arguments: one positional target-repo path plus the
+ *   optional --out-dir, --modules-as-buildings, and --overview flags.
+ * @returns The parsed arguments with absolute repo and out-dir paths, or
+ *   null when the target repo positional is missing.
  */
 export function parseArguments(argv: readonly string[]): GeneratorArguments | null {
     const positionals: string[] = [];

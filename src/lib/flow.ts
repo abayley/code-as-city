@@ -1,7 +1,16 @@
+// Flow layering: front-to-back rows for the rendered city, by longest path
+// from the entry nodes (HEURISTICS.md rule M2).
+
 /**
  * Longest-path layering over "from->to" edge keys: entry ids (or all ids when
  * none are given) start at layer 0 and every edge pushes its target at least
  * one deeper, capped at the id count; unreached ids default to 0.
+ *
+ * @param ids - The node ids to layer; ids absent from any edge stay at 0.
+ * @param edges - Edge map whose keys are "from->to" pairs (values unused).
+ * @param entries - The entry-node ids seeding layer 0; when empty, every id
+ *   seeds instead.
+ * @returns Each id's flow layer (0 = front row, deeper = further back).
  */
 export function layerByLongestPath(
     ids: readonly string[],

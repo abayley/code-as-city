@@ -1,3 +1,7 @@
+// docker-compose file parsing: the services a compose file declares, with the
+// fields the deployment-shape rules need (HEURISTICS.md group D, notably
+// D1/D3/D5/D6).
+
 export type ComposeService = {
     name: string;
     image?: string | undefined;
@@ -12,6 +16,10 @@ export type ComposeService = {
  * Only recognises 2-space-indented service entries under a top-level
  * `services:` key (the convention every fixture and target repo uses);
  * deeper indentation is not parsed.
+ *
+ * @param text - The compose file's full text.
+ * @returns The declared services in file order, each with any image,
+ *   dockerfile, ports flag, and depends_on entries found under it.
  */
 export function parseComposeServices(text: string): ComposeService[] {
     const lines = text.split("\n");

@@ -1,3 +1,6 @@
+// Wrangler config scanning: the Cloudflare edge district's shape
+// (HEURISTICS.md rules D7/D8).
+
 import { dirname, join } from "node:path";
 import { readJsonSafe, readText } from "./read.ts";
 
@@ -16,6 +19,12 @@ type WranglerConfig = { main?: string; name?: string; d1_databases?: unknown[] }
  * read by regex for `name` and `main`; JSON forms are parsed after stripping
  * comments. `main` is taken repo-relative when such a file is inventoried,
  * otherwise resolved against the config's directory.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param allFiles - The full repo inventory, searched for the wrangler
+ *   config and used to validate the main entry.
+ * @returns The edge host (config file, worker name, main entry, D1
+ *   bindings), or null when the repo has no wrangler config.
  */
 export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHost | null {
     const wranglerFile = allFiles.find((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));

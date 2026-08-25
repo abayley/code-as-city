@@ -1,3 +1,5 @@
+// The city-map document schema: the node/edge types the viewer renders, plus
+// the structural validator used when a map JSON file is opened or generated.
 const CITY_MAP_SCHEMA_VERSION = 1 as const;
 
 type NodeKind = "scope" | "deployable" | "module" | "infra" | "external";
@@ -70,6 +72,17 @@ const ARCHETYPES = new Set<Archetype>([
 const EDGE_KINDS = new Set<EdgeKind>(["depends_on", "calls", "data_flow", "deploys"]);
 const EVIDENCE = new Set<EvidenceKind>(["declared", "observed", "inferred"]);
 
+/**
+ * Structurally validates a parsed JSON value against the city-map schema:
+ * required fields, unique node and edge ids, known kinds and archetypes,
+ * resolvable parent and endpoint references, and (for maps that opt into the
+ * flow contract via display.flowLayer) the at-least-two-rooms building rule.
+ *
+ * @param value - The parsed JSON value to check; typically the result of
+ *   JSON.parse over a user-supplied or generated map file.
+ * @returns Human-readable error messages, one per violation; an empty array
+ *   means the value is a usable CityMap.
+ */
 export function validateCityMap(value: unknown): string[] {
     const errors: string[] = [];
     if (!value || typeof value !== "object") return ["Map must be a JSON object."];

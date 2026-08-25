@@ -1,3 +1,10 @@
+/**
+ * Overview-map assembly (--overview mode). Builds the whole-codebase module
+ * overview — every source file a structure, districts by directory or
+ * package, banded front-to-back by deployment role — and emits it via the
+ * shared map envelope. Rule IDs (O2, O5, O7, O11, C1, D3) refer to
+ * HEURISTICS.md.
+ */
 import { basename, dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
@@ -101,6 +108,14 @@ export type OverviewContext = {
  * code (unclamped above the minimum); footprint scales with a
  * cyclomatic-complexity approximation (decision-point count).
  * Writes map.json and map.md into outDir.
+ *
+ * @param context - Everything the overview reads: the repository path and
+ *   output directory, the room structure, the resolved deployment shape
+ *   (hosts, compose variants, wrangler edge host, drizzle and embedded
+ *   databases), the file import graph and coupling, the metric and
+ *   documentation lookups, and the entry-dir names and database read/write
+ *   patterns used for classification.
+ * @returns Resolves once map.json and map.md have been written.
  */
 export async function runOverview(context: OverviewContext): Promise<void> {
     const {
@@ -134,6 +149,12 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // .tsx (UI component) modules stand out from plain .ts. Shares the
     // shared-code gold by decision.
     const OVERVIEW_TSX_COLOR = "#C79F40";
+    /**
+     * Reads a source file's text for pattern scans and inference passes.
+     *
+     * @param file - Repository-relative path of the file to read.
+     * @returns The file's contents.
+     */
     const fileText = (file: string) => readText(join(repo, file));
     const activeRooms = [...rooms.values()].filter((r) => r.files.length > 0);
     const pkgsWithRooms = [...new Set(activeRooms.map((r) => r.pkg))];
@@ -160,6 +181,13 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             }
         }
     }
+    /**
+     * Names the deploy hosts a single file ships to, via D3 COPY-directory
+     * membership.
+     *
+     * @param file - Repository-relative source file to attribute.
+     * @returns The set of host names whose service images copy the file in.
+     */
     const fileHosts = (file: string) => {
         const result = new Set<string>();
         for (const [dir, hostNames] of copyDirHosts) {
@@ -167,6 +195,14 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }
         return result;
     };
+    /**
+     * Names the deploy hosts a set of files collectively ships to (the union
+     * of fileHosts over the set).
+     *
+     * @param files - Repository-relative source files, typically a module's
+     *   or district's file set.
+     * @returns The set of host names any of the files deploy to.
+     */
     const filesHosts = (files: readonly string[]) => {
         const result = new Set<string>();
         for (const file of files) for (const name of fileHosts(file)) result.add(name);
@@ -177,10 +213,24 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // then the host chain, externals behind the last host.
     const SHARED_BAND = 0;
     const PRODUCERS_BAND = 1;
+    /**
+     * Maps a host to its front-to-back band, after the shared strip and the
+     * generators band, in declared forwarding-chain order.
+     *
+     * @param name - Host name from the deployment shape.
+     * @returns The band index for districts deploying to that host.
+     */
     const hostBand = (name: string) => 2 + (hostLayer.get(name) ?? 0);
     const maxHostBand = 2 + Math.max(0, ...hostLayer.values());
     const EXTERNALS_BAND = maxHostBand + 1;
     const hostNameForBand = new Map([...hostLayer.entries()].map(([name, layer]) => [2 + layer, name]));
+    /**
+     * Human-readable name for a band, used in the band: tags on districts.
+     *
+     * @param band - Band index (shared strip, generators, a host's band, or
+     *   the externals band).
+     * @returns The band's display label.
+     */
     const bandLabel = (band: number) => {
         if (band === SHARED_BAND) return "Shared & support";
         if (band === PRODUCERS_BAND) return "Generators";
@@ -194,19 +244,50 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // couplingFromEdges counts DISTINCT neighbours (Sets) and includes
     // self-edges; multi-file modules (collapsed migrations) also aggregate over
     // a file-set that has no per-module entry in fileCoupling. Not equivalent.
+    /**
+     * Counts import edges arriving from outside a module's file set.
+     *
+     * @param files - The module's source files.
+     * @returns Number of file-level import edges into the set from files
+     *   outside it.
+     */
     const externalFanIn = (files: readonly string[]) => {
         const set = new Set(files);
         return fileEdges.filter(({ from, to }) => set.has(to) && !set.has(from)).length;
     };
+    /**
+     * Counts import edges leaving a module's file set.
+     *
+     * @param files - The module's source files.
+     * @returns Number of file-level import edges from the set to files
+     *   outside it.
+     */
     const externalFanOut = (files: readonly string[]) => {
         const set = new Set(files);
         return fileEdges.filter(({ from, to }) => set.has(from) && !set.has(to)).length;
     };
+    /**
+     * Classifies a module as shared utility code: fan-in of at least two and
+     * instability (fan-out share) at most 0.33 — many importers, few imports.
+     * Feeds the shared-code district colouring.
+     *
+     * @param files - The module's source files.
+     * @returns True when the module reads as shared plumbing.
+     */
     const moduleIsUtility = (files: readonly string[]) => {
         const fanIn = externalFanIn(files);
         const fanOut = externalFanOut(files);
         return fanIn >= 2 && fanOut / (fanIn + fanOut) <= 0.33;
     };
+    /**
+     * Splits a room into overview modules: migration scripts collapse to one
+     * leaf per migrations directory; every other file is its own module,
+     * wherever it sits in the tree, with duplicate labels within the room
+     * disambiguated by their subdirectory.
+     *
+     * @param room - Directory-backed room to convert.
+     * @returns The room's overview modules (collapsed migrations first).
+     */
     const modulesForRoom = (room: Room): OverviewModule[] => {
         const entries: OverviewModule[] = [];
         // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
@@ -401,6 +482,15 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // collectors), config-declared external receivers, wrangler, drizzle.
     const infraMembers: InfraMember[] = [];
     const overviewEdges: MapEdge[] = [];
+    /**
+     * Picks the infra node that represents a host in OTLP wiring: the
+     * collector/gateway/ingest-named image-only service when one exists, else
+     * the first image-only service.
+     *
+     * @param host - Deployment host whose representative collector is wanted.
+     * @returns The infra member's node id, or null when the host has no
+     *   image-only services.
+     */
     const infraCollectorFor = (host: Host) => {
         const candidates = host.services.filter((s) => !s.dockerfile);
         const pick = candidates.find((s) => /collector|gateway|ingest/.test(s.name)) ?? candidates[0];
@@ -656,6 +746,13 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         idSuffix: "-overview",
         nameSuffix: " overview",
         summary: "Module overview: every module as a structure, grouped by directory; no dependency edges.",
+        /**
+         * Renders map.md's body: one mermaid subgraph per district, each
+         * module a labelled node with its loc/complexity and source path.
+         *
+         * @param map - The swept map envelope being emitted.
+         * @returns The markdown document body.
+         */
         mermaidBody: (map) =>
             [
                 `# ${map.name}`,

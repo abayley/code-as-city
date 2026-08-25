@@ -1,3 +1,6 @@
+// Package discovery from package.json manifests, with role classification
+// (HEURISTICS.md rule S1).
+
 import { basename, dirname, join, sep } from "node:path";
 import { readJson } from "./read.ts";
 import { kebab } from "./text.ts";
@@ -19,7 +22,12 @@ type PackageManifest = {
     bin?: Record<string, string>;
 };
 
-/** The directories (repo-relative, "." for the root) containing a package.json. */
+/**
+ * The directories (repo-relative, "." for the root) containing a package.json.
+ *
+ * @param allFiles - The full repo inventory.
+ * @returns The package directories in inventory order.
+ */
 export function packageDirsOf(allFiles: readonly string[]): string[] {
     return allFiles.filter((f) => basename(f) === "package.json").map((f) => dirname(f));
 }
@@ -28,6 +36,11 @@ export function packageDirsOf(allFiles: readonly string[]): string[] {
  * Discovers the repo's packages: one per package.json, with merged
  * dependencies and a role classified from them (bin entries make a cli,
  * web-framework dependencies make a web app, anything else is a package).
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param packageDirs - Repo-relative directories containing a package.json.
+ * @returns One Package per directory: name (falling back to the directory
+ *   or repo basename), merged dependencies, role, and kebab-cased id.
  */
 export function discoverPackages(repo: string, packageDirs: readonly string[]): Package[] {
     return packageDirs.map((dir) => {
@@ -45,7 +58,14 @@ export function discoverPackages(repo: string, packageDirs: readonly string[]): 
     });
 }
 
-/** The deepest package whose directory contains the file (the root package matches everything). */
+/**
+ * The deepest package whose directory contains the file (the root package matches everything).
+ *
+ * @param packages - The discovered packages.
+ * @param file - Repo-relative path of the file to place.
+ * @returns The owning package, or null when nothing (not even a root
+ *   package) contains the file.
+ */
 export function owningPackage(packages: readonly Package[], file: string): Package | null {
     let best: Package | null = null;
     for (const pkg of packages) {

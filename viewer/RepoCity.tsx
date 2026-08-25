@@ -1,5 +1,8 @@
 "use client";
 
+// The three.js city-map viewer: the react-three-fiber scene (camera rig,
+// district plots, structures, edges) plus the surrounding UI chrome (rail,
+// inspector, map picker, folder browser).
 import { Line, MapControls, Text } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +31,16 @@ const EVIDENCE_COLORS: Record<EvidenceKind, string> = {
     inferred: palette.EDGE_INFERRED,
 };
 
+/**
+ * Drives the orthographic camera: fits it to the current view's bounds, flies
+ * it between the isometric and overhead orientations, and hands control back
+ * to the user as soon as they grab the controls.
+ *
+ * @param props - `viewKey` identifies the current view so a view change refits
+ *   even with unchanged bounds; `bounds` is the layout box to frame;
+ *   `overhead` selects the top-down orientation instead of the isometric one.
+ * @returns Nothing visible; it only mutates the camera inside the frame loop.
+ */
 function CameraRig({
     viewKey,
     bounds,
@@ -157,6 +170,16 @@ function CameraRig({
     return null;
 }
 
+/**
+ * Renders every district's ground plot: a tinted floor plane, an outline, and
+ * a two-column sign (N-code plus label), with active/dimmed emphasis.
+ *
+ * @param props - `layout` supplies the neighbourhoods and their bounds;
+ *   `selectedId` marks the district containing the selection as active;
+ *   `activeNeighborhoodId` is the explicitly explored district, dimming the
+ *   rest; `hideLabels` suppresses the signs (used while an interior is open).
+ * @returns One group per visible district; implicit groups render nothing.
+ */
 function NeighborhoodPlots({
     layout,
     selectedId,
@@ -284,6 +307,18 @@ function NeighborhoodPlots({
     });
 }
 
+/**
+ * Draws the edge lines on the ground plane with directional arrowheads,
+ * emphasising the active edge, focus-mode edges, and everything touching the
+ * selected node (imports draw thick blue, dashed when incoming).
+ *
+ * @param props - `edges` and `positions` define what to draw and where;
+ *   `activeEdgeId` is the single emphasised edge; `focusedEdgeIds` dims all
+ *   others when focus mode is on; `routes` supplies obstacle-avoiding paths
+ *   (a plain Manhattan path is used otherwise); `selectedId` triggers the
+ *   touching-edge and import highlighting.
+ * @returns One line-and-arrow group per drawable edge.
+ */
 function Connections({
     edges,
     positions,
@@ -401,12 +436,31 @@ function Connections({
 // Only the non-box archetypes remain here; box-family shapes (buildings,
 // ziggurats, archways, clock towers) are built as stacked segments inside
 // Structure so coverage-fill can split them.
+/**
+ * Builds the base geometry for the non-box archetypes: a cylinder for
+ * databases, a dodecahedron for clouds, a plain box for anything else.
+ *
+ * @param archetype - The node archetype choosing the shape.
+ * @param width - Structure width in world units.
+ * @param height - Structure height in world units.
+ * @param depth - Structure depth in world units.
+ * @returns A fresh three.js geometry for the structure body.
+ */
 function geometryFor(archetype: CityNode["archetype"], width: number, height: number, depth: number) {
     if (archetype === "database") return new THREE.CylinderGeometry(width / 2, width / 2, height, 24);
     if (archetype === "cloud") return new THREE.DodecahedronGeometry(width * 0.57, 0);
     return new THREE.BoxGeometry(width, height, depth);
 }
 
+/**
+ * Translates a node's kind and archetype into the plain-English type label
+ * shown in the rail, hover card, and inspector.
+ *
+ * @param node - The node being described.
+ * @param roomCount - How many child rooms it contains; systems with rooms get
+ *   a room-count label regardless of archetype.
+ * @returns The label text, or an empty string for plain workers.
+ */
 function plainType(node: CityNode, roomCount: number) {
     if (roomCount > 0) return `System with ${roomCount} room${roomCount === 1 ? "" : "s"}`;
     if (node.archetype === "room") return "Room";
@@ -422,6 +476,15 @@ function plainType(node: CityNode, roomCount: number) {
     return "Internal component";
 }
 
+/**
+ * Turns a source reference into a clickable URL: an explicit url wins, then a
+ * GitHub blob link (with line anchor) built from the map's repository, or a
+ * GitHub code search when the path contains glob characters.
+ *
+ * @param map - The map whose repository field anchors relative paths.
+ * @param source - The reference to link.
+ * @returns The href, or null when no link can be constructed.
+ */
 function sourceHref(map: CityMap, source: SourceRef) {
     if (source.url) return source.url;
     if (!source.path || !map.repository) return null;
@@ -437,6 +500,17 @@ function sourceHref(map: CityMap, source: SourceRef) {
     return `https://${repository}/blob/HEAD/${path}${source.line ? `#L${source.line}` : ""}`;
 }
 
+/**
+ * Walks up the parent chain until it finds a node that is visible in the
+ * current view, so edges between hidden rooms can be projected onto their
+ * campus-level buildings.
+ *
+ * @param nodeId - The node to start from.
+ * @param nodeById - Lookup of every node in the map.
+ * @param visibleIds - The ids currently rendered.
+ * @returns The nearest visible ancestor's id (possibly the node itself), or
+ *   null when the whole chain is hidden.
+ */
 function closestVisibleAncestor(nodeId: string, nodeById: Map<string, CityNode>, visibleIds: Set<string>) {
     let current = nodeById.get(nodeId);
     while (current) {
@@ -448,12 +522,33 @@ function closestVisibleAncestor(nodeId: string, nodeById: Map<string, CityNode>,
 
 type BoxSegment = { x?: number; z?: number; w: number; d: number; y0: number; y1: number };
 
+/**
+ * Builds the box geometry for one stacked segment of a structure, translated
+ * into its place within the stack.
+ *
+ * @param segment - The segment's footprint, optional x/z offset, and vertical extent.
+ * @returns A positioned box geometry ready to merge with its siblings.
+ */
 function segmentGeometry(segment: BoxSegment) {
     const box = new THREE.BoxGeometry(segment.w, segment.y1 - segment.y0, segment.d);
     box.translate(segment.x ?? 0, (segment.y0 + segment.y1) / 2, segment.z ?? 0);
     return box;
 }
 
+/**
+ * Renders one node's 3D body: the archetype-specific shape (box, ziggurat,
+ * archway, clock tower, cylinder, dodecahedron), the coverage-gap split,
+ * outline, floor lines, and hover/selection emphasis, animated via damped
+ * scale and opacity.
+ *
+ * @param props - `node` supplies size, colour, tags, and metrics; `position`
+ *   is the ground-plane [x, z]; `selected` drives emphasis; `hasInterior`
+ *   marks buildings with rooms; `expanded` flattens the shell while its
+ *   interior is open; `interior` renders it as a room inside a building;
+ *   `dimmed` fades it during focus/neighbourhood modes; `onSelect`/`onEnter`
+ *   fire on click and double-click.
+ * @returns The structure's mesh group (empty while expanded).
+ */
 function Structure({
     node,
     position,
@@ -732,6 +827,19 @@ function Structure({
     );
 }
 
+/**
+ * Renders a node's flat map furniture: the footprint outline on the ground, a
+ * leader line, and the nameplate plaque (index code plus label) in front of
+ * the structure, all clickable like the structure itself.
+ *
+ * @param props - `node` supplies label, kind, and size; `index` becomes the
+ *   marker code (zero-padded number, or R-prefixed for rooms); `position` is
+ *   the ground-plane [x, z]; `selected`/`expanded`/`exploring` switch the
+ *   plaque to its active style; `hasInterior` widens landmark plaques and
+ *   enables the open affordance; `interior` styles it as a room marker;
+ *   `dimmed` fades it; `onSelect`/`onEnter` fire on click and double-click.
+ * @returns The marker group with footprint, leader line, and plaque.
+ */
 function MapMarker({
     node,
     index,
@@ -917,6 +1025,13 @@ function MapMarker({
     );
 }
 
+/**
+ * Renders the pale floor slab and dashed outline underneath an opened
+ * building's rooms.
+ *
+ * @param props - `bounds` is the interior layout's bounding box.
+ * @returns The interior plot's plane and outline.
+ */
 function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
     const width = bounds.maxX - bounds.minX;
     const depth = bounds.maxZ - bounds.minZ;
@@ -941,6 +1056,19 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
     );
 }
 
+/**
+ * The react-three-fiber canvas: computes the layout and edge routes, derives
+ * the interior/focus/neighbourhood view models, and composes the camera rig,
+ * lights, plots, connections, structures, markers, and map controls.
+ *
+ * @param props - `nodes`/`edges` are the campus-level view; `allNodes`/
+ *   `allEdges` the whole map (for interiors); `selectedId`, `activeEdgeId`,
+ *   `interiorActiveEdgeId`, `expandedId`, `focusId`, and `neighborhoodId`
+ *   describe the current selection and view mode; `onSelect`, `onEnter`,
+ *   `onHover`, and `onDeselect` report interactions upward; `viewKey` and
+ *   `overheadView` steer the camera rig.
+ * @returns The full 3D scene inside its Canvas element.
+ */
 function CityScene({
     nodes,
     allNodes,
@@ -1238,6 +1366,17 @@ function CityScene({
     );
 }
 
+/**
+ * The main viewer chrome for one loaded map: top bar (map picker, actions),
+ * searchable component rail, the CityScene viewport with legend and hover
+ * card, and the inspector panel. Owns all selection and view-mode state.
+ *
+ * @param props - `map` is the loaded city map; `slug` names the showcase it
+ *   came from (null for opened files); `jsonPath` is the opened file's name;
+ *   `onSelectShowcase`, `onImport`, and `onMapFolder` bubble the top-bar
+ *   actions to the app shell.
+ * @returns The full viewer layout for the map.
+ */
 function MapViewer({
     map,
     slug,
@@ -1255,6 +1394,13 @@ function MapViewer({
 }) {
     const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
     // Local change: campus structures may be district-less (no parentId).
+    /**
+     * Tests whether a node belongs on the campus (city-level) view: any
+     * non-scope node whose parent is a district or missing.
+     *
+     * @param node - The node to classify.
+     * @returns True when the node renders at campus level.
+     */
     const isCampusNode = useCallback(
         (node: CityNode) => node.kind !== "scope" && (!node.parentId || nodeById.get(node.parentId)?.kind === "scope"),
         [nodeById],
@@ -1268,6 +1414,13 @@ function MapViewer({
     const [search, setSearch] = useState("");
     const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
     const [overheadView, setOverheadView] = useState(false);
+    /**
+     * Shows or hides the floating hover card for a node.
+     *
+     * @param node - The hovered node, or null to dismiss the card.
+     * @param x - Pointer clientX for card placement.
+     * @param y - Pointer clientY for card placement.
+     */
     const handleHover = useCallback((node: CityNode | null, x: number, y: number) => {
         setHoverCard(node ? { node, x, y } : null);
     }, []);
@@ -1335,6 +1488,13 @@ function MapViewer({
         `${node.label} ${node.kind} ${node.description ?? ""}`.toLowerCase().includes(search.toLowerCase()),
     );
 
+    /**
+     * Finds the first map edge that, projected to campus level, touches the
+     * given campus node — used to preselect a connection on node selection.
+     *
+     * @param nodeId - The campus node's id.
+     * @returns The first matching edge, or undefined when none touch it.
+     */
     const firstCampusConnection = useCallback(
         (nodeId: string) => {
             return map.edges.find((edge) => {
@@ -1346,6 +1506,14 @@ function MapViewer({
         [map.edges, nodeById, visibleIds],
     );
 
+    /**
+     * Finds a map edge whose campus-level projection runs between two campus
+     * nodes, in either direction.
+     *
+     * @param leftId - One campus node id.
+     * @param rightId - The other campus node id.
+     * @returns The first matching edge, or undefined when none connects them.
+     */
     function connectionBetween(leftId: string, rightId: string) {
         return map.edges.find((edge) => {
             const from = closestVisibleAncestor(edge.from, nodeById, visibleIds);
@@ -1354,6 +1522,13 @@ function MapViewer({
         });
     }
 
+    /**
+     * Selects a node (single click): updates the selection, preselects a
+     * connection touching it, and drops focus mode when the pick is unrelated
+     * to the focused node.
+     *
+     * @param nodeId - The clicked node's id (room or campus structure).
+     */
     function selectNode(nodeId: string) {
         const campusNodeId = closestVisibleAncestor(nodeId, nodeById, visibleIds);
         const focusedConnection =
@@ -1370,6 +1545,13 @@ function MapViewer({
         );
     }
 
+    /**
+     * Opens a node (double-click or rail click): expands a building's rooms
+     * when it has children, otherwise toggles focus mode on the node's campus
+     * ancestor to trace its direct connections.
+     *
+     * @param nodeId - The activated node's id.
+     */
     function exploreNode(nodeId: string) {
         setNeighborhoodId(null);
         const children = map.nodes.filter((node) => node.parentId === nodeId);
@@ -1396,6 +1578,12 @@ function MapViewer({
         setSelectedConnectionId(firstCampusConnection(campusNodeId)?.id ?? null);
     }
 
+    /**
+     * Toggles neighbourhood mode: zooms to a district, selecting its first
+     * node, or leaves the mode when the same district is chosen again.
+     *
+     * @param nextNeighborhoodId - The district (neighbourhood) id to explore.
+     */
     function exploreNeighborhood(nextNeighborhoodId: string) {
         if (activeNeighborhoodId === nextNeighborhoodId) {
             setNeighborhoodId(null);
@@ -1411,21 +1599,30 @@ function MapViewer({
         setSelectedConnectionId(firstCampusConnection(firstNodeId)?.id ?? null);
     }
 
+    /** Leaves the interior view, reselecting the building that was open. */
     function closeBuilding() {
         if (activeExpandedId) selectNode(activeExpandedId);
         setExpandedId(null);
     }
 
+    /** Leaves focus (connections) mode, reselecting the focused node. */
     function closeFocus() {
         if (activeFocusId) selectNode(activeFocusId);
         setFocusId(null);
     }
 
+    /** Leaves neighbourhood mode, returning to the whole city. */
     function closeNeighborhood() {
         setNeighborhoodId(null);
     }
 
     useEffect(() => {
+        /**
+         * Escape steps back one view level: interior, then focus, then
+         * neighbourhood mode.
+         *
+         * @param event - The window keydown event.
+         */
         function handleKeyDown(event: KeyboardEvent) {
             if (event.key !== "Escape") return;
             if (expandedId) {
@@ -1777,6 +1974,15 @@ function MapViewer({
                         ["complexity", complexity !== undefined ? String(complexity) : ""],
                         ["coverage", coverage !== undefined ? `${coverage}%` : ""],
                     ].filter(([, value]) => value !== "") as Array<[string, string]>;
+                    /**
+                     * Renders one source-file row: a link when the path
+                     * resolves to a URL, plain text otherwise.
+                     *
+                     * @param path - The source path to show.
+                     * @param key - React key for the row.
+                     * @param tag - Optional attribute name shown as a prefix tag.
+                     * @returns The anchor or div row element.
+                     */
                     const sourceRow = (path: string, key: string, tag?: string) => {
                         const href = sourceHref(map, { path });
                         const body = (
@@ -1866,6 +2072,13 @@ function MapViewer({
     );
 }
 
+/**
+ * The application root: holds the currently loaded map (showcase, opened
+ * file, or generated), the hidden file input for imports, and the folder
+ * browser overlay; shows the empty shell until a map is loaded.
+ *
+ * @returns The viewer or empty shell, plus the import input and any overlay.
+ */
 export default function Functionary() {
     const [current, setCurrent] = useState<{ map: CityMap | null; slug: string | null; jsonPath: string | null }>({
         map: null,
@@ -1874,12 +2087,24 @@ export default function Functionary() {
     });
     const fileInput = useRef<HTMLInputElement>(null);
 
+    /**
+     * Loads a bundled showcase map as the current map.
+     *
+     * @param showcase - The showcase entry to display.
+     */
     function openShowcase(showcase: Showcase) {
         setCurrent({ map: showcase.map, slug: showcase.slug, jsonPath: null });
     }
 
     const [browserOpen, setBrowserOpen] = useState(false);
 
+    /**
+     * Handles a chosen map file: parses the JSON, validates it against the
+     * schema, and either loads it or alerts with the first few errors. The
+     * input is cleared so re-picking the same file fires again.
+     *
+     * @param event - The file input's change event.
+     */
     async function importMap(event: ChangeEvent<HTMLInputElement>) {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -1896,6 +2121,12 @@ export default function Functionary() {
         }
     }
 
+    /**
+     * Loads a map produced by the folder browser's generator and closes the
+     * overlay.
+     *
+     * @param payload - The generated map and the path it was written to.
+     */
     function acceptGenerated(payload: { map: CityMap; jsonPath: string }) {
         setCurrent({ map: payload.map, slug: null, jsonPath: payload.jsonPath });
         setBrowserOpen(false);
@@ -1932,6 +2163,15 @@ export default function Functionary() {
     );
 }
 
+/**
+ * Modal overlay for generating a map from a local folder: browses the server
+ * filesystem via /api/browse (keyboard-navigable with type-ahead) and asks
+ * /api/generate for a deployment map or module overview of the chosen repo.
+ *
+ * @param props - `onClose` dismisses the overlay; `onGenerated` receives the
+ *   validated map and its JSON path on success.
+ * @returns The dialog overlay with folder list, actions, and any error text.
+ */
 function FolderBrowser({
     onClose,
     onGenerated,
@@ -1946,6 +2186,12 @@ function FolderBrowser({
     // Roving highlight over the folder list: 0 is "../", entries follow.
     const [highlight, setHighlight] = useState(0);
 
+    /**
+     * Fetches a directory listing from the server and resets the highlight,
+     * recording any failure for display.
+     *
+     * @param path - The directory to list; the server's default when omitted.
+     */
     const load = useCallback(async (path?: string) => {
         try {
             const response = await fetch(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`);
@@ -2023,6 +2269,12 @@ function FolderBrowser({
         return () => window.removeEventListener("keydown", onKeyDown, true);
     }, [highlight, listing, load, onClose]);
 
+    /**
+     * Asks the server to generate a map for the current folder, validates the
+     * result, and hands it to the caller; failures surface as inline errors.
+     *
+     * @param overview - True for the module overview, false for the deployment map.
+     */
     async function generate(overview: boolean) {
         if (!listing || busy) return;
         setBusy(overview ? "overview" : "deployment");
@@ -2122,6 +2374,14 @@ function FolderBrowser({
     );
 }
 
+/**
+ * The landing screen shown before any map is loaded: the map picker, open and
+ * map-a-folder actions, and one card per bundled showcase.
+ *
+ * @param props - `onSelectShowcase` loads a showcase; `onImport` opens the
+ *   file picker; `onMapFolder` opens the folder browser.
+ * @returns The empty-state layout with showcase cards.
+ */
 function EmptyShell({
     onSelectShowcase,
     onImport,
@@ -2193,6 +2453,15 @@ function EmptyShell({
     );
 }
 
+/**
+ * One entry in the component rail: the marker index, label, and plain type,
+ * scrolling itself into view when it becomes the active selection.
+ *
+ * @param props - `node` supplies the label and kind; `markerIndex` matches
+ *   the map marker's number; `roomCount` marks landmarks and feeds the type
+ *   label; `active` highlights the row; `onSelect` fires on click.
+ * @returns The rail row button.
+ */
 function ComponentRow({
     node,
     markerIndex,
