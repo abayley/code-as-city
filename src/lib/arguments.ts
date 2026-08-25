@@ -7,7 +7,7 @@ export type GeneratorArguments = {
     overview: boolean;
 };
 
-export const USAGE = "Usage: generate-map.mjs <target-repo> [--out-dir path] [--modules-as-buildings]";
+export const USAGE = "Usage: generate-map.ts <target-repo> [--out-dir path] [--modules-as-buildings]";
 
 /**
  * Parses the generator's CLI arguments. Returns null when no target repo is

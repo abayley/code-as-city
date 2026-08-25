@@ -228,15 +228,15 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 - [x] Extract flow layering and shared assembly helpers.
 - [x] Extract the overview assembly (O) as a function returning the map.
-- [ ] Extract the deployment assembly (M) as a function returning the map.
-- [ ] Extract emit (map.json and intermediates).
-- [ ] Replace src/generate-map.mjs with src/generate-map.ts (importable, with
+- [x] Extract the deployment assembly (M) as a function returning the map.
+- [x] Extract emit (map.json and intermediates).
+- [x] Replace src/generate-map.mjs with src/generate-map.ts (importable, with
       the guarded `import.meta.main` handoff and a subprocess integration
       test); update README and test harness to run it with bun.
 
 ### Phase 6 — close out
 
-- [ ] Full live-repo diff across the test repos, both modes.
+- [x] Full live-repo diff across the test repos, both modes.
 - [ ] Update HEURISTICS.md rule-to-module pointers and BACKLOG.md.
 - [ ] Mark this RFC completed.
 

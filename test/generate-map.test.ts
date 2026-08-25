@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prepareMiniRepo } from "./prepare-mini-repo";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const generator = join(repoRoot, "src", "generate-map.mjs");
+const generator = join(repoRoot, "src", "generate-map.ts");
 const validator = join(repoRoot, "vendor", "functionary", "validate-city-map.mjs");
 const fixtureRepo = join(repoRoot, "test", "fixtures", "mini-repo");
 
