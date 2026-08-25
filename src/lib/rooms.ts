@@ -29,6 +29,12 @@ function segmentsFor(pkg: Package, packages: readonly Package[], sourceFiles: re
     return { dominant: dominant?.[0] ?? null };
 }
 
+/** The repository-relative directory a room represents ("(root)" -> package dir). */
+export function roomDir(room: Room): string {
+    if (room.segment === "(root)") return room.pkg.dir === "." ? "." : room.pkg.dir;
+    return room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
+}
+
 /**
  * Groups source files into rooms. Room key = first path segment within the
  * package; a dominant segment holding most of the package's files (e.g. src/)
