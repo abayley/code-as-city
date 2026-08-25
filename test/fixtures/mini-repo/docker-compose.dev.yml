@@ -1,0 +1,12 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    depends_on:
+      - db
+      - cache
+  db:
+    image: postgres:16
+  cache:
+    image: redis:7

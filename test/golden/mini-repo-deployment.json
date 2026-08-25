@@ -57,6 +57,22 @@
       }
     },
     {
+      "id": "host-host-cache",
+      "label": "Cache",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-host",
+      "description": "Backing service (image redis:7) declared in a compose variant; the deployed host provides it via configuration.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
       "id": "edge-delivery",
       "label": "Cloudflare edge",
       "kind": "scope",
@@ -216,6 +232,14 @@
       "id": "host-host-api--host-host-db",
       "from": "host-host-api",
       "to": "host-host-db",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "compose depends_on"
+    },
+    {
+      "id": "host-host-api--host-host-cache",
+      "from": "host-host-api",
+      "to": "host-host-cache",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "compose depends_on"
