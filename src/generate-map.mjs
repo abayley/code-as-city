@@ -14,6 +14,7 @@ import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { createComplexityScanner } from "./lib/complexity.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
+import { layerByLongestPath } from "./lib/flow.ts";
 import { layerHosts, scanHostConfigs } from "./lib/host-config.ts";
 import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
@@ -756,28 +757,6 @@ if (overview) {
     console.log(`Wrote ${outDir}/map.json + map.md (overview mode)`);
     console.log(`districts=${districts.length + (uniqueInfra.length ? 1 : 0)} nodes=${overviewNodes.length}`);
     process.exit(0);
-}
-
-// --- 6. Flow layering helper --------------------------------------------------------
-
-function layerByLongestPath(ids, edges, entries) {
-    const layers = new Map();
-    for (const id of entries.length ? entries : ids) layers.set(id, 0);
-    for (let pass = 0; pass < ids.length + 1; pass += 1) {
-        let changed = false;
-        for (const key of edges.keys()) {
-            const [from, to] = key.split("->");
-            if (!layers.has(from) || !ids.includes(to)) continue;
-            const proposed = layers.get(from) + 1;
-            if ((!layers.has(to) || layers.get(to) < proposed) && proposed <= ids.length) {
-                layers.set(to, proposed);
-                changed = true;
-            }
-        }
-        if (!changed) break;
-    }
-    for (const id of ids) if (!layers.has(id)) layers.set(id, 0);
-    return layers;
 }
 
 // --- 6c. Cross-package path references --------------------------------------------
