@@ -35,3 +35,8 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   not resolve its entry file, so the worker source is orphan-excluded instead
   of becoming a deploy root. Found while fixturing RFC-0001 Phase 0
   (2026-08-25).
+
+- `findEdgeHost` reads the worker `name` only from JSON wrangler configs;
+  a wrangler.toml name is ignored (regex fallback exists for `main` only),
+  so TOML workers are labelled "Worker". Found while testing RFC-0001
+  Phase 3 (2026-08-25).

@@ -14,15 +14,17 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { parseComposeServices } from "./lib/compose.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
+import { parseCrontabSchedules } from "./lib/crontab.ts";
 import { parseDockerfile } from "./lib/dockerfile.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
-import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
+import { extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
 import { kebab, titleCase } from "./lib/text.ts";
+import { scanCiWorkflows } from "./lib/workflows.ts";
+import { findEdgeHost } from "./lib/wrangler.ts";
 
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", "api"]);
 // Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
 // suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
@@ -212,17 +214,7 @@ function fileExists(p) {
 
 const composeFiles = allFiles.filter((f) => /docker-compose[^/]*\.(yml|yaml)$/.test(basename(f)));
 const crontabFiles = allFiles.filter((f) => /^crontab/.test(basename(f)));
-
-// Schedules: service name (from `compose run <svc>`) -> cron expression.
-const schedules = new Map();
-for (const crontab of crontabFiles) {
-    for (const line of readText(join(repo, crontab)).split("\n")) {
-        if (/^\s*(#|$)/.test(line)) continue;
-        const runMatch = /run\s+(?:--rm\s+)?([a-zA-Z0-9_-]+)/.exec(line);
-        const schedule = line.trim().split(/\s+/).slice(0, 5).join(" ");
-        if (runMatch) schedules.set(runMatch[1], { schedule, crontab });
-    }
-}
+const schedules = parseCrontabSchedules(crontabFiles.map((f) => [f, readText(join(repo, f))]));
 
 // Hosts: one per compose file, excluding partial overlays (override/build).
 // Name from informative path segments; env variants deduped below, preferring
@@ -320,21 +312,7 @@ const hosts = candidateHosts.filter((host) => {
 });
 
 // Wrangler -> an edge host.
-const wranglerFile = allFiles.find((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));
-let edgeHost = null;
-if (wranglerFile) {
-    const text = readText(join(repo, wranglerFile))
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^\s*\/\/.*$/gm, "");
-    const config = readJsonSafe(text) ?? {};
-    const mainMatch = config.main ?? /main\s*=\s*["']([^"']+)["']/.exec(text)?.[1];
-    edgeHost = {
-        file: wranglerFile,
-        name: config.name ?? "worker",
-        main: mainMatch ? mainMatch.replace(/^\.\//, "") : null,
-        d1: config.d1_databases ?? [],
-    };
-}
+const edgeHost = findEdgeHost(repo, allFiles);
 
 const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
 
@@ -365,90 +343,7 @@ for (const pkg of packages) {
     }
 }
 
-// GitHub Actions workflows are deployment shape too: a scheduled or chained
-// workflow that runs repo code is a job host (D9). Line-based parse: name,
-// cron, workflow_run upstreams, run-step commands.
-const workflowFiles = allFiles.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f));
-const ciWorkflows = [];
-for (const file of workflowFiles) {
-    const text = readText(join(repo, file));
-    const lines = text.split("\n");
-    const name = (/^name:\s*(.+)$/m.exec(text)?.[1] ?? basename(file).replace(/\.ya?ml$/, ""))
-        .trim()
-        .replace(/^['"]|['"]$/g, "");
-    const cron = /-\s*cron:\s*['"]?([^'"#\n]+)/.exec(text)?.[1]?.trim() ?? null;
-    // workflow_run upstreams: inline list (workflows: ['Sync corpus']) or block list.
-    const triggeredBy = [];
-    const workflowRunIndex = lines.findIndex((line) => /^\s*workflow_run:\s*$/.test(line));
-    if (workflowRunIndex >= 0) {
-        for (let i = workflowRunIndex + 1; i < lines.length && /^\s+\S/.test(lines[i]); i += 1) {
-            const inline = /^\s*workflows:\s*\[([^\]]+)\]/.exec(lines[i]);
-            if (inline) {
-                triggeredBy.push(...inline[1].split(",").map((w) => w.trim().replace(/^['"]|['"]$/g, "")));
-                break;
-            }
-            if (/^\s*workflows:\s*$/.test(lines[i])) {
-                for (let j = i + 1; j < lines.length; j += 1) {
-                    const item = /^\s*-\s*['"]?([^'"\n]+?)['"]?\s*$/.exec(lines[j]);
-                    if (!item) break;
-                    triggeredBy.push(item[1]);
-                }
-                break;
-            }
-        }
-    }
-    // Run-step commands: inline `run: cmd` and block `run: |` bodies.
-    const commands = [];
-    for (let i = 0; i < lines.length; i += 1) {
-        const runMatch = /^(\s*)(?:-\s+)?run:\s*(.*)$/.exec(lines[i]);
-        if (!runMatch) continue;
-        const [, indent, rest] = runMatch;
-        if (rest && !/^[|>]/.test(rest)) {
-            commands.push(rest);
-            continue;
-        }
-        for (let j = i + 1; j < lines.length; j += 1) {
-            const bodyIndent = lines[j].length - lines[j].trimStart().length;
-            if (lines[j].trim() && bodyIndent <= indent.length) break;
-            if (lines[j].trim()) commands.push(lines[j].trim());
-        }
-    }
-    // Repo entry invocations: a command token naming an existing source file,
-    // optionally followed by a subcommand word (D10).
-    const invocations = [];
-    for (const command of commands) {
-        const tokens = command.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ""));
-        tokens.forEach((token, index) => {
-            if (!fileExists(token) || !SOURCE_EXTENSIONS.has(extensionOf(token))) return;
-            const next = tokens[index + 1];
-            const sub =
-                next && /^[a-z][a-z0-9-]*$/.test(next) && !next.startsWith("-") && !fileExists(next) ? next : null;
-            if (!invocations.some((inv) => inv.file === token && inv.sub === sub))
-                invocations.push({ file: token, sub });
-        });
-    }
-    // Object-storage traffic: aws s3 cp/sync/mv with an s3:// source or
-    // destination; an R2 endpoint anywhere in the file names the store (D11).
-    const storage = { downloads: false, uploads: false };
-    for (const command of commands) {
-        const copy = /\bs3\s+(?:cp|sync|mv)\s+(\S+)\s+(\S+)/.exec(command);
-        if (!copy) continue;
-        const [source, destination] = [copy[1], copy[2]].map((t) => t.replace(/^["']/, ""));
-        if (source.startsWith("s3://")) storage.downloads = true;
-        if (destination.startsWith("s3://")) storage.uploads = true;
-    }
-    const storageLabel = /r2\.cloudflarestorage\.com/i.test(text) ? "Cloudflare R2" : "S3 object storage";
-    if (cron || triggeredBy.length || invocations.length) {
-        ciWorkflows.push({
-            file,
-            name,
-            cron,
-            triggeredBy,
-            invocations,
-            storage: storage.downloads || storage.uploads ? { ...storage, label: storageLabel } : null,
-        });
-    }
-}
+const ciWorkflows = scanCiWorkflows(repo, allFiles);
 
 // Host config scan: externals, host-to-host forwarding, host-to-service
 // forwarding — computed once, used for districts, infra, and edges.
