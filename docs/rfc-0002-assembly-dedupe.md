@@ -1,7 +1,7 @@
 ---
 id: RFC-0002
 name: Deduplicate the overview and deployment assembly pipelines
-status: Draft
+status: Completed
 owners:
     - alistairbayley
 created: 2026-08-25
@@ -16,7 +16,7 @@ superseded_by: null
 |-----------|------------------|
 | Authored  | 2026-08-26 00:35 |
 | Started   | 2026-08-26 00:45 |
-| Completed |                  |
+| Completed | 2026-08-26 01:40 |
 
 ## Summary
 
@@ -160,7 +160,7 @@ None externally; module boundaries change inside src/lib only.
 
 ### Phase 1 — types and helpers
 
-- [ ] Extract map-types.ts; both assemblies and emit import it.
+- [x] Extract map-types.ts; both assemblies and emit import it.
 - [x] Extract assembly-helpers.ts (identical helpers only); replace all
       copies, including emit's and the three inline loc sums.
 - [x] Deployment consumes hostScan from context; delete its inline
@@ -199,11 +199,11 @@ None externally; module boundaries change inside src/lib only.
 
 ### Phase 4 — close out
 
-- [ ] Full live-repo artefact diff across the test repos, both modes.
-- [ ] BACKLOG entries for each preserved divergence bug (delivers guards,
+- [x] Full live-repo artefact diff across the test repos, both modes.
+- [x] BACKLOG entries for each preserved divergence bug (delivers guards,
       first-database targeting, entry-classification partial copies,
       unescaped regex interpolation).
-- [ ] HEURISTICS.md module pointers updated; mark this RFC completed.
+- [x] HEURISTICS.md module pointers updated; mark this RFC completed.
 
 ### Rollout Plan Escape Hatch
 

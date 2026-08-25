@@ -11,7 +11,10 @@ and `imports.ts`; C in `coupling.ts`; D in `compose.ts`, `dockerfile.ts`,
 R in `reachability.ts` and `path-references.ts`; M in
 `assemble-deployment.ts`; O in `assemble-overview.ts` (with `complexity.ts`
 for O6); the coverage/TSDoc/embedded-database scans in `scans.ts`; output in
-`emit.ts`.
+`emit.ts`. Rules documented as shared between the modes (M1/M8/M10 with O8,
+D13 with O11) are implemented once in `inference.ts` with per-mode options;
+`map-types.ts` and `assembly-helpers.ts` hold the shared vocabulary and
+helpers; `emit.ts` builds the map envelope and applies M4 for both modes.
 
 ## Inventory (I)
 

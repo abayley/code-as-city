@@ -20,6 +20,22 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   vitest/istanbul summaries) and map file coverage onto modules. aria-evals
   has coverage/ and reports/ folders to prototype against.
 
+## Known divergences preserved by RFC-0002 (latent bugs, per-mode options)
+
+- Delivers inference (M10/O8): the overview path lacks the deployment's
+  self-id and empty-file-set guards (inference.ts guardTargets: false).
+- Database flow (M8/O8): the overview always targets the first database;
+  the deployment prefers the district-local one.
+- Entry classification (M3/O2) exists as three partial copies of one
+  documented rule (overview isEntryModule; deployment childIsEntry and the
+  entry-dir room check) with different arms.
+- externalReferencePattern and sdkImportPattern interpolate names into
+  regexes without escaping.
+- Overview module fan-in/out is edge-counted over file sets and cannot be
+  replaced by C1 fileCoupling (distinct-neighbour counts, self-edge
+  handling, multi-file aggregation differ) — see the comment in
+  assemble-overview.ts.
+
 ## Done since listed
 
 - Viewer rotation around the vertical axis (MapControls enableRotate), with
