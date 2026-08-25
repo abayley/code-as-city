@@ -17,6 +17,7 @@ import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
+import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 
@@ -85,31 +86,9 @@ const sourceFiles = allFiles.filter(
 
 // --- 2. Packages ----------------------------------------------------------------
 
-const packageDirs = allFiles.filter((f) => basename(f) === "package.json").map((f) => dirname(f));
-
-const packages = packageDirs.map((dir) => {
-    const json = readJson(join(repo, dir === "." ? "" : dir, "package.json")) ?? {};
-    const deps = { ...json.dependencies, ...json.devDependencies };
-    const hasBin = json.bin && Object.keys(json.bin).length > 0;
-    const isWebApp = ["react", "next", "vinext", "vue", "svelte"].some((d) => deps[d]);
-    return {
-        dir,
-        name: json.name ?? (dir === "." ? basename(repo) : basename(dir)),
-        deps,
-        role: hasBin ? "cli" : isWebApp ? "web" : "package",
-        id: kebab(json.name ?? basename(dir === "." ? repo : dir)),
-    };
-});
-
-function owningPackage(file) {
-    let best = null;
-    for (const pkg of packages) {
-        if (pkg.dir === "." || file === pkg.dir || file.startsWith(pkg.dir + sep)) {
-            if (!best || pkg.dir.length > best.dir.length) best = pkg;
-        }
-    }
-    return best;
-}
+const packageDirs = packageDirsOf(allFiles);
+const packages = discoverPackages(repo, packageDirs);
+const owningPackage = (file) => owningPackageOf(packages, file);
 
 // --- 3. Rooms -------------------------------------------------------------------
 // Room key = first path segment within the package; a dominant segment holding

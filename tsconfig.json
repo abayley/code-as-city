@@ -33,6 +33,7 @@
         /* Modules -- bundler resolution because the viewer is built by vite */
         "module": "ESNext",
         "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
         "esModuleInterop": true,
         "resolveJsonModule": true,
 

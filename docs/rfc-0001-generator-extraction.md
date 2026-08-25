@@ -202,7 +202,7 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 2 — front of the pipeline
 
-- [ ] Extract inventory (I) with unit tests for ignore/test-path rules.
+- [x] Extract inventory (I) with unit tests for ignore/test-path rules.
 - [ ] Extract packages (S1).
 - [ ] Extract rooms (S2).
 - [ ] Extract imports (S3) with unit tests for resolveImport.
