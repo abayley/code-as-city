@@ -14,6 +14,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { parseComposeServices } from "./lib/compose.ts";
 import { analyseCoupling, COUPLING_THRESHOLDS } from "./lib/coupling.ts";
+import { parseDockerfile } from "./lib/dockerfile.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
@@ -205,22 +206,6 @@ const { fileCoupling, roomCoupling, isMidFile, isUtilityRoom, eliminatedRooms } 
 
 // --- 5. Deployment shape -----------------------------------------------------------
 
-function parseDockerfile(path) {
-    const text = readText(join(repo, path));
-    const copies = [...text.matchAll(/^COPY\s+([^\s]+)\s/gm)]
-        .map((m) => m[1])
-        .filter(
-            (p) => !p.startsWith("--") && allFiles.some((f) => f === p || f.startsWith(`${p.replace(/\/$/, "")}/`)),
-        );
-    const entryMatch = /^(?:ENTRYPOINT|CMD)\s+(\[.*\]|.+)$/m.exec(text);
-    let entryFile = null;
-    if (entryMatch) {
-        const tokens = entryMatch[1].startsWith("[") ? (readJsonSafe(entryMatch[1]) ?? []) : entryMatch[1].split(/\s+/);
-        entryFile = tokens.find((t) => typeof t === "string" && fileExists(t)) ?? null;
-    }
-    return { copies, entryFile };
-}
-
 function fileExists(p) {
     return allFiles.includes(p);
 }
@@ -282,7 +267,7 @@ const candidateHosts = composeFiles
             if (!dockerfile) {
                 dockerfile = allFiles.find((f) => basename(f) === `${service.name}.Dockerfile`);
             }
-            const built = dockerfile && fileExists(dockerfile) ? parseDockerfile(dockerfile) : null;
+            const built = dockerfile && fileExists(dockerfile) ? parseDockerfile(repo, dockerfile, allFiles) : null;
             const imageClass =
                 (service.image && IMAGE_CLASSES.find(({ pattern }) => pattern.test(service.image))?.archetype) ??
                 (/database|postgres|mysql|db$/.test(service.name)
