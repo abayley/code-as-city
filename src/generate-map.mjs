@@ -1,14 +1,10 @@
 #!/usr/bin/env node
 
-// PROTOTYPE - throwaway code answering one question:
-// "How useful is a fully deterministic (agent-free) Functionary city map?"
-// No tests, minimal error handling, mechanical naming by design.
+// Deterministic (agent-free) Functionary city map generator. Being extracted
+// into typed modules under src/lib/ per HEURISTICS.md rule group; see
+// docs/rfc-0001-generator-extraction.md.
 //
-// v2: test exclusion, deployment-shape detection (docker-compose hosts,
-// Dockerfile service->source binding, crontab schedules, wrangler edge),
-// and intermediate artefacts for heuristic exploration.
-//
-// Usage: node src/generate-map.mjs <target-repo> [--out-dir out/<name>]
+// Usage: bun src/generate-map.mjs <target-repo> [--out-dir out/<name>]
 // Outputs: map.json, deploy-shape.json, deps-files.json, deps-rooms.json, deps-rooms.dot
 
 import { spawnSync } from "node:child_process";
