@@ -56,5 +56,6 @@ export function sdkImportPattern(depName: string): RegExp {
 
 /** Pattern matching a reference to an external system by SDK import or env-var prefix. */
 export function externalReferencePattern(name: string): RegExp {
-    return new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`from\\s+["'][^"']*${escaped}|\\b${escaped.toUpperCase()}_[A-Z]`);
 }

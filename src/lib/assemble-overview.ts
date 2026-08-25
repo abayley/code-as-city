@@ -595,7 +595,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         ...(databaseTarget
             ? {
                   database: {
-                      chooseTarget: () => databaseTarget.id,
+                      databases: [{ id: databaseTarget.id }],
                       writePattern: dbWritePattern,
                       readPattern: dbReadPattern,
                   },
@@ -617,7 +617,6 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         entries: allModules,
         edges: overviewEdges,
         fileText,
-        guardTargets: false,
     });
 
     // Import edges, aggregated per module pair. The viewer never draws these

@@ -1099,7 +1099,6 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         entries: classificationSets,
         edges,
         fileText,
-        guardTargets: true,
     });
 
     for (const { id, files, entryFile } of classificationSets) {
@@ -1150,8 +1149,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         edges,
         fileText,
         database: {
-            chooseTarget: (entry) =>
-                (databaseNodes.find((db) => districtLookup.get(db.id) === entry.districtId) ?? databaseNodes[0])?.id,
+            databases: databaseNodes.map((db) => ({ id: db.id, districtId: districtLookup.get(db.id) })),
             writePattern: dbWritePattern,
             readPattern: dbReadPattern,
         },

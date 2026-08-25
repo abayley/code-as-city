@@ -63,23 +63,21 @@ export function inferEmbeddedDatabaseUse(options: {
 
 /**
  * M10/O8: entries referencing an external system by SDK import or env-var
- * prefix deliver data to it. `guardTargets` preserves the deployment map's
- * self-id and empty-files guards; the overview lacks them (a recorded latent
- * divergence, kept as-is).
+ * prefix deliver data to it. Entries that are the external itself or carry
+ * no files are skipped in both modes.
  */
 export function inferExternalDelivers(options: {
     externals: readonly { id: string; label: string }[];
     entries: readonly NodeIndexEntry[];
     edges: MapEdge[];
     fileText: (file: string) => string;
-    guardTargets: boolean;
 }): void {
     for (const external of options.externals) {
         const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (name.length < 4) continue;
         const referencePattern = externalReferencePattern(name);
         for (const entry of options.entries) {
-            if (options.guardTargets && (entry.id === external.id || !entry.files.length)) continue;
+            if (entry.id === external.id || !entry.files.length) continue;
             if (!entry.files.some((file) => referencePattern.test(options.fileText(file)))) continue;
             addEdge(options.edges, {
                 id: `${entry.id}--${external.id}-d`,
@@ -100,9 +98,8 @@ export function inferExternalDelivers(options: {
  * one pass because the overview interleaves them per module (its edge order
  * depends on it); the deployment map calls the pass twice, once per universe
  * (OTLP over promoted nodes, database flow over classification sets).
- * Collector selection and database targeting stay per-mode: the deployment
- * map prefers the district-local database, the overview always targets the
- * first (a recorded latent divergence, kept as-is).
+ * Collector selection stays per-mode; database targeting is shared — the
+ * entry's district-local database wins, else the first declared.
  */
 export function inferModuleDataFlows(options: {
     entries: readonly NodeIndexEntry[];
@@ -111,7 +108,7 @@ export function inferModuleDataFlows(options: {
     otlpTargetId?: string | undefined;
     database?:
         | {
-              chooseTarget: (entry: NodeIndexEntry) => string | undefined;
+              databases: readonly { id: string; districtId?: string | undefined }[];
               writePattern: RegExp;
               readPattern: RegExp;
           }
@@ -133,7 +130,8 @@ export function inferModuleDataFlows(options: {
         }
         const database = options.database;
         if (!database) continue;
-        const target = database.chooseTarget(entry);
+        const target = (database.databases.find((db) => db.districtId === entry.districtId) ?? database.databases[0])
+            ?.id;
         if (target === undefined || target === entry.id) continue;
         if (texts.some((text) => database.writePattern.test(text))) {
             addEdge(options.edges, {

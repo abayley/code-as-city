@@ -76,14 +76,14 @@ describe("inferExternalDelivers", () => {
     });
     const externals = [{ id: "external-langfuse", label: "Langfuse" }];
 
-    it("given guarded targets (deployment mode), when an entry is the external itself or has no files, then it is skipped", () => {
+    it("given an entry that is the external itself or has no files, when inferring, then it is skipped", () => {
         const edges: MapEdge[] = [];
         const entries: NodeIndexEntry[] = [
             { id: "external-langfuse", files: ["src/self.ts"] },
             { id: "svc-empty", files: [] },
             { id: "svc-deliver", files: ["src/deliver.ts"] },
         ];
-        inferExternalDelivers({ externals, entries, edges, fileText: texts, guardTargets: true });
+        inferExternalDelivers({ externals, entries, edges, fileText: texts });
         expect(edges).toEqual([
             {
                 id: "svc-deliver--external-langfuse-d",
@@ -97,11 +97,11 @@ describe("inferExternalDelivers", () => {
         ]);
     });
 
-    it("given unguarded targets (overview mode), when an entry shares the external's id, then the self edge is still emitted", () => {
+    it("given an entry sharing the external's id, when inferring, then no self edge is emitted in either mode", () => {
         const edges: MapEdge[] = [];
         const entries: NodeIndexEntry[] = [{ id: "external-langfuse", files: ["src/self.ts"] }];
-        inferExternalDelivers({ externals, entries, edges, fileText: texts, guardTargets: false });
-        expect(edges.map((e) => e.id)).toEqual(["external-langfuse--external-langfuse-d"]);
+        inferExternalDelivers({ externals, entries, edges, fileText: texts });
+        expect(edges).toEqual([]);
     });
 
     it("given a normalised name shorter than four characters, when inferring, then the external is skipped", () => {
@@ -111,7 +111,6 @@ describe("inferExternalDelivers", () => {
             entries: [{ id: "svc", files: ["src/deliver.ts"] }],
             edges,
             fileText: texts,
-            guardTargets: false,
         });
         expect(edges).toEqual([]);
     });
@@ -161,33 +160,30 @@ describe("inferModuleDataFlows", () => {
             edges,
             fileText: texts,
             otlpTargetId: "collector",
-            database: { chooseTarget: () => "db", writePattern, readPattern },
+            database: { databases: [{ id: "db" }], writePattern, readPattern },
         });
         expect(edges.map((e) => e.id)).toEqual(["mod-a--collector", "mod-a--db-w", "db--mod-b-r"]);
         expect(edges.map((e) => e.label)).toEqual(["OTLP export", "writes", "reads"]);
         expect(edges[1]?.confidence).toBe(0.75);
     });
 
-    it("given a district-local chooser (deployment mode), when districts differ, then each entry targets its own district's database and never itself", () => {
+    it("given several databases, when districts differ, then each entry prefers its district's database, falling back to the first, and never targets itself", () => {
         const edges: MapEdge[] = [];
-        const byDistrict = new Map([
-            ["district-a", "db-a"],
-            ["district-b", "db-b"],
-        ]);
+        const databases = [
+            { id: "db-a", districtId: "district-a" },
+            { id: "db-b", districtId: "district-b" },
+        ];
         inferModuleDataFlows({
             entries: [
                 { id: "svc-a", files: ["src/write.ts"], districtId: "district-a" },
                 { id: "db-b", files: ["src/write.ts"], districtId: "district-b" },
+                { id: "svc-c", files: ["src/write.ts"], districtId: "district-c" },
             ],
             edges,
             fileText: texts,
-            database: {
-                chooseTarget: (entry) => (entry.districtId ? byDistrict.get(entry.districtId) : undefined),
-                writePattern,
-                readPattern,
-            },
+            database: { databases, writePattern, readPattern },
         });
-        expect(edges.map((e) => e.id)).toEqual(["svc-a--db-a-w"]);
+        expect(edges.map((e) => e.id)).toEqual(["svc-a--db-a-w", "svc-c--db-a-w"]);
     });
 });
 
