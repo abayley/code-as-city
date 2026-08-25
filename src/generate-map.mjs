@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
+import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
@@ -96,72 +97,12 @@ const rooms = buildRooms(repo, packages, sourceFiles);
 
 // --- 4. Import scan ---------------------------------------------------------------
 
-const fileToRoom = new Map();
-for (const room of rooms.values()) for (const f of room.files) fileToRoom.set(f, room);
-
-function resolveImport(fromFile, specifier) {
-    const tryFile = (raw) => {
-        const candidates = [
-            raw,
-            `${raw}.ts`,
-            `${raw}.tsx`,
-            `${raw}.js`,
-            `${raw}.mjs`,
-            join(raw, "index.ts"),
-            join(raw, "index.js"),
-        ];
-        // NodeNext style: "./foo.js" in source resolves to "./foo.ts" on disk.
-        if (/\.m?js$/.test(raw)) candidates.push(raw.replace(/\.m?js$/, ".ts"), raw.replace(/\.m?js$/, ".tsx"));
-        for (const candidate of candidates) {
-            if (fileToRoom.has(candidate)) return candidate;
-        }
-        return null;
-    };
-    if (specifier.startsWith(".")) {
-        const hit = tryFile(join(dirname(fromFile), specifier));
-        return hit ? { file: hit } : null;
-    }
-    if (specifier.startsWith("@/")) {
-        const pkg = owningPackage(fromFile);
-        const hit = tryFile(pkg.dir === "." ? specifier.slice(2) : join(pkg.dir, specifier.slice(2)));
-        return hit ? { file: hit } : null;
-    }
-    const local = packages.find((p) => specifier === p.name || specifier.startsWith(`${p.name}/`));
-    if (local) return { pkg: local };
-    return { bare: specifier };
-}
-
-const IMPORT_PATTERN = /(?:from\s+|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
-const fileEdges = []; // { from, to } file-level
-const packageEdges = new Map();
-const bareImports = new Map();
-
-for (const file of sourceFiles) {
-    const fromRoom = fileToRoom.get(file);
-    if (!fromRoom) continue;
-    const text = readText(join(repo, file));
-    for (const match of text.matchAll(IMPORT_PATTERN)) {
-        const target = resolveImport(file, match[1]);
-        if (!target) continue;
-        if (target.file) fileEdges.push({ from: file, to: target.file });
-        else if (target.pkg && target.pkg !== fromRoom.pkg) {
-            packageEdges.set(`${fromRoom.pkg.id}->${target.pkg.id}`, true);
-        } else if (target.bare) {
-            if (!bareImports.has(target.bare)) bareImports.set(target.bare, new Set());
-            bareImports.get(target.bare).add(fromRoom.pkg.id);
-        }
-    }
-}
-
-const roomEdges = new Map(); // "fromRoom->toRoom" -> count
-for (const { from, to } of fileEdges) {
-    const a = fileToRoom.get(from);
-    const b = fileToRoom.get(to);
-    if (a && b && a !== b) {
-        const key = `${a.id}->${b.id}`;
-        roomEdges.set(key, (roomEdges.get(key) ?? 0) + 1);
-    }
-}
+const { fileToRoom, resolveImport, fileEdges, packageEdges, bareImports, roomEdges } = scanImports(
+    repo,
+    packages,
+    rooms,
+    sourceFiles,
+);
 
 // --- 4b. Coupling metrics (archunitts-style fan-in/fan-out/instability) -----------
 // Utility modules (high fan-in, low fan-out, instability -> 0) are shared

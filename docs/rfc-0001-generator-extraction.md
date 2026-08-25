@@ -205,7 +205,7 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 - [x] Extract inventory (I) with unit tests for ignore/test-path rules.
 - [x] Extract packages (S1).
 - [x] Extract rooms (S2).
-- [ ] Extract imports (S3) with unit tests for resolveImport.
+- [x] Extract imports (S3) with unit tests for resolveImport.
 - [ ] Extract coupling metrics (C1) with unit tests for the formulas.
 
 ### Phase 3 — deployment shape and scans
