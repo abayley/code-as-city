@@ -150,6 +150,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         eliminatedRooms,
         hosts,
         candidateHosts,
+        hostScan,
         serviceDependsOn,
         hostLayer,
         edgeHost,

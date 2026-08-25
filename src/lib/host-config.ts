@@ -4,8 +4,12 @@ import { readText } from "./read.ts";
 
 export type HostScanResult = {
     host: Host;
-    externals: { candidate: string; config: string }[];
+    externals: { candidate: string; config: string; envToken: string }[];
     hostTargets: Set<string>;
+    // Every host-name match as a (config, other-host) event, in scan order —
+    // hostTargets also gains entries from service-name matches, so consumers
+    // needing only the host-name matches (with config attribution) read this.
+    hostTargetMatches: { otherHost: string; config: string }[];
     serviceTargets: { service: HostService; otherHost: string; config: string }[];
     configs: string[];
 };
@@ -37,7 +41,14 @@ export function scanHostConfigs(repo: string, allFiles: readonly string[], hosts
     return hosts.map((host) => {
         const hostDir = dirname(host.file);
         const hostQualifiers = host.name.split(" ").filter(Boolean);
-        const result: HostScanResult = { host, externals: [], hostTargets: new Set(), serviceTargets: [], configs: [] };
+        const result: HostScanResult = {
+            host,
+            externals: [],
+            hostTargets: new Set(),
+            hostTargetMatches: [],
+            serviceTargets: [],
+            configs: [],
+        };
         const internalNames = new Set(
             [...hosts.flatMap((h) => h.name.split(" ")), ...hosts.flatMap((h) => h.services.map((s) => s.name))]
                 .map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, ""))
@@ -67,7 +78,7 @@ export function scanHostConfigs(repo: string, allFiles: readonly string[], hosts
                     .join(" ")
                     .toLowerCase();
                 if (candidate.length >= 4 && !result.externals.some((e) => e.candidate === candidate)) {
-                    result.externals.push({ candidate, config });
+                    result.externals.push({ candidate, config, envToken });
                 }
             });
             const exportLines = rawLines
@@ -81,6 +92,7 @@ export function scanHostConfigs(repo: string, allFiles: readonly string[], hosts
                     .map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""));
                 if (distinct.length && exportLines.some((l) => distinct.some((t) => l.includes(t)))) {
                     result.hostTargets.add(other.name);
+                    result.hostTargetMatches.push({ otherHost: other.name, config });
                 }
                 for (const service of other.services) {
                     const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");

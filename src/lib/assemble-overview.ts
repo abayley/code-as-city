@@ -1,5 +1,17 @@
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
+import {
+    addEdge,
+    externalReferencePattern,
+    fileModuleName,
+    footprintFor,
+    linesOf,
+    mermaidId,
+    roomLabel,
+    sdkImportPattern,
+    splitEdgeKey,
+    uniqueId,
+} from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
@@ -172,8 +184,6 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         return hostName !== undefined ? `${titleCase(hostName)} host` : `Strip ${band}`;
     };
 
-    const linesOf = (files: readonly string[]) =>
-        files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
     const externalFanIn = (files: readonly string[]) => {
         const set = new Set(files);
         return fileEdges.filter(({ from, to }) => set.has(to) && !set.has(from)).length;
@@ -187,10 +197,6 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         const fanOut = externalFanOut(files);
         return fanIn >= 2 && fanOut / (fanIn + fanOut) <= 0.33;
     };
-    const roomLabel = (room: Room) =>
-        room.segment === "(root)" ? "Top-level files" : titleCase(room.segment.split(sep).join(" / "));
-    const fileModuleName = (file: string) => basename(file).replace(/\.[a-z]+$/, "");
-
     const modulesForRoom = (room: Room): OverviewModule[] => {
         const entries: OverviewModule[] = [];
         // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
@@ -247,7 +253,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
           }))
         : activeRooms.map((room) => ({
               id: kebab(`${room.id}-district`),
-              label: roomLabel(room),
+              label: roomLabel(room.segment),
               path: roomDir(room),
               modules: modulesForRoom(room),
               hosts: [],
@@ -259,10 +265,8 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     const usedModuleIds = new Set<string>();
     for (const district of districts) {
         for (const m of district.modules) {
-            let candidate = m.id;
-            for (let n = 2; usedModuleIds.has(candidate); n += 1) candidate = `${m.id}-${n}`;
-            m.id = candidate;
-            usedModuleIds.add(candidate);
+            m.id = uniqueId(m.id, (id) => usedModuleIds.has(id));
+            usedModuleIds.add(m.id);
         }
     }
 
@@ -309,7 +313,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         );
         for (const m of district.modules) {
             const moduleHostTags = [...filesHosts(m.files)].map((name) => `host:${name}`);
-            const loc = linesOf(m.files);
+            const loc = linesOf(repo, m.files);
             // Complexity is the worst single function in the module: a big module
             // of simple functions should not outscore one gnarly function.
             const complexity = Math.max(...m.files.map((f) => fileMaxFunctionComplexity(f)));
@@ -319,7 +323,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             // shape and height already distinguish them).
             // Ceiling 2.5: at the viewer's 80% render scale that equals the 2.0
             // layout step, so even max-complexity buildings cannot overlap.
-            const footprint = Math.min(2.5, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 4));
+            const footprint = footprintFor(complexity);
             const asBuilding = m.files.length >= 2 && !m.collapsed;
             // Same classification as the deployment map: entry modules are gateways
             // (entry points), everything else a worker. At file granularity the
@@ -335,7 +339,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                 m.files.some((f) => scriptReferencedFiles.has(f)) ||
                 (!m.support &&
                     (m.path.split(sep).some((seg) => entryDirNames.has(seg)) ||
-                        ENTRY_FILE_PATTERN.test(basename(m.path).replace(/\.[a-z]+$/, ""))));
+                        ENTRY_FILE_PATTERN.test(fileModuleName(m.path))));
             const doc = docForFiles(m.files);
             const coverage = coverageForFiles(m.files);
             overviewNodes.push({
@@ -367,7 +371,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             allModules.push({ id: m.id, files: m.files });
             if (asBuilding) {
                 for (const file of m.files) {
-                    const fileLoc = linesOf([file]);
+                    const fileLoc = linesOf(repo, [file]);
                     overviewNodes.push({
                         id: kebab(`${m.id}-${relative(m.path, file).replace(/\.[a-z]+$/, "")}`),
                         label: titleCase(fileModuleName(file)),
@@ -387,9 +391,6 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // collectors), config-declared external receivers, wrangler, drizzle.
     const infraMembers: InfraMember[] = [];
     const overviewEdges: MapEdge[] = [];
-    const addMapEdge = (edge: MapEdge) => {
-        if (!overviewEdges.some((e) => e.id === edge.id)) overviewEdges.push(edge);
-    };
     const infraCollectorFor = (host: Host) => {
         const candidates = host.services.filter((s) => !s.dockerfile);
         const pick = candidates.find((s) => /collector|gateway|ingest/.test(s.name)) ?? candidates[0];
@@ -425,7 +426,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                 external: true,
             });
             if (from) {
-                addMapEdge({
+                addEdge(overviewEdges, {
                     id: `${from}--${externalId}`,
                     from,
                     to: externalId,
@@ -444,7 +445,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                     const forwardConfig = scan.configs[0];
                     if (forwardConfig === undefined)
                         throw new Error(`host ${host.name} has host targets but no configs`);
-                    addMapEdge({
+                    addEdge(overviewEdges, {
                         id: `${from}--${to}`,
                         from,
                         to,
@@ -458,7 +459,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             for (const { service, config } of scan.serviceTargets) {
                 const targetModule = service.entryFile ? fileToModule.get(service.entryFile) : null;
                 if (targetModule) {
-                    addMapEdge({
+                    addEdge(overviewEdges, {
                         id: `${from}--${targetModule}`,
                         from,
                         to: targetModule,
@@ -584,7 +585,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     for (const m of allModules) {
         const texts = m.files.map((f) => readText(join(repo, f)));
         if (otlpTarget && texts.some((t) => OTLP_PATTERN.test(t))) {
-            addMapEdge({
+            addEdge(overviewEdges, {
                 id: `${m.id}--${otlpTarget.id}`,
                 from: m.id,
                 to: otlpTarget.id,
@@ -596,7 +597,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }
         if (databaseTarget && m.id !== databaseTarget.id) {
             if (texts.some((t) => dbWritePattern.test(t))) {
-                addMapEdge({
+                addEdge(overviewEdges, {
                     id: `${m.id}--${databaseTarget.id}-w`,
                     from: m.id,
                     to: databaseTarget.id,
@@ -607,7 +608,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                 });
             }
             if (texts.some((t) => dbReadPattern.test(t))) {
-                addMapEdge({
+                addEdge(overviewEdges, {
                     id: `${databaseTarget.id}--${m.id}-r`,
                     from: databaseTarget.id,
                     to: m.id,
@@ -623,11 +624,10 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     for (const db of embeddedDbMembers) {
         const depName = db.depName;
         if (depName === undefined) throw new Error(`embedded database ${db.id} has no depName`);
-        const escaped = depName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const importPattern = new RegExp(`(from\\s+|require\\()["']${escaped}`);
+        const importPattern = sdkImportPattern(depName);
         for (const m of allModules) {
             if (m.files.some((f) => importPattern.test(readText(join(repo, f))))) {
-                addMapEdge({
+                addEdge(overviewEdges, {
                     id: `${m.id}--${db.id}-u`,
                     from: m.id,
                     to: db.id,
@@ -645,10 +645,10 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     for (const external of uniqueInfra.filter((m) => m.external)) {
         const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (name.length < 4) continue;
-        const referencePattern = new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
+        const referencePattern = externalReferencePattern(name);
         for (const m of allModules) {
             if (m.files.some((f) => referencePattern.test(readText(join(repo, f))))) {
-                addMapEdge({
+                addEdge(overviewEdges, {
                     id: `${m.id}--${external.id}-d`,
                     from: m.id,
                     to: external.id,
@@ -672,9 +672,8 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         importCounts.set(`${a}->${b}`, (importCounts.get(`${a}->${b}`) ?? 0) + 1);
     }
     for (const [key, count] of importCounts) {
-        const [from, to] = key.split("->");
-        if (from === undefined || to === undefined) throw new Error(`malformed import-count key ${key}`);
-        addMapEdge({
+        const [from, to] = splitEdgeKey(key);
+        addEdge(overviewEdges, {
             id: `${from}--${to}-i`,
             from,
             to,
@@ -704,7 +703,6 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             "Complexity is the module's worst single function (McCabe-style decision-point count), not a module-wide sum.",
         ],
     };
-    const overviewMermaidId = (id: string) => id.replace(/[^a-zA-Z0-9_]/g, "_");
     const overviewMermaid = [
         `# ${overviewMap.name}`,
         "",
@@ -713,12 +711,12 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         ...overviewNodes
             .filter((n) => n.kind === "scope")
             .flatMap((scope) => [
-                `  subgraph ${overviewMermaidId(scope.id)}["${scope.label}${(scope.description ?? "").startsWith("Shared") ? " (shared code)" : ""}"]`,
+                `  subgraph ${mermaidId(scope.id)}["${scope.label}${(scope.description ?? "").startsWith("Shared") ? " (shared code)" : ""}"]`,
                 ...overviewNodes
                     .filter((n) => n.parentId === scope.id)
                     .map(
                         (n) =>
-                            `    ${overviewMermaidId(n.id)}["${n.label}<br/><i>${n.metrics ? `${n.metrics.loc} loc, cx ${n.metrics.complexity}` : n.archetype}</i><br/>${(n.sourceRefs?.[0]?.path ?? "").replace(/"/g, "'")}"]`,
+                            `    ${mermaidId(n.id)}["${n.label}<br/><i>${n.metrics ? `${n.metrics.loc} loc, cx ${n.metrics.complexity}` : n.archetype}</i><br/>${(n.sourceRefs?.[0]?.path ?? "").replace(/"/g, "'")}"]`,
                     ),
                 "  end",
             ]),

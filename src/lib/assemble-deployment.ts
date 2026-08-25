@@ -1,6 +1,18 @@
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
+import {
+    addEdge,
+    externalReferencePattern,
+    fileModuleName,
+    footprintFor,
+    linesOf,
+    roomLabel,
+    sdkImportPattern,
+    splitEdgeKey,
+    uniqueId,
+} from "./assembly-helpers.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
 import { layerByLongestPath } from "./flow.ts";
+import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
@@ -33,6 +45,7 @@ export type DeploymentContext = {
     eliminatedRooms: CouplingAnalysis["eliminatedRooms"];
     hosts: readonly Host[];
     candidateHosts: readonly Host[];
+    hostScan: readonly HostScanResult[];
     serviceDependsOn: ReadonlyMap<string, Set<string>>;
     hostLayer: Map<string, number>;
     edgeHost: EdgeHost | null;
@@ -71,12 +84,6 @@ const EXTERNALS_DISTRICT_ID = "external-systems";
 const LISTEN_PATTERN = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|express\s*\(\)/;
 const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
 
-function splitEdgeKey(key: string): [string, string] {
-    const [from, to] = key.split("->");
-    if (from === undefined || to === undefined) throw new Error(`Malformed edge key: ${key}`);
-    return [from, to];
-}
-
 /**
  * Section 7 of the generator: assembles the deployment map's nodes, edges,
  * and warnings from the deployment shape, room structure, import graph, CI
@@ -101,6 +108,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         eliminatedRooms,
         hosts,
         candidateHosts,
+        hostScan,
         serviceDependsOn,
         hostLayer,
         edgeHost,
@@ -138,11 +146,6 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     const campusFileSets: { id: string; files: string[]; entryFile?: string | null | undefined }[] = [];
     const fileNodeOwner = new Map<string, string>(); // source file -> emitted campus node id (for shared-lib edges)
 
-    function addEdge(edge: MapEdge): void {
-        if (edges.some((e) => e.id === edge.id)) return;
-        edges.push(edge);
-    }
-
     // Experimental (--modules-as-buildings): every module node with >=2 files
     // becomes a building whose rooms are its files — a preview of "buildings
     // depict modules" while the room semantics are still undecided.
@@ -151,14 +154,12 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // checking both emitted nodes and the room-id namespace still to be
     // emitted.
     function uniqueNodeId(base: string): string {
-        let id = base;
-        for (let n = 2; rooms.has(id) || nodes.some((x) => x.id === id); n += 1) id = `${base}-${n}`;
-        return id;
+        return uniqueId(base, (id) => rooms.has(id) || nodes.some((x) => x.id === id));
     }
 
     function pushFileRooms(parentId: string, files: readonly string[]): void {
         for (const file of files) {
-            const name = basename(file).replace(/\.[a-z]+$/, "");
+            const name = fileModuleName(file);
             nodes.push({
                 id: uniqueNodeId(kebab(`${parentId}-${name}`)),
                 label: titleCase(name),
@@ -239,7 +240,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                       : 1;
             // A service whose entrypoint is a *-command file is labelled by that
             // command (Delivery Command, not the compose service name delivery-worker).
-            const entryName = service.entryFile ? basename(service.entryFile).replace(/\.[a-z]+$/, "") : null;
+            const entryName = service.entryFile ? fileModuleName(service.entryFile) : null;
             nodes.push({
                 id: serviceId,
                 label: titleCase(entryName?.endsWith("-command") ? entryName : service.name),
@@ -260,16 +261,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     ...(service.entryFile ? { "entry-point": service.entryFile } : {}),
                 },
                 sourceRefs: [{ path: service.dockerfile ?? host.file }],
-                ...(serviceSourceFiles.length
-                    ? {
-                          metrics: {
-                              loc: serviceSourceFiles.reduce(
-                                  (sum, f) => sum + readText(join(repo, f)).split("\n").length,
-                                  0,
-                              ),
-                          },
-                      }
-                    : {}),
+                ...(serviceSourceFiles.length ? { metrics: { loc: linesOf(repo, serviceSourceFiles) } } : {}),
                 tags: [isScheduled ? "cron" : null, service.hasPorts ? "listens" : null].filter(
                     (tag): tag is string => tag !== null,
                 ),
@@ -317,7 +309,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 }
                 for (const key of localEdges.keys()) {
                     const [from, to] = splitEdgeKey(key);
-                    addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
+                    addEdge(edges, { id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
                 }
             }
         }
@@ -357,7 +349,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                         display: { flowLayer: 2 },
                     });
                 }
-                addEdge({
+                addEdge(edges, {
                     id: `${fromId}--${toId}`,
                     from: fromId,
                     to: toId,
@@ -376,35 +368,18 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         const preferred = host.services.find((s) => /collector|gateway|ingest/.test(s.name)) ?? host.services[0];
         return preferred ? kebab(`${host.id}-${preferred.name}`) : null;
     }
-    for (const host of hosts) {
-        const hostDir = dirname(host.file);
-        const hostTokens = host.name.split(" ").filter(Boolean);
-        const ownConfigs = allFiles.filter(
-            (f) =>
-                dirname(f) === hostDir &&
-                /\.ya?ml$/.test(f) &&
-                !/docker-compose/.test(basename(f)) &&
-                hostTokens.some((token) => basename(f).includes(token)),
-        );
-        for (const config of ownConfigs) {
-            // Exporter-ish lines only: endpoints and env-var references.
-            const exportLines = readText(join(repo, config))
-                .split("\n")
-                .filter((line) => /endpoint:|\$\{env:/.test(line))
-                .map((line) => line.toLowerCase().replace(/[^a-z0-9]/g, ""));
-            const from = primaryServiceId(host);
-            if (!from || !nodes.some((n) => n.id === from)) continue;
+    for (const scan of hostScan) {
+        const host = scan.host;
+        const from = primaryServiceId(host);
+        if (!from || !nodes.some((n) => n.id === from)) continue;
+        for (const config of scan.configs) {
             for (const other of hosts) {
                 if (other === host) continue;
                 // Host-name match (the gateway's STACK_OTLP_ENDPOINT names the stack).
-                const distinct = other.name
-                    .split(" ")
-                    .filter((token) => token && !hostTokens.includes(token))
-                    .map((token) => token.toLowerCase().replace(/[^a-z0-9]/g, ""));
-                if (distinct.length && exportLines.some((line) => distinct.some((token) => line.includes(token)))) {
+                if (scan.hostTargetMatches.some((m) => m.otherHost === other.name && m.config === config)) {
                     const to = primaryServiceId(other);
                     if (to && nodes.some((n) => n.id === to)) {
-                        addEdge({
+                        addEdge(edges, {
                             id: `${from}--${to}`,
                             from,
                             to,
@@ -417,13 +392,11 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 }
                 // Service-name match (the stack's SPAN_INGEST_BEARER_TOKEN names the
                 // span-ingest service on the evaluation host).
-                for (const service of other.services) {
-                    const normalised = service.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-                    if (normalised.length < 6) continue;
-                    if (!exportLines.some((line) => line.includes(normalised))) continue;
-                    const to = kebab(`${other.id}-${service.name}`);
+                for (const target of scan.serviceTargets) {
+                    if (target.otherHost !== other.name || target.config !== config) continue;
+                    const to = kebab(`${other.id}-${target.service.name}`);
                     if (nodes.some((n) => n.id === to)) {
-                        addEdge({
+                        addEdge(edges, {
                             id: `${from}--${to}`,
                             from,
                             to,
@@ -437,59 +410,22 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             }
             // Exporter endpoints whose env token names nothing internal are external
             // systems: LANGFUSE_OTLP_ENDPOINT -> a Langfuse external node.
-            const internalNames = new Set(
-                [...hosts.flatMap((h) => h.name.split(" ")), ...hosts.flatMap((h) => h.services.map((s) => s.name))]
-                    .map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, ""))
-                    .filter(Boolean),
-            );
-            const rawLines = readText(join(repo, config)).split("\n");
-            rawLines.forEach((line, index) => {
-                const envToken = /endpoint:.*\$\{env:([A-Z0-9_]+)\}/.exec(line)?.[1];
-                if (!envToken) return;
-                // Skip when the surrounding exporter block names something internal
-                // (the span store exporter carries a SPAN_INGEST bearer header).
-                const windowText = rawLines
-                    .slice(Math.max(0, index - 4), index + 5)
-                    .join(" ")
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]/g, "");
-                if ([...internalNames].some((name) => name.length >= 4 && windowText.includes(name))) return;
-                const candidate = envToken
-                    .split("_")
-                    .filter(
-                        (word) =>
-                            ![
-                                "OTLP",
-                                "HTTP",
-                                "GRPC",
-                                "ENDPOINT",
-                                "URL",
-                                "ADDR",
-                                "HOST",
-                                "PROD",
-                                "UAT",
-                                "DEV",
-                                "TEST",
-                                "STAGING",
-                            ].includes(word),
-                    )
-                    .join(" ")
-                    .toLowerCase();
-                if (candidate.length < 4) return;
-                const externalId = kebab(candidate);
+            for (const external of scan.externals) {
+                if (external.config !== config) continue;
+                const externalId = kebab(external.candidate);
                 if (!nodes.some((n) => n.id === externalId)) {
                     nodes.push({
                         id: externalId,
-                        label: titleCase(candidate),
+                        label: titleCase(external.candidate),
                         kind: "external",
                         archetype: "cloud",
                         parentId: ensureExternalsDistrict(),
-                        description: `External receiver declared by the ${host.name} host's exporter configuration (${envToken}).`,
+                        description: `External receiver declared by the ${host.name} host's exporter configuration (${external.envToken}).`,
                         sourceRefs: [{ path: config }],
                         display: { flowLayer: 4 },
                     });
                 }
-                addEdge({
+                addEdge(edges, {
                     id: `${from}--${externalId}`,
                     from,
                     to: externalId,
@@ -498,7 +434,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     label: "OTLP export",
                     sourceRefs: [{ path: config }],
                 });
-            });
+            }
         }
     }
 
@@ -539,7 +475,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 sourceRefs: [{ path: edgeHost.file }],
                 display: { flowLayer: 1 },
             });
-            addEdge({
+            addEdge(edges, {
                 id: `edge-worker--${id}`,
                 from: "edge-worker",
                 to: id,
@@ -658,8 +594,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         for (const room of pkgRooms) {
             const expandable = hasInteriorStructure(room);
             const children = expandable ? childRoomsOf(room) : [];
-            const label =
-                room.segment === "(root)" ? "Top-level files" : titleCase(room.segment.split(sep).join(" / "));
+            const label = roomLabel(room.segment);
             let parentId: string | undefined;
             const reassigned = pathReassignments.get(room.id);
             if (reassigned) {
@@ -677,7 +612,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 }
                 const fromRoom = fileToRoom.get(reassigned.fromFile);
                 if (fromRoom) {
-                    addEdge({
+                    addEdge(edges, {
                         id: `${fromRoom.id}--${room.id}`,
                         from: fromRoom.id,
                         to: room.id,
@@ -705,10 +640,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     // plumbing, not deployment shape: excluded by decision.
                     if (child.seg === "(files)" || child.seg === "lib") continue;
                     const childId = uniqueNodeId(kebab(`${room.id}-${child.seg}`));
-                    const childLoc = child.files.reduce(
-                        (sum, f) => sum + readText(join(repo, f)).split("\n").length,
-                        0,
-                    );
+                    const childLoc = linesOf(repo, child.files);
                     const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
                     // Same entry classification as the overview (O2): a script-referenced
                     // file or an entry-named loose file (redeploy-cli) is an entry point.
@@ -779,7 +711,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             (r) => r.pkg === ownerPkg && entryDirNames.has(basename(r.segment)) && nodes.some((n) => n.id === r.id),
         );
         if (entryRoom) {
-            addEdge({
+            addEdge(edges, {
                 id: `${entryRoom.id}--edge-worker`,
                 from: entryRoom.id,
                 to: "edge-worker",
@@ -801,7 +733,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         for (const promoted of promotedNodes) {
             const emitsOtlp = promoted.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f))));
             if (!emitsOtlp) continue;
-            addEdge({
+            addEdge(edges, {
                 id: `${promoted.id}--${collectorTarget.id}`,
                 from: promoted.id,
                 to: collectorTarget.id,
@@ -823,7 +755,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     for (const [key, count] of roomEdges) {
         const [from, to] = splitEdgeKey(key);
         if (!nodeIds.has(from) || !nodeIds.has(to)) continue;
-        addEdge({
+        addEdge(edges, {
             id: `${from}--${to}`,
             from,
             to,
@@ -835,7 +767,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     for (const key of packageEdges.keys()) {
         const [from, to] = splitEdgeKey(key);
         if (nodeIds.has(from) && nodeIds.has(to)) {
-            addEdge({ id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
+            addEdge(edges, { id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
         }
     }
 
@@ -852,7 +784,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     }
     for (const [key, count] of ownerEdgeCounts) {
         const [from, to] = splitEdgeKey(key);
-        addEdge({
+        addEdge(edges, {
             id: `${from}--${to}`,
             from,
             to,
@@ -882,7 +814,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             // nodeIds is a snapshot taken before this section; nodes.some also
             // covers anything pushed since, so it subsumes the snapshot check.
             if (from !== undefined && nodes.some((n) => n.id === from)) {
-                addEdge({
+                addEdge(edges, {
                     id: `${from}--drizzle-database`,
                     from,
                     to: "drizzle-database",
@@ -897,8 +829,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // the node lives in the district of the first module importing the SDK, and
     // importers get inferred reads/writes data flow.
     for (const database of embeddedDatabases) {
-        const escaped = database.depName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const importPattern = new RegExp(`(from\\s+|require\\()["']${escaped}`);
+        const importPattern = sdkImportPattern(database.depName);
         const importerOwners: string[] = [];
         for (const file of sourceFiles) {
             if (!importPattern.test(readText(join(repo, file)))) continue;
@@ -920,7 +851,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             display: { flowLayer: 2 },
         });
         for (const owner of importerOwners) {
-            addEdge({
+            addEdge(edges, {
                 id: `${owner}--${database.id}`,
                 from: owner,
                 to: database.id,
@@ -1030,7 +961,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 });
             }
             if (workflow.storage.downloads) {
-                addEdge({
+                addEdge(edges, {
                     id: `${storeId}--${jobId}`,
                     from: storeId,
                     to: jobId,
@@ -1041,7 +972,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 });
             }
             if (workflow.storage.uploads) {
-                addEdge({
+                addEdge(edges, {
                     id: `${jobId}--${storeId}`,
                     from: jobId,
                     to: storeId,
@@ -1055,7 +986,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         for (const upstream of workflow.triggeredBy) {
             const upstreamId = ciJobId.get(upstream);
             if (upstreamId) {
-                addEdge({
+                addEdge(edges, {
                     id: `${upstreamId}--${jobId}`,
                     from: upstreamId,
                     to: jobId,
@@ -1069,7 +1000,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         for (const invocation of workflow.invocations) {
             const entryOwner = nodeOwningFile(invocation.file);
             if (entryOwner) {
-                addEdge({
+                addEdge(edges, {
                     id: `${jobId}--${entryOwner}`,
                     from: jobId,
                     to: entryOwner,
@@ -1083,7 +1014,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 const handlerFile = subcommandHandlerFile(invocation.file, invocation.sub);
                 const handlerOwner = handlerFile ? nodeOwningFile(handlerFile) : null;
                 if (handlerOwner && handlerOwner !== entryOwner && handlerFile) {
-                    addEdge({
+                    addEdge(edges, {
                         id: `${jobId}--${handlerOwner}-h`,
                         from: jobId,
                         to: handlerOwner,
@@ -1145,7 +1076,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 });
             }
             if (fromId) {
-                addEdge({
+                addEdge(edges, {
                     id: `${externalId}--${fromId}`,
                     from: externalId,
                     to: fromId,
@@ -1181,11 +1112,11 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     for (const external of nodes.filter((n) => n.kind === "external")) {
         const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (name.length < 4) continue;
-        const referencePattern = new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
+        const referencePattern = externalReferencePattern(name);
         for (const { id, files } of classificationSets) {
             if (id === external.id || !files.length) continue;
             if (files.some((f) => referencePattern.test(readText(join(repo, f))))) {
-                addEdge({
+                addEdge(edges, {
                     id: `${id}--${external.id}-d`,
                     from: id,
                     to: external.id,
@@ -1205,10 +1136,10 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         // of code, floor area from the worst single function inside. Height is
         // log-scaled — these are multi-file aggregates (services run to 5 figures
         // of loc) and the overview's linear cap would flatten them all.
-        const sizedLoc = files.reduce((sum, f) => sum + readText(join(repo, f)).split("\n").length, 0);
+        const sizedLoc = linesOf(repo, files);
         const sizedComplexity = Math.max(...files.map((f) => fileMaxFunctionComplexity(f)));
         const sizedHeight = Math.max(0.6, 0.6 + Math.log2(1 + sizedLoc / 200) * 0.55);
-        const sizedFootprint = Math.min(2.5, Math.max(0.95, 0.85 + Math.sqrt(sizedComplexity) / 4));
+        const sizedFootprint = footprintFor(sizedComplexity);
         const coverage = coverageForFiles(files);
         node.metrics = {
             ...(node.metrics ?? {}),
@@ -1244,7 +1175,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             databaseNodes.find((db) => districtLookup.get(db.id) === districtLookup.get(id)) ?? databaseNodes[0];
         if (!database || database.id === id) continue;
         if (writes) {
-            addEdge({
+            addEdge(edges, {
                 id: `${id}--${database.id}-w`,
                 from: id,
                 to: database.id,
@@ -1255,7 +1186,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             });
         }
         if (reads) {
-            addEdge({
+            addEdge(edges, {
                 id: `${database.id}--${id}-r`,
                 from: database.id,
                 to: id,

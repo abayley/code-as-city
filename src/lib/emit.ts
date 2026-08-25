@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import { mermaidId, splitEdgeKey } from "./assembly-helpers.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
 import type { CrontabSchedule } from "./crontab.ts";
 import type { Host } from "./hosts.ts";
@@ -95,8 +96,7 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
     };
 
     const roomEdgeList = [...roomEdges.entries()].map(([key, count]) => {
-        const [from, to] = key.split("->");
-        if (from === undefined || to === undefined) throw new Error(`Malformed room edge key: ${key}`);
+        const [from, to] = splitEdgeKey(key);
         return { from, to, imports: count };
     });
     const dot = [
@@ -110,9 +110,6 @@ export async function emitArtefacts(context: EmitContext): Promise<void> {
     ].join("\n");
 
     // Mermaid views of the result, for following the mapping rules by eye.
-    function mermaidId(id: string): string {
-        return id.replace(/[^a-zA-Z0-9_]/g, "_");
-    }
     function mermaidLabel(text: string): string {
         return text.replace(/"/g, "'");
     }

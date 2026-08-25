@@ -161,9 +161,9 @@ None externally; module boundaries change inside src/lib only.
 ### Phase 1 — types and helpers
 
 - [ ] Extract map-types.ts; both assemblies and emit import it.
-- [ ] Extract assembly-helpers.ts (identical helpers only); replace all
+- [x] Extract assembly-helpers.ts (identical helpers only); replace all
       copies, including emit's and the three inline loc sums.
-- [ ] Deployment consumes hostScan from context; delete its inline
+- [x] Deployment consumes hostScan from context; delete its inline
       host-config scan and the duplicated noise-word list.
 
 ### Phase 2 — shared inference
