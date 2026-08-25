@@ -6,8 +6,10 @@
 // replayed exactly; genuine divergences (edge id suffixes, guard asymmetries,
 // target selection) surface as options.
 
-import { addEdge, externalReferencePattern, sdkImportPattern } from "./assembly-helpers.ts";
+import { sep } from "node:path";
+import { addEdge, externalReferencePattern, fileModuleName, sdkImportPattern } from "./assembly-helpers.ts";
 import type { Host, HostService } from "./hosts.ts";
+import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { MapEdge } from "./map-types.ts";
 import type { EmbeddedDatabase } from "./scans.ts";
 import { OTLP_PATTERN } from "./scans.ts";
@@ -176,4 +178,34 @@ export function classifiedVariantServices(
         }
     }
     return classified;
+}
+
+/**
+ * M3/O2 entry classification, one function with the per-granularity arms
+ * explicit. A file referenced from a package.json script is a DECLARED entry
+ * in every mode. Name-based arms differ by documented rule: the overview's
+ * modules (O2) also qualify via an entry-dir path segment or an entry-named
+ * file, but only when not imported (support modules are plumbing); the
+ * deployment map's residual children (M3) qualify only as a single
+ * entry-named loose file.
+ */
+export function isEntryPoint(options: {
+    files: readonly string[];
+    scriptReferencedFiles: ReadonlySet<string>;
+    nameArm?:
+        | { granularity: "module"; path: string; support: boolean; entryDirNames: ReadonlySet<string> }
+        | { granularity: "child"; seg: string }
+        | undefined;
+}): boolean {
+    if (options.files.some((file) => options.scriptReferencedFiles.has(file))) return true;
+    const arm = options.nameArm;
+    if (arm === undefined) return false;
+    if (arm.granularity === "module") {
+        return (
+            !arm.support &&
+            (arm.path.split(sep).some((seg) => arm.entryDirNames.has(seg)) ||
+                ENTRY_FILE_PATTERN.test(fileModuleName(arm.path)))
+        );
+    }
+    return options.files.length === 1 && ENTRY_FILE_PATTERN.test(arm.seg);
 }

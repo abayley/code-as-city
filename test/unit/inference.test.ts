@@ -5,6 +5,7 @@ import {
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferModuleDataFlows,
+    isEntryPoint,
     type NodeIndexEntry,
 } from "../../src/lib/inference";
 import type { MapEdge } from "../../src/lib/map-types";
@@ -207,5 +208,64 @@ describe("classifiedVariantServices", () => {
         expect(
             classifiedVariantServices([dev, prod]).map(({ candidate, service: s }) => `${candidate.name}/${s.name}`),
         ).toEqual(["dev/postgres", "prod/redis"]);
+    });
+});
+
+describe("isEntryPoint", () => {
+    const scriptReferencedFiles = new Set(["scripts/redeploy.ts"]);
+    const entryDirNames = new Set(["bin", "cli"]);
+
+    it("given a script-referenced file, when classified, then it is an entry in every mode", () => {
+        expect(isEntryPoint({ files: ["scripts/redeploy.ts"], scriptReferencedFiles })).toBe(true);
+        expect(
+            isEntryPoint({
+                files: ["scripts/redeploy.ts"],
+                scriptReferencedFiles,
+                nameArm: { granularity: "child", seg: "helper" },
+            }),
+        ).toBe(true);
+    });
+
+    it("given a module in an entry dir or entry-named (O2), when classified, then only non-support qualifies", () => {
+        const base = { files: ["src/cli/run.ts"], scriptReferencedFiles };
+        const arm = { granularity: "module" as const, path: "src/cli/run.ts", entryDirNames };
+        expect(isEntryPoint({ ...base, nameArm: { ...arm, support: false } })).toBe(true);
+        expect(isEntryPoint({ ...base, nameArm: { ...arm, support: true } })).toBe(false);
+        expect(
+            isEntryPoint({
+                files: ["src/delivery-command.ts"],
+                scriptReferencedFiles,
+                nameArm: {
+                    granularity: "module",
+                    path: "src/delivery-command.ts",
+                    support: false,
+                    entryDirNames,
+                },
+            }),
+        ).toBe(true);
+    });
+
+    it("given a residual child (M3), when classified, then only a single entry-named loose file qualifies", () => {
+        expect(
+            isEntryPoint({
+                files: ["tools/redeploy-cli.ts"],
+                scriptReferencedFiles,
+                nameArm: { granularity: "child", seg: "redeploy-cli" },
+            }),
+        ).toBe(true);
+        expect(
+            isEntryPoint({
+                files: ["tools/a.ts", "tools/b.ts"],
+                scriptReferencedFiles,
+                nameArm: { granularity: "child", seg: "redeploy-cli" },
+            }),
+        ).toBe(false);
+        expect(
+            isEntryPoint({
+                files: ["tools/cli/x.ts"],
+                scriptReferencedFiles,
+                nameArm: { granularity: "child", seg: "cli-helpers" },
+            }),
+        ).toBe(false);
     });
 });

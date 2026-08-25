@@ -18,8 +18,8 @@ import {
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferModuleDataFlows,
+    isEntryPoint,
 } from "./inference.ts";
-import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
@@ -345,11 +345,11 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             // whatever its name. Name-based entries (entry dirs, *-cli/*-command
             // suffixes) only qualify as composers: an imported *-command file (a
             // shared configured-command helper) is plumbing, not an entry.
-            const isEntryModule =
-                m.files.some((f) => scriptReferencedFiles.has(f)) ||
-                (!m.support &&
-                    (m.path.split(sep).some((seg) => entryDirNames.has(seg)) ||
-                        ENTRY_FILE_PATTERN.test(fileModuleName(m.path))));
+            const isEntryModule = isEntryPoint({
+                files: m.files,
+                scriptReferencedFiles,
+                nameArm: { granularity: "module", path: m.path, support: m.support, entryDirNames },
+            });
             const doc = docForFiles(m.files);
             const coverage = coverageForFiles(m.files);
             overviewNodes.push({

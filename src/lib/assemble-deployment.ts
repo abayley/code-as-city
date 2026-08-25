@@ -17,9 +17,9 @@ import {
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferModuleDataFlows,
+    isEntryPoint,
     type NodeIndexEntry,
 } from "./inference.ts";
-import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
@@ -648,9 +648,11 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
                     // Same entry classification as the overview (O2): a script-referenced
                     // file or an entry-named loose file (redeploy-cli) is an entry point.
-                    const childIsEntry =
-                        child.files.some((f) => scriptReferencedFiles.has(f)) ||
-                        (child.files.length === 1 && ENTRY_FILE_PATTERN.test(child.seg));
+                    const childIsEntry = isEntryPoint({
+                        files: child.files,
+                        scriptReferencedFiles,
+                        nameArm: { granularity: "child", seg: child.seg },
+                    });
                     const childEntryFile = child.files[0];
                     nodes.push({
                         id: childId,
