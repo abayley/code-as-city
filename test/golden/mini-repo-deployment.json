@@ -56,6 +56,64 @@
       }
     },
     {
+      "id": "edge-delivery",
+      "label": "Cloudflare edge",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Edge deployment declared in wrangler.toml."
+    },
+    {
+      "id": "edge-worker",
+      "label": "Worker",
+      "kind": "deployable",
+      "archetype": "worker",
+      "parentId": "edge-delivery",
+      "description": "Cloudflare Worker with entry point packages/edge/src/worker.ts.",
+      "sourceRefs": [
+        {
+          "path": "packages/edge/src/worker.ts"
+        }
+      ],
+      "display": {
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-edge-area",
+      "label": "@Mini/Edge",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/edge, rooted at packages/edge/."
+    },
+    {
+      "id": "mini-edge-src",
+      "label": "Src",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-edge-area",
+      "description": "Edge worker serving the mini application.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/edge/src"
+        }
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6272969222485302,
+          0.935
+        ]
+      },
+      "tags": [
+        "http-client"
+      ]
+    },
+    {
       "id": "ci-ci",
       "label": "CI: ci",
       "kind": "scope",

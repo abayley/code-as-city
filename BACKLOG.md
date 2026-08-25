@@ -29,3 +29,9 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   code, shared-code districts coloured purple, zero edges. The viewer wraps
   edge-less district rows into a grid and honours district colours from the
   map. Height ∝ loc is a first slice of the stats-driven dimensions item.
+
+- Wrangler `main` paths are resolved repo-relative only: a wrangler.toml in a
+  subdirectory (packages/edge/wrangler.toml with main = "src/worker.ts") does
+  not resolve its entry file, so the worker source is orphan-excluded instead
+  of becoming a deploy root. Found while fixturing RFC-0001 Phase 0
+  (2026-08-25).
