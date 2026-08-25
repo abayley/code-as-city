@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 
@@ -58,32 +59,6 @@ const IMAGE_CLASSES = [
     { pattern: /nginx|traefik|caddy|haproxy|envoy/, archetype: "gateway" },
     { pattern: /langfuse|latitude|grafana|prometheus|otel|collector/, archetype: "cloud" },
 ];
-
-function parseArguments(argv) {
-    const positionals = [];
-    let outDir;
-    let modulesAsBuildings = false;
-    let overview = false;
-    for (let i = 0; i < argv.length; i += 1) {
-        if (argv[i] === "--out-dir") {
-            outDir = argv[i + 1];
-            i += 1;
-        } else if (argv[i] === "--modules-as-buildings") modulesAsBuildings = true;
-        else if (argv[i] === "--overview") overview = true;
-        else positionals.push(argv[i]);
-    }
-    if (!positionals[0]) {
-        console.error("Usage: generate-map.mjs <target-repo> [--out-dir path] [--modules-as-buildings]");
-        process.exit(2);
-    }
-    const repo = resolve(positionals[0]);
-    return {
-        repo,
-        outDir: resolve(outDir ?? join("out", overview ? `${basename(repo)}-overview` : basename(repo))),
-        modulesAsBuildings,
-        overview,
-    };
-}
 
 // Inventory: prefer `git ls-files` (respects .gitignore, excludes vendored
 // checkouts); fall back to a directory walk. Either way, exclude nested git
@@ -147,7 +122,12 @@ function extensionOf(file) {
     return dot === -1 ? "" : file.slice(dot);
 }
 
-const { repo, outDir, modulesAsBuildings, overview } = parseArguments(process.argv.slice(2));
+const parsedArguments = parseArguments(process.argv.slice(2));
+if (!parsedArguments) {
+    console.error(USAGE);
+    process.exit(2);
+}
+const { repo, outDir, modulesAsBuildings, overview } = parsedArguments;
 
 // Experimental (--modules-as-buildings): every module node with >=2 files
 // becomes a building whose rooms are its files — a preview of "buildings
