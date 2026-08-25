@@ -1,7 +1,7 @@
 ---
 id: RFC-0001
 name: Extract the generator into typed modules per heuristic group
-status: Draft
+status: Completed
 owners:
     - alistairbayley
 created: 2026-08-25
@@ -16,7 +16,7 @@ superseded_by: null
 |-----------|------------------|
 | Authored  | 2026-08-25 20:49 |
 | Started   | 2026-08-25 21:20 |
-| Completed |                  |
+| Completed | 2026-08-25 23:55 |
 
 ## Summary
 
@@ -195,8 +195,11 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 1 — types and shell
 
-- [ ] Add the map/output types module (from the validator's vocabulary and
-      the emitted shapes).
+- [x] Add the map/output types module (from the validator's vocabulary and
+      the emitted shapes). (Resolved differently: MapNode/MapEdge live in
+      assemble-deployment.ts with the other shared types in their owning
+      modules — a standalone types module would have had no consumer until
+      assembly landed and tripped knip's unused-export check.)
 - [x] Extract argument parsing and small pure utilities (kebab, titleCase,
       readJson/readText wrappers) into typed modules with unit tests.
 
@@ -237,8 +240,8 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 ### Phase 6 — close out
 
 - [x] Full live-repo diff across the test repos, both modes.
-- [ ] Update HEURISTICS.md rule-to-module pointers and BACKLOG.md.
-- [ ] Mark this RFC completed.
+- [x] Update HEURISTICS.md rule-to-module pointers and BACKLOG.md.
+- [x] Mark this RFC completed.
 
 ### Rollout Plan Escape Hatch
 

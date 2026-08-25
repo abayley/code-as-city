@@ -1,9 +1,17 @@
 # Heuristics catalogue
 
 Every rule the deterministic generator applies, with its signal, action, and
-known failure modes. Code references are sections of `src/generate-map.mjs`.
-Rules are grouped and numbered by stage; the IDs are stable, so map warnings
-and commit messages can cite them.
+known failure modes. Rules are grouped and numbered by stage; the IDs are
+stable, so map warnings and commit messages can cite them.
+
+Each group lives in a module under `src/lib/`, orchestrated by
+`src/generate-map.ts`: I in `inventory.ts`; S in `packages.ts`, `rooms.ts`,
+and `imports.ts`; C in `coupling.ts`; D in `compose.ts`, `dockerfile.ts`,
+`crontab.ts`, `wrangler.ts`, `workflows.ts`, `hosts.ts`, and `host-config.ts`;
+R in `reachability.ts` and `path-references.ts`; M in
+`assemble-deployment.ts`; O in `assemble-overview.ts` (with `complexity.ts`
+for O6); the coverage/TSDoc/embedded-database scans in `scans.ts`; output in
+`emit.ts`.
 
 ## Inventory (I)
 
