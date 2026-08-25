@@ -219,10 +219,10 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 4 — reachability
 
-- [ ] Extract roots and reachability sets (R1) with unit tests for the QA
+- [x] Extract roots and reachability sets (R1) with unit tests for the QA
       script-name classification.
-- [ ] Extract dev-tooling stripping and QA residue (R2).
-- [ ] Extract cross-package path reassignment (R4).
+- [x] Extract dev-tooling stripping and QA residue (R2).
+- [x] Extract cross-package path reassignment (R4).
 
 ### Phase 5 — assembly and emit
 

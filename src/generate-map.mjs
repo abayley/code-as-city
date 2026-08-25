@@ -17,6 +17,7 @@ import { buildHosts } from "./lib/hosts.ts";
 import { IMPORT_PATTERN, scanImports } from "./lib/imports.ts";
 import { ENTRY_FILE_PATTERN, extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
+import { findPathReassignments } from "./lib/path-references.ts";
 import { analyseReachability, stripDevTooling } from "./lib/reachability.ts";
 import { readJson, readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
@@ -960,36 +961,7 @@ function layerByLongestPath(ids, edges, entries) {
 }
 
 // --- 6c. Cross-package path references --------------------------------------------
-// A string literal in one package's code that resolves into another area's
-// directory (e.g. the CLI bundling "../../skills/map-codebase") is a declared
-// dependency: the referenced area is reassigned to the referencing package's
-// district.
-const pathReassignments = new Map(); // roomId -> { pkg, fromFile }
-for (const file of sourceFiles) {
-    const text = readText(join(repo, file));
-    const fromPkg = owningPackage(file);
-    // Plain relative imports are ordinary dependencies (S3 edges), not area
-    // claims: a root-package QA script importing ../tools/x/src/core must not
-    // steal the room. Only non-import path literals reassign.
-    const importSpecifiers = new Set([...text.matchAll(IMPORT_PATTERN)].map((m) => m[1]));
-    for (const match of text.matchAll(/["']((?:\.\.\/)+[^"'\n]+)["']/g)) {
-        if (importSpecifiers.has(match[1])) continue;
-        // The literal may be relative to the file's directory or to the package
-        // root (the `resolve(packageRoot, "...")` idiom): try both bases.
-        const bases = [dirname(file), fromPkg?.dir ?? "."];
-        for (const base of bases) {
-            const resolved = join(base === "." ? "" : base, match[1]);
-            if (resolved.startsWith("..")) continue;
-            for (const room of rooms.values()) {
-                if (room.pkg === fromPkg || room.segment === "(root)") continue;
-                const segDir = room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
-                if ((resolved === segDir || resolved.startsWith(segDir + sep)) && !pathReassignments.has(room.id)) {
-                    pathReassignments.set(room.id, { pkg: fromPkg, fromFile: file });
-                }
-            }
-        }
-    }
-}
+const pathReassignments = findPathReassignments(repo, packages, rooms, sourceFiles);
 
 // --- 7. Assemble the map --------------------------------------------------------------
 
