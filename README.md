@@ -27,8 +27,8 @@ absolute paths, so it cannot be committed), which the coverage scan reads.
 
 ```bash
 bun run test
-node src/generate-map.mjs test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt)' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
-node src/generate-map.mjs test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
+bun src/generate-map.mjs test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt)' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
+bun src/generate-map.mjs test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
 ```
 
 Knip's duplicate-export check is excluded: `viewer/lib/palette.ts` aliases
@@ -55,9 +55,9 @@ data flow, for now).
 ## Run
 
 ```bash
-node src/generate-map.mjs ~/git/functionary.dev
-node src/generate-map.mjs ~/git/aria-evals
-node src/generate-map.mjs ~/git/aria-evals --overview --out-dir out/aria-evals-overview
+bun src/generate-map.mjs ~/git/functionary.dev
+bun src/generate-map.mjs ~/git/aria-evals
+bun src/generate-map.mjs ~/git/aria-evals --overview --out-dir out/aria-evals-overview
 node vendor/functionary/validate-city-map.mjs out/aria-evals/map.json
 bun run dev   # local viewer at http://localhost:5173
 ```

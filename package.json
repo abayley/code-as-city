@@ -5,7 +5,7 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "generate": "node src/generate-map.mjs",
+        "generate": "bun src/generate-map.mjs",
         "typecheck": "tsc --noEmit",
         "lint": "biome check .",
         "format": "biome format --write .",

@@ -25,7 +25,7 @@ afterAll(() => {
 function generateMap(extraArguments: readonly string[]): Record<string, unknown> {
     const outDir = mkdtempSync(join(tmpdir(), "code-as-city-test-"));
     tempDirs.push(outDir);
-    execFileSync("node", [generator, fixtureRepo, ...extraArguments, "--out-dir", outDir], { stdio: "pipe" });
+    execFileSync("bun", [generator, fixtureRepo, ...extraArguments, "--out-dir", outDir], { stdio: "pipe" });
     const mapPath = join(outDir, "map.json");
     execFileSync("node", [validator, mapPath], { stdio: "pipe" });
     const map = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, unknown> & { generatedAt?: string };
