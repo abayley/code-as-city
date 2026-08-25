@@ -1,4 +1,5 @@
 FROM node:22-slim
 WORKDIR /app
-COPY . .
-CMD ["node", "src/server.ts"]
+COPY packages/api packages/api
+COPY packages/shared packages/shared
+CMD ["node", "packages/api/src/server.ts"]

@@ -68,7 +68,8 @@
       "metrics": {
         "loc": 16,
         "complexity": 1,
-        "files": 1
+        "files": 1,
+        "coverage": 50
       },
       "tags": [
         "composer"
@@ -313,7 +314,8 @@
       "metrics": {
         "loc": 5,
         "complexity": 1,
-        "files": 1
+        "files": 1,
+        "coverage": 100
       },
       "tags": [
         "composer"

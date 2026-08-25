@@ -179,16 +179,16 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 0 — strengthen the safety net (goldens change here, deliberately)
 
-- [ ] Extend mini-repo (or add a sibling fixture) with a wrangler worker
+- [x] Extend mini-repo (or add a sibling fixture) with a wrangler worker
       config and entry file.
-- [ ] Add a crontab referencing a compose service (schedule tags).
-- [ ] Add a coverage artefact so the coverage scan produces metrics.
-- [ ] Add file-level TSDoc blocks that surface as node descriptions.
-- [ ] Add a migrations directory (collapse rule O3).
-- [ ] Add an embedded-database dependency (D13/O11).
-- [ ] Add enough utility modules to trigger coupling elimination (C2) and a
+- [x] Add a crontab referencing a compose service (schedule tags).
+- [x] Add a coverage artefact so the coverage scan produces metrics.
+- [x] Add file-level TSDoc blocks that surface as node descriptions.
+- [x] Add a migrations directory (collapse rule O3).
+- [x] Add an embedded-database dependency (D13/O11).
+- [x] Add enough utility modules to trigger coupling elimination (C2) and a
       second compose variant to trigger host dedupe (D-group).
-- [ ] Verify each addition changes the goldens in the expected way (nodes,
+- [x] Verify each addition changes the goldens in the expected way (nodes,
       tags, warnings) before regenerating them; document any heuristic that
       turns out impractical to fixture and fall back to live-repo diffs for
       it.

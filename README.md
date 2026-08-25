@@ -21,9 +21,12 @@ The golden-master tests in `test/generate-map.test.ts` run the generator over
 the committed fixture repo `test/fixtures/mini-repo`, validate the output with
 the vendored functionary validator, and compare against the golden maps in
 `test/golden/` (ignoring `generatedAt`). If a generator change intentionally
-alters output, regenerate the goldens:
+alters output, regenerate the goldens. Run the tests once first: they write
+the fixture's gitignored coverage/coverage-summary.json (Istanbul keys are
+absolute paths, so it cannot be committed), which the coverage scan reads.
 
 ```bash
+bun run test
 node src/generate-map.mjs test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt)' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
 node src/generate-map.mjs test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
 ```

@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { prepareMiniRepo } from "./prepare-mini-repo";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const generator = join(repoRoot, "src", "generate-map.mjs");
@@ -11,6 +12,10 @@ const validator = join(repoRoot, "vendor", "functionary", "validate-city-map.mjs
 const fixtureRepo = join(repoRoot, "test", "fixtures", "mini-repo");
 
 const tempDirs: string[] = [];
+
+beforeAll(() => {
+    prepareMiniRepo();
+});
 
 afterAll(() => {
     for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });

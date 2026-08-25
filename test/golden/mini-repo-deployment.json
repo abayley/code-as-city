@@ -19,23 +19,72 @@
       "id": "host-host-api",
       "label": "Api",
       "kind": "deployable",
-      "archetype": "worker",
+      "archetype": "building",
       "parentId": "host-host",
-      "description": "Scheduled job: 0 3 * * *",
+      "description": "Starts the HTTP server.\n\nScheduled job: 0 3 * * *",
       "attributes": {
-        "service-source": "packages/api/Dockerfile"
+        "service-source": "packages/api/Dockerfile",
+        "entry-point": "packages/api/src/server.ts"
       },
       "sourceRefs": [
         {
           "path": "packages/api/Dockerfile"
         }
       ],
+      "metrics": {
+        "loc": 62,
+        "complexity": 1,
+        "coverage": 62.5
+      },
       "tags": [
         "cron",
         "listens"
       ],
       "display": {
-        "flowLayer": 1
+        "flowLayer": 1,
+        "size": [
+          1.1,
+          0.8142617464694991,
+          0.935
+        ]
+      }
+    },
+    {
+      "id": "host-host-api-packages-api",
+      "label": "Api",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "host-host-api",
+      "description": "Source copied from packages/api/ into the api image.",
+      "sourceRefs": [
+        {
+          "path": "packages/api"
+        }
+      ],
+      "metrics": {
+        "loc": 8
+      },
+      "display": {
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "host-host-api-packages-shared",
+      "label": "Shared",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "host-host-api",
+      "description": "Source copied from packages/shared/ into the api image.",
+      "sourceRefs": [
+        {
+          "path": "packages/shared"
+        }
+      ],
+      "metrics": {
+        "loc": 1
+      },
+      "display": {
+        "flowLayer": 0
       }
     },
     {
@@ -96,18 +145,42 @@
       }
     },
     {
-      "id": "mini-api-area",
-      "label": "@Mini/Api",
+      "id": "mini-api-src-district",
+      "label": "Src",
       "kind": "scope",
       "archetype": "district",
-      "description": "Package @mini/api, rooted at packages/api/."
+      "description": "Standalone area: src/."
+    },
+    {
+      "id": "mini-api-src-server",
+      "label": "Server",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-src-district",
+      "description": "Starts the HTTP server.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/server.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 16,
+        "complexity": 1,
+        "coverage": 50
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6610672218138092,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-api-src-jobs",
       "label": "Src / Jobs",
       "kind": "module",
       "archetype": "worker",
-      "parentId": "mini-api-area",
       "description": "Nightly sweep job.\n\n1 source file under src/jobs/.",
       "sourceRefs": [
         {
@@ -128,11 +201,65 @@
       }
     },
     {
+      "id": "mini-api-src-migrations-district",
+      "label": "Src / Migrations",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Standalone area: src/migrations/."
+    },
+    {
+      "id": "mini-api-src-migrations-0001-init",
+      "label": "0001 Init",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-src-migrations-district",
+      "description": "Creates the initial tables.\n\n1 source file under src/migrations/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/migrations/0001_init.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
+    },
+    {
+      "id": "mini-api-src-migrations-0002-greeting",
+      "label": "0002 Greeting",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-src-migrations-district",
+      "description": "Adds the greeting column.\n\n1 source file under src/migrations/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/migrations/0002_greeting.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
+    },
+    {
       "id": "mini-api-src-routes",
       "label": "Src / Routes",
       "kind": "module",
       "archetype": "gateway",
-      "parentId": "mini-api-area",
       "description": "Health check route.\n\n1 source file under src/routes/.",
       "sourceRefs": [
         {
@@ -188,10 +315,36 @@
       ]
     },
     {
+      "id": "mini-shared-src",
+      "label": "Src",
+      "kind": "module",
+      "archetype": "worker",
+      "description": "Formats a greeting for the given name.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/shared/src"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "coverage": 100
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
+    },
+    {
       "id": "infra-better-sqlite3",
       "label": "SQLite database",
       "kind": "infra",
       "archetype": "database",
+      "parentId": "host-host",
       "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
       "sourceRefs": [
         {
@@ -243,6 +396,73 @@
       "kind": "depends_on",
       "evidence": "declared",
       "label": "compose depends_on"
+    },
+    {
+      "id": "mini-api-src-jobs--host-host-api",
+      "from": "mini-api-src-jobs",
+      "to": "host-host-api",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-routes--host-host-api",
+      "from": "mini-api-src-routes",
+      "to": "host-host-api",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-server--host-host-api",
+      "from": "mini-api-src-server",
+      "to": "host-host-api",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "3 imports"
+    },
+    {
+      "id": "mini-api-src-server--mini-api-src-jobs",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-jobs",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-server--mini-api-src-routes",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-routes",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "host-host-api--infra-better-sqlite3",
+      "from": "host-host-api",
+      "to": "infra-better-sqlite3",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "reads/writes",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ]
+    },
+    {
+      "id": "ci-ci-job--host-host-api-packages-shared",
+      "from": "ci-ci-job",
+      "to": "host-host-api-packages-shared",
+      "kind": "calls",
+      "evidence": "declared",
+      "label": "runs greeting.test.ts",
+      "sourceRefs": [
+        {
+          "path": ".github/workflows/ci.yml"
+        }
+      ]
     }
   ],
   "warnings": [
@@ -250,9 +470,6 @@
     "Test directories and *.test/*.spec files are excluded.",
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: src/lib.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
-    "Orphan area excluded (unreferenced, undeployed): src (3 files).",
-    "Orphan area excluded (unreferenced, undeployed): src/migrations (2 files).",
-    "Orphan area excluded (unreferenced, undeployed): src (1 files).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files)."
   ]
 }
