@@ -226,8 +226,8 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 ### Phase 5 — assembly and emit
 
-- [ ] Extract flow layering and shared assembly helpers.
-- [ ] Extract the overview assembly (O) as a function returning the map.
+- [x] Extract flow layering and shared assembly helpers.
+- [x] Extract the overview assembly (O) as a function returning the map.
 - [ ] Extract the deployment assembly (M) as a function returning the map.
 - [ ] Extract emit (map.json and intermediates).
 - [ ] Replace src/generate-map.mjs with src/generate-map.ts (importable, with
