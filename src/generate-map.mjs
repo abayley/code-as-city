@@ -19,6 +19,7 @@ import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
 import { discoverPackages, owningPackage as owningPackageOf, packageDirsOf } from "./lib/packages.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
+import { buildRooms } from "./lib/rooms.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -91,51 +92,7 @@ const packages = discoverPackages(repo, packageDirs);
 const owningPackage = (file) => owningPackageOf(packages, file);
 
 // --- 3. Rooms -------------------------------------------------------------------
-// Room key = first path segment within the package; a dominant segment holding
-// most of the package's files (e.g. src/) is expanded one level deeper.
-
-function segmentsFor(pkg) {
-    const locals = sourceFiles
-        .filter((f) => owningPackage(f) === pkg)
-        .map((f) => (pkg.dir === "." ? f : relative(pkg.dir, f)));
-    const byFirst = new Map();
-    for (const local of locals) {
-        const first = local.includes(sep) ? local.split(sep)[0] : "(root)";
-        byFirst.set(first, (byFirst.get(first) ?? 0) + 1);
-    }
-    const dominant = [...byFirst.entries()].find(
-        ([seg, count]) =>
-            seg !== "(root)" &&
-            count / locals.length > 0.6 &&
-            locals.some((l) => l.startsWith(seg + sep) && l.split(sep).length > 2),
-    );
-    return { dominant: dominant?.[0] ?? null };
-}
-
-const packageSegmentation = new Map(packages.map((pkg) => [pkg, segmentsFor(pkg)]));
-
-const rooms = new Map(); // roomId -> { id, pkg, segment, files, loc }
-function roomFor(file) {
-    const pkg = owningPackage(file);
-    if (!pkg) return null;
-    const local = pkg.dir === "." ? file : relative(pkg.dir, file);
-    const parts = local.split(sep);
-    const { dominant } = packageSegmentation.get(pkg);
-    let segment;
-    if (parts.length === 1) segment = "(root)";
-    else if (parts[0] === dominant && parts.length > 2) segment = join(parts[0], parts[1]);
-    else segment = parts[0];
-    const id = `${pkg.id}-${kebab(segment)}`;
-    if (!rooms.has(id)) rooms.set(id, { id, pkg, segment, files: [], loc: 0 });
-    return rooms.get(id);
-}
-
-for (const file of sourceFiles) {
-    const room = roomFor(file);
-    if (!room) continue;
-    room.files.push(file);
-    room.loc += readText(join(repo, file)).split("\n").length;
-}
+const rooms = buildRooms(repo, packages, sourceFiles);
 
 // --- 4. Import scan ---------------------------------------------------------------
 
