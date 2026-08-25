@@ -10,7 +10,7 @@
       "label": "@Mini/Api",
       "kind": "scope",
       "archetype": "district",
-      "description": "Function area: packages/api/ — 2 modules.",
+      "description": "Function area: packages/api/ — 3 modules.",
       "tags": [
         "band:Shared & support"
       ],
@@ -81,6 +81,37 @@
         ],
         "color": "#C77740",
         "flowLayer": 0,
+        "flowOrder": 2
+      }
+    },
+    {
+      "id": "mini-api-src-migrations",
+      "label": "Migrations (2)",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-district",
+      "description": "Creates the initial tables.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/migrations"
+        }
+      ],
+      "metrics": {
+        "loc": 10,
+        "complexity": 1,
+        "files": 2
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
         "flowOrder": 1
       }
     },

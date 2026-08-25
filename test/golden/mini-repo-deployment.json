@@ -155,6 +155,7 @@
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: none.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
     "Orphan area excluded (unreferenced, undeployed): src (2 files).",
+    "Orphan area excluded (unreferenced, undeployed): src/migrations (2 files).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files)."
   ]
