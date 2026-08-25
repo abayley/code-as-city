@@ -16,34 +16,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
+import { extensionOf, inventory, isTestPath } from "./lib/inventory.ts";
 import { readJson, readJsonSafe, readText } from "./lib/read.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 
-const IGNORED_DIRS = new Set([
-    "node_modules",
-    ".git",
-    ".next",
-    "dist",
-    "build",
-    "coverage",
-    ".wrangler",
-    ".turbo",
-    "out",
-    "vendor",
-    ".venv",
-    "__pycache__",
-    ".functionary",
-    ".repo-city",
-    "generated",
-    "docs",
-    "examples",
-    "data",
-]);
-// Codebase/dev utilities are detected by reachability, not by name: code
-// reachable only from package.json scripts and imported by nothing that
-// deploys is excluded from the map (see section 6b).
-const TEST_DIRS = new Set(["test", "tests", "__tests__", "test-database", "testing"]);
-const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const ENTRY_DIR_NAMES = new Set(["bin", "app", "pages", "routes", "cmd", "cli", "api"]);
 // Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
@@ -59,68 +35,6 @@ const IMAGE_CLASSES = [
     { pattern: /nginx|traefik|caddy|haproxy|envoy/, archetype: "gateway" },
     { pattern: /langfuse|latitude|grafana|prometheus|otel|collector/, archetype: "cloud" },
 ];
-
-// Inventory: prefer `git ls-files` (respects .gitignore, excludes vendored
-// checkouts); fall back to a directory walk. Either way, exclude nested git
-// repositories (vendored third-party code) and generated/dependency dirs.
-function inventory(root) {
-    let files;
-    if (existsSync(join(root, ".git"))) {
-        const result = spawnSync("git", ["-C", root, "ls-files", "-z"], {
-            encoding: "utf8",
-            maxBuffer: 64 * 1024 * 1024,
-        });
-        files = result.status === 0 ? result.stdout.split("\0").filter(Boolean) : null;
-    }
-    files ??= walk(root);
-    const nestedRepos = new Set();
-    for (const file of files) {
-        const parts = file.split(sep);
-        for (let depth = 1; depth < parts.length; depth += 1) {
-            const dir = parts.slice(0, depth).join(sep);
-            if (!nestedRepos.has(dir) && existsSync(join(root, dir, ".git"))) nestedRepos.add(dir);
-        }
-    }
-    return files
-        .filter((f) => ![...nestedRepos].some((dir) => f.startsWith(dir + sep)))
-        .filter((f) => !f.split(sep).some((seg) => IGNORED_DIRS.has(seg)))
-        .sort();
-}
-
-function walk(root) {
-    const files = [];
-    const stack = [root];
-    while (stack.length) {
-        const dir = stack.pop();
-        // Unreadable dirs (macOS-protected bundles like Photos Library) are
-        // skipped rather than crashing the walk.
-        let entries;
-        try {
-            entries = readdirSync(dir, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-        for (const entry of entries) {
-            if (entry.name.startsWith(".") && entry.name !== ".github") continue;
-            const full = join(dir, entry.name);
-            if (entry.isDirectory()) {
-                if (!IGNORED_DIRS.has(entry.name) && !existsSync(join(full, ".git"))) stack.push(full);
-            } else if (entry.isFile()) {
-                files.push(relative(root, full));
-            }
-        }
-    }
-    return files.sort();
-}
-
-function isTestPath(file) {
-    return file.split(sep).some((seg) => TEST_DIRS.has(seg)) || TEST_FILE_PATTERN.test(file);
-}
-
-function extensionOf(file) {
-    const dot = file.lastIndexOf(".");
-    return dot === -1 ? "" : file.slice(dot);
-}
 
 const parsedArguments = parseArguments(process.argv.slice(2));
 if (!parsedArguments) {

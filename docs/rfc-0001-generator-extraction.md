@@ -197,7 +197,7 @@ Tiny commits; each leaves `bun run check` green and goldens byte-identical.
 
 - [ ] Add the map/output types module (from the validator's vocabulary and
       the emitted shapes).
-- [ ] Extract argument parsing and small pure utilities (kebab, titleCase,
+- [x] Extract argument parsing and small pure utilities (kebab, titleCase,
       readJson/readText wrappers) into typed modules with unit tests.
 
 ### Phase 2 — front of the pipeline
