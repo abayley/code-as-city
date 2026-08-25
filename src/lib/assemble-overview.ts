@@ -4,6 +4,7 @@ import type { Coupling } from "./coupling.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
+import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { EmbeddedDatabase } from "./scans.ts";
@@ -14,49 +15,6 @@ import type { EdgeHost } from "./wrangler.ts";
 // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
 // migrations directory; only overview mode groups them.
 const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
-
-type FileEdge = { from: string; to: string };
-
-type SourceRef = { path: string };
-
-type OverviewDisplay = {
-    color?: string | undefined;
-    flowLayer?: number | undefined;
-    flowOrder?: number | undefined;
-    size?: [number, number, number] | undefined;
-};
-
-type OverviewMetrics = {
-    loc: number;
-    complexity?: number | undefined;
-    files?: number | undefined;
-    coverage?: number | undefined;
-};
-
-type OverviewNode = {
-    id: string;
-    label: string;
-    kind: string;
-    archetype: string;
-    parentId?: string | undefined;
-    description?: string | undefined;
-    attributes?: Record<string, string> | undefined;
-    sourceRefs?: SourceRef[] | undefined;
-    metrics?: OverviewMetrics | undefined;
-    tags?: string[] | undefined;
-    display?: OverviewDisplay | undefined;
-};
-
-type OverviewEdge = {
-    id: string;
-    from: string;
-    to: string;
-    kind: string;
-    evidence: string;
-    confidence?: number | undefined;
-    label?: string | undefined;
-    sourceRefs?: SourceRef[] | undefined;
-};
 
 // A module: { id, label, files, path, support, collapsed }
 type OverviewModule = {
@@ -308,7 +266,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }
     }
 
-    const overviewNodes: OverviewNode[] = [];
+    const overviewNodes: MapNode[] = [];
     const allModules: { id: string; files: string[] }[] = []; // for flow-edge classification
     const fileToModule = new Map<string, string>(); // source file -> module node id (for flow edges)
 
@@ -428,8 +386,8 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // Infrastructure & external systems: image-only compose services (databases,
     // collectors), config-declared external receivers, wrangler, drizzle.
     const infraMembers: InfraMember[] = [];
-    const overviewEdges: OverviewEdge[] = [];
-    const addOverviewEdge = (edge: OverviewEdge) => {
+    const overviewEdges: MapEdge[] = [];
+    const addMapEdge = (edge: MapEdge) => {
         if (!overviewEdges.some((e) => e.id === edge.id)) overviewEdges.push(edge);
     };
     const infraCollectorFor = (host: Host) => {
@@ -467,7 +425,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                 external: true,
             });
             if (from) {
-                addOverviewEdge({
+                addMapEdge({
                     id: `${from}--${externalId}`,
                     from,
                     to: externalId,
@@ -486,7 +444,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                     const forwardConfig = scan.configs[0];
                     if (forwardConfig === undefined)
                         throw new Error(`host ${host.name} has host targets but no configs`);
-                    addOverviewEdge({
+                    addMapEdge({
                         id: `${from}--${to}`,
                         from,
                         to,
@@ -500,7 +458,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             for (const { service, config } of scan.serviceTargets) {
                 const targetModule = service.entryFile ? fileToModule.get(service.entryFile) : null;
                 if (targetModule) {
-                    addOverviewEdge({
+                    addMapEdge({
                         id: `${from}--${targetModule}`,
                         from,
                         to: targetModule,
@@ -626,7 +584,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     for (const m of allModules) {
         const texts = m.files.map((f) => readText(join(repo, f)));
         if (otlpTarget && texts.some((t) => OTLP_PATTERN.test(t))) {
-            addOverviewEdge({
+            addMapEdge({
                 id: `${m.id}--${otlpTarget.id}`,
                 from: m.id,
                 to: otlpTarget.id,
@@ -638,7 +596,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }
         if (databaseTarget && m.id !== databaseTarget.id) {
             if (texts.some((t) => dbWritePattern.test(t))) {
-                addOverviewEdge({
+                addMapEdge({
                     id: `${m.id}--${databaseTarget.id}-w`,
                     from: m.id,
                     to: databaseTarget.id,
@@ -649,7 +607,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                 });
             }
             if (texts.some((t) => dbReadPattern.test(t))) {
-                addOverviewEdge({
+                addMapEdge({
                     id: `${databaseTarget.id}--${m.id}-r`,
                     from: databaseTarget.id,
                     to: m.id,
@@ -669,7 +627,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         const importPattern = new RegExp(`(from\\s+|require\\()["']${escaped}`);
         for (const m of allModules) {
             if (m.files.some((f) => importPattern.test(readText(join(repo, f))))) {
-                addOverviewEdge({
+                addMapEdge({
                     id: `${m.id}--${db.id}-u`,
                     from: m.id,
                     to: db.id,
@@ -690,7 +648,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         const referencePattern = new RegExp(`from\\s+["'][^"']*${name}|\\b${name.toUpperCase()}_[A-Z]`);
         for (const m of allModules) {
             if (m.files.some((f) => referencePattern.test(readText(join(repo, f))))) {
-                addOverviewEdge({
+                addMapEdge({
                     id: `${m.id}--${external.id}-d`,
                     from: m.id,
                     to: external.id,
@@ -716,7 +674,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     for (const [key, count] of importCounts) {
         const [from, to] = key.split("->");
         if (from === undefined || to === undefined) throw new Error(`malformed import-count key ${key}`);
-        addOverviewEdge({
+        addMapEdge({
             id: `${from}--${to}-i`,
             from,
             to,
@@ -727,9 +685,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     }
 
     const emittedOverviewIds = new Set(overviewNodes.map((n) => n.id));
-    const finalOverviewEdges = overviewEdges.filter(
-        (e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to),
-    );
+    const finalMapEdges = overviewEdges.filter((e) => emittedOverviewIds.has(e.from) && emittedOverviewIds.has(e.to));
 
     const overviewMap = {
         schemaVersion: 1,
@@ -739,7 +695,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         summary: "Module overview: every module as a structure, grouped by directory; no dependency edges.",
         generatedAt: new Date().toISOString(),
         nodes: overviewNodes,
-        edges: finalOverviewEdges,
+        edges: finalMapEdges,
         warnings: [
             "Overview mode: orphan exclusion is intentionally skipped; QA-only dev tooling is stripped as in the deployment map.",
             ...devToolingWarnings,

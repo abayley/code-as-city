@@ -15,7 +15,7 @@ superseded_by: null
 | Stage     | Timestamp        |
 |-----------|------------------|
 | Authored  | 2026-08-26 00:35 |
-| Started   |                  |
+| Started   | 2026-08-26 00:45 |
 | Completed |                  |
 
 ## Summary

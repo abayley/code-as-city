@@ -1,15 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
-import type { MapEdge, MapNode } from "./assemble-deployment.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
 import type { CrontabSchedule } from "./crontab.ts";
 import type { Host } from "./hosts.ts";
+import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import type { Package } from "./packages.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { EdgeHost } from "./wrangler.ts";
-
-type FileEdge = { from: string; to: string };
 
 export type EmitContext = {
     repo: string;

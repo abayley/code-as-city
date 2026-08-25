@@ -3,6 +3,7 @@ import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./cou
 import { layerByLongestPath } from "./flow.ts";
 import type { Host } from "./hosts.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
+import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
 import { readJson, readText } from "./read.ts";
@@ -11,46 +12,6 @@ import { type EmbeddedDatabase, OTLP_PATTERN } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
 import type { EdgeHost } from "./wrangler.ts";
-
-type FileEdge = { from: string; to: string };
-
-type SourceRef = { path: string };
-
-type NodeDisplay = {
-    flowLayer?: number | undefined;
-    size?: [number, number, number] | undefined;
-};
-
-type NodeMetrics = {
-    loc?: number | undefined;
-    complexity?: number | undefined;
-    coverage?: number | undefined;
-};
-
-export type MapNode = {
-    id: string;
-    label: string;
-    kind: string;
-    archetype: string;
-    parentId?: string | undefined;
-    description?: string | undefined;
-    attributes?: Record<string, string> | undefined;
-    sourceRefs?: SourceRef[] | undefined;
-    metrics?: NodeMetrics | undefined;
-    tags?: string[] | undefined;
-    display?: NodeDisplay | undefined;
-};
-
-export type MapEdge = {
-    id: string;
-    from: string;
-    to: string;
-    kind: string;
-    evidence: string;
-    confidence?: number | undefined;
-    label?: string | undefined;
-    sourceRefs?: SourceRef[] | undefined;
-};
 
 type ResolvedImport = { file: string } | { pkg: Package } | { bare: string };
 
