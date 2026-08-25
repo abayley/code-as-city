@@ -27,14 +27,20 @@ describe("parseCrontabSchedules", () => {
 });
 
 describe("findEdgeHost", () => {
-    it("given a wrangler.toml, when found, then main is read but the name falls back (TOML name unread)", () => {
+    it("given a wrangler.toml, when found, then name and repo-relative main are read", () => {
         writeFile("wrangler.toml", 'name = "edge"\nmain = "./src/worker.ts"\n');
         expect(findEdgeHost(repo, ["wrangler.toml"])).toEqual({
             file: "wrangler.toml",
-            name: "worker",
+            name: "edge",
             main: "src/worker.ts",
             d1: [],
         });
+    });
+
+    it("given a subdirectory wrangler.toml with a config-relative main, when found, then main resolves against the config dir", () => {
+        writeFile("packages/sub/wrangler.toml", 'name = "sub-edge"\nmain = "./src/worker.ts"\n');
+        const host = findEdgeHost(repo, ["packages/sub/wrangler.toml", "packages/sub/src/worker.ts"]);
+        expect(host).toMatchObject({ name: "sub-edge", main: "packages/sub/src/worker.ts" });
     });
 
     it("given a wrangler.jsonc with comments, when found, then the JSON form is parsed", () => {

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readJsonSafe, readText } from "./read.ts";
 
 export type EdgeHost = {
@@ -12,9 +12,10 @@ type WranglerConfig = { main?: string; name?: string; d1_databases?: unknown[] }
 
 /**
  * Finds the repo's wrangler config (toml/json/jsonc) and reads the edge
- * deployment shape from it: worker name, main entry (repo-relative by
- * convention), and d1 bindings. TOML is read by regex for `main`; JSON forms
- * are parsed after stripping comments.
+ * deployment shape from it: worker name, main entry, and d1 bindings. TOML is
+ * read by regex for `name` and `main`; JSON forms are parsed after stripping
+ * comments. `main` is taken repo-relative when such a file is inventoried,
+ * otherwise resolved against the config's directory.
  */
 export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHost | null {
     const wranglerFile = allFiles.find((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));
@@ -24,10 +25,18 @@ export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHos
         .replace(/^\s*\/\/.*$/gm, "");
     const config = (readJsonSafe(text) ?? {}) as WranglerConfig;
     const mainMatch = config.main ?? /main\s*=\s*["']([^"']+)["']/.exec(text)?.[1];
+    let main: string | null = null;
+    if (mainMatch) {
+        main = mainMatch.replace(/^\.\//, "");
+        if (!allFiles.includes(main)) {
+            const relativeToConfig = join(dirname(wranglerFile), main);
+            if (allFiles.includes(relativeToConfig)) main = relativeToConfig;
+        }
+    }
     return {
         file: wranglerFile,
-        name: config.name ?? "worker",
-        main: mainMatch ? mainMatch.replace(/^\.\//, "") : null,
+        name: config.name ?? /name\s*=\s*["']([^"']+)["']/.exec(text)?.[1] ?? "worker",
+        main,
         d1: config.d1_databases ?? [],
     };
 }

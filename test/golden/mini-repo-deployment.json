@@ -130,7 +130,7 @@
     },
     {
       "id": "edge-worker",
-      "label": "Worker",
+      "label": "Mini Edge",
       "kind": "deployable",
       "archetype": "worker",
       "parentId": "edge-delivery",
