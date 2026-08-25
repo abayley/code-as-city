@@ -10,7 +10,7 @@
       "label": "@Mini/Api",
       "kind": "scope",
       "archetype": "district",
-      "description": "Function area: packages/api/ — 3 modules.",
+      "description": "Function area: packages/api/ — 4 modules.",
       "tags": [
         "band:Shared & support"
       ],
@@ -66,7 +66,7 @@
         }
       ],
       "metrics": {
-        "loc": 9,
+        "loc": 11,
         "complexity": 1,
         "files": 1
       },
@@ -82,6 +82,37 @@
         "color": "#C77740",
         "flowLayer": 0,
         "flowOrder": 2
+      }
+    },
+    {
+      "id": "mini-api-src-store",
+      "label": "Store",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-district",
+      "description": "Opens the embedded evaluation store.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/store.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
+        "flowOrder": 3
       }
     },
     {
@@ -255,7 +286,7 @@
       "label": "Infrastructure",
       "kind": "scope",
       "archetype": "district",
-      "description": "Infrastructure: 1 node.",
+      "description": "Infrastructure: 2 nodes.",
       "tags": [
         "band:Shared & support"
       ],
@@ -274,6 +305,22 @@
       "sourceRefs": [
         {
           "path": "wrangler.toml"
+        }
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-better-sqlite3",
+      "label": "SQLite database",
+      "kind": "infra",
+      "archetype": "database",
+      "parentId": "infrastructure-district",
+      "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
         }
       ],
       "display": {
@@ -335,9 +382,31 @@
   ],
   "edges": [
     {
+      "id": "mini-api-src-store--infra-better-sqlite3-u",
+      "from": "mini-api-src-store",
+      "to": "infra-better-sqlite3",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "reads/writes",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ]
+    },
+    {
       "id": "mini-api-src-server--mini-api-src-config-i",
       "from": "mini-api-src-server",
       "to": "mini-api-src-config",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-server--mini-api-src-store-i",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-store",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"

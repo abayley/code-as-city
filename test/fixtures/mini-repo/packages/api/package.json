@@ -2,6 +2,7 @@
     "name": "@mini/api",
     "version": "0.1.0",
     "dependencies": {
-        "@mini/shared": "workspace:*"
+        "@mini/shared": "workspace:*",
+        "better-sqlite3": "^11.0.0"
     }
 }

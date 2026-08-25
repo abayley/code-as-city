@@ -115,6 +115,21 @@
       ]
     },
     {
+      "id": "infra-better-sqlite3",
+      "label": "SQLite database",
+      "kind": "infra",
+      "archetype": "database",
+      "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
       "id": "ci-ci",
       "label": "CI: ci",
       "kind": "scope",
@@ -154,7 +169,7 @@
     "Test directories and *.test/*.spec files are excluded.",
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: none.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
-    "Orphan area excluded (unreferenced, undeployed): src (2 files).",
+    "Orphan area excluded (unreferenced, undeployed): src (3 files).",
     "Orphan area excluded (unreferenced, undeployed): src/migrations (2 files).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files)."
