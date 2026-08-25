@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { readJson, readJsonSafe, readText } from "./lib/read.ts";
 import { kebab, titleCase } from "./lib/text.ts";
 
 const IGNORED_DIRS = new Set([
@@ -144,22 +145,6 @@ function isTestPath(file) {
 function extensionOf(file) {
     const dot = file.lastIndexOf(".");
     return dot === -1 ? "" : file.slice(dot);
-}
-
-function readJson(path) {
-    try {
-        return JSON.parse(readFileSync(path, "utf8"));
-    } catch {
-        return undefined;
-    }
-}
-
-function readText(path) {
-    try {
-        return readFileSync(path, "utf8");
-    } catch {
-        return "";
-    }
 }
 
 const { repo, outDir, modulesAsBuildings, overview } = parseArguments(process.argv.slice(2));
@@ -558,13 +543,6 @@ function parseDockerfile(path) {
     return { copies, entryFile };
 }
 
-function readJsonSafe(text) {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return undefined;
-    }
-}
 function fileExists(p) {
     return allFiles.includes(p);
 }
