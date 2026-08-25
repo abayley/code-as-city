@@ -2,19 +2,23 @@ import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
-    externalReferencePattern,
     fileModuleName,
     footprintFor,
     linesOf,
     mermaidId,
     roomLabel,
-    sdkImportPattern,
     splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
+import {
+    classifiedVariantServices,
+    inferEmbeddedDatabaseUse,
+    inferExternalDelivers,
+    inferModuleDataFlows,
+} from "./inference.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
@@ -130,6 +134,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // .tsx (UI component) modules stand out from plain .ts. Shares the
     // shared-code gold by decision.
     const OVERVIEW_TSX_COLOR = "#C79F40";
+    const fileText = (file: string) => readText(join(repo, file));
     const activeRooms = [...rooms.values()].filter((r) => r.files.length > 0);
     const pkgsWithRooms = [...new Set(activeRooms.map((r) => r.pkg))];
     const multiPkg = pkgsWithRooms.length > 1;
@@ -475,26 +480,21 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // Backing stores that only exist in deduped compose variants (the dev
     // compose's postgres container) are attributed to the surviving host that
     // shares that variant's services.
-    for (const candidate of candidateHosts) {
-        for (const service of candidate.services) {
-            if (
-                service.imageClass !== undefined &&
-                ["database", "queue", "storage"].includes(service.imageClass) &&
-                !service.dockerfile
-            ) {
-                const variantServiceNames = new Set(candidate.services.map((s) => s.name));
-                const owner = hosts.find((h) => h.services.some((s) => variantServiceNames.has(s.name)));
-                infraMembers.push({
-                    id: kebab(`infra-${service.name}`),
-                    label: titleCase(service.name),
-                    archetype: service.imageClass,
-                    kind: "infra",
-                    description: `${service.image ?? "container"} declared in ${candidate.file}.`,
-                    path: candidate.file,
-                    hostName: owner?.name,
-                });
-            }
-        }
+    for (const { candidate, service } of classifiedVariantServices(candidateHosts)) {
+        const imageClass = service.imageClass;
+        if (imageClass === undefined || !["database", "queue", "storage"].includes(imageClass) || service.dockerfile)
+            continue;
+        const variantServiceNames = new Set(candidate.services.map((s) => s.name));
+        const owner = hosts.find((h) => h.services.some((s) => variantServiceNames.has(s.name)));
+        infraMembers.push({
+            id: kebab(`infra-${service.name}`),
+            label: titleCase(service.name),
+            archetype: imageClass,
+            kind: "infra",
+            description: `${service.image ?? "container"} declared in ${candidate.file}.`,
+            path: candidate.file,
+            hostName: owner?.name,
+        });
     }
     if (edgeHost)
         infraMembers.push({
@@ -582,84 +582,38 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         uniqueInfra.find((m) => /collector/.test(m.id) && /gateway/.test(m.id)) ??
         uniqueInfra.find((m) => /collector/.test(m.id));
     const databaseTarget = uniqueInfra.find((m) => m.archetype === "database");
-    for (const m of allModules) {
-        const texts = m.files.map((f) => readText(join(repo, f)));
-        if (otlpTarget && texts.some((t) => OTLP_PATTERN.test(t))) {
-            addEdge(overviewEdges, {
-                id: `${m.id}--${otlpTarget.id}`,
-                from: m.id,
-                to: otlpTarget.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "OTLP export",
-            });
-        }
-        if (databaseTarget && m.id !== databaseTarget.id) {
-            if (texts.some((t) => dbWritePattern.test(t))) {
-                addEdge(overviewEdges, {
-                    id: `${m.id}--${databaseTarget.id}-w`,
-                    from: m.id,
-                    to: databaseTarget.id,
-                    kind: "data_flow",
-                    evidence: "inferred",
-                    confidence: 0.75,
-                    label: "writes",
-                });
-            }
-            if (texts.some((t) => dbReadPattern.test(t))) {
-                addEdge(overviewEdges, {
-                    id: `${databaseTarget.id}--${m.id}-r`,
-                    from: databaseTarget.id,
-                    to: m.id,
-                    kind: "data_flow",
-                    evidence: "inferred",
-                    confidence: 0.75,
-                    label: "reads",
-                });
-            }
-        }
-    }
+    inferModuleDataFlows({
+        entries: allModules,
+        edges: overviewEdges,
+        fileText,
+        ...(otlpTarget ? { otlpTargetId: otlpTarget.id } : {}),
+        ...(databaseTarget
+            ? {
+                  database: {
+                      chooseTarget: () => databaseTarget.id,
+                      writePattern: dbWritePattern,
+                      readPattern: dbReadPattern,
+                  },
+              }
+            : {}),
+    });
     // Modules importing an embedded database's SDK read/write that database.
-    for (const db of embeddedDbMembers) {
-        const depName = db.depName;
-        if (depName === undefined) throw new Error(`embedded database ${db.id} has no depName`);
-        const importPattern = sdkImportPattern(depName);
-        for (const m of allModules) {
-            if (m.files.some((f) => importPattern.test(readText(join(repo, f))))) {
-                addEdge(overviewEdges, {
-                    id: `${m.id}--${db.id}-u`,
-                    from: m.id,
-                    to: db.id,
-                    kind: "data_flow",
-                    evidence: "inferred",
-                    confidence: 0.7,
-                    label: "reads/writes",
-                    sourceRefs: [{ path: db.path }],
-                });
-            }
-        }
-    }
+    inferEmbeddedDatabaseUse({
+        databases: embeddedDatabases,
+        entries: allModules,
+        edges: overviewEdges,
+        fileText,
+        edgeSuffix: "-u",
+    });
     // Modules that reference an external by SDK import or env-var prefix
     // deliver data to it (src/delivery pushing scores into Langfuse/Latitude).
-    for (const external of uniqueInfra.filter((m) => m.external)) {
-        const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (name.length < 4) continue;
-        const referencePattern = externalReferencePattern(name);
-        for (const m of allModules) {
-            if (m.files.some((f) => referencePattern.test(readText(join(repo, f))))) {
-                addEdge(overviewEdges, {
-                    id: `${m.id}--${external.id}-d`,
-                    from: m.id,
-                    to: external.id,
-                    kind: "data_flow",
-                    evidence: "inferred",
-                    confidence: 0.6,
-                    label: "delivers",
-                });
-            }
-        }
-    }
+    inferExternalDelivers({
+        externals: uniqueInfra.filter((m) => m.external),
+        entries: allModules,
+        edges: overviewEdges,
+        fileText,
+        guardTargets: false,
+    });
 
     // Import edges, aggregated per module pair. The viewer never draws these
     // at rest — they appear only when a node is selected — so they cost map

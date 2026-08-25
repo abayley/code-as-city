@@ -168,11 +168,17 @@ None externally; module boundaries change inside src/lib only.
 
 ### Phase 2 — shared inference
 
-- [ ] Introduce the NodeIndex record; build it in both assemblies from their
+- [x] Introduce the NodeIndex record; build it in both assemblies from their
       existing structures.
-- [ ] Unify the embedded-database importer pass (closest copies) with unit
+- [x] Unify the embedded-database importer pass (closest copies) with unit
       tests, then delivers, then OTLP producers, then database reads/writes,
       then variant backing stores — one commit each, goldens after each.
+      (OTLP and database flows share one pass, `inferModuleDataFlows`,
+      because the overview interleaves them per module and its edge order
+      depends on it; the deployment map calls the pass twice, once per node
+      universe. Variant backing stores unify only the shared record source,
+      `classifiedVariantServices` — the gating and record shaping genuinely
+      differ per mode and stay in the assemblies.)
 
 ### Phase 3 — envelope and emit
 

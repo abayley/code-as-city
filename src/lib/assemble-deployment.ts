@@ -1,12 +1,10 @@
 import { basename, join, relative, sep } from "node:path";
 import {
     addEdge,
-    externalReferencePattern,
     fileModuleName,
     footprintFor,
     linesOf,
     roomLabel,
-    sdkImportPattern,
     splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
@@ -14,6 +12,13 @@ import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./cou
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
+import {
+    classifiedVariantServices,
+    inferEmbeddedDatabaseUse,
+    inferExternalDelivers,
+    inferModuleDataFlows,
+    type NodeIndexEntry,
+} from "./inference.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
@@ -130,6 +135,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     } = context;
 
     const fileExists = (p: string) => allFiles.includes(p);
+    const fileText = (file: string) => readText(join(repo, file));
     const owningPackage = (file: string): Package | null => owningPackageOf(packages, file);
 
     const nodes: MapNode[] = [];
@@ -320,10 +326,8 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // compose runs the database locally) is carried onto the surviving host as
     // infra when its image classifies as one.
     const variantServices = new Map<string, Host["services"][number]>();
-    for (const candidate of candidateHosts) {
-        for (const service of candidate.services) {
-            if (service.imageClass && !variantServices.has(service.name)) variantServices.set(service.name, service);
-        }
+    for (const { service } of classifiedVariantServices(candidateHosts)) {
+        if (!variantServices.has(service.name)) variantServices.set(service.name, service);
     }
     for (const host of hosts) {
         for (const service of host.services) {
@@ -730,19 +734,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id) && /gateway/.test(n.id)) ??
         nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id));
     if (collectorTarget) {
-        for (const promoted of promotedNodes) {
-            const emitsOtlp = promoted.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f))));
-            if (!emitsOtlp) continue;
-            addEdge(edges, {
-                id: `${promoted.id}--${collectorTarget.id}`,
-                from: promoted.id,
-                to: collectorTarget.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "OTLP export",
-            });
-        }
+        inferModuleDataFlows({ entries: promotedNodes, edges, fileText, otlpTargetId: collectorTarget.id });
     }
 
     // 7c-iii (removed): eliminated shared-utility rooms used to reappear as a
@@ -827,42 +819,35 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
 
     // 7e-i. Embedded databases (same dependency scan as overview mode's O11):
     // the node lives in the district of the first module importing the SDK, and
-    // importers get inferred reads/writes data flow.
-    for (const database of embeddedDatabases) {
-        const importPattern = sdkImportPattern(database.depName);
-        const importerOwners: string[] = [];
-        for (const file of sourceFiles) {
-            if (!importPattern.test(readText(join(repo, file)))) continue;
-            const owner = fileNodeOwner.get(file);
-            if (owner && nodes.some((n) => n.id === owner) && !importerOwners.includes(owner))
-                importerOwners.push(owner);
-        }
-        const parentDistrict = importerOwners
-            .map((owner) => nodes.find((n) => n.id === owner)?.parentId)
-            .find((parent) => parent && nodes.some((n) => n.id === parent && n.kind === "scope"));
-        nodes.push({
-            id: database.id,
-            label: database.label,
-            kind: "infra",
-            archetype: "database",
-            ...(parentDistrict ? { parentId: parentDistrict } : {}),
-            description: database.description,
-            sourceRefs: [{ path: database.path }],
-            display: { flowLayer: 2 },
-        });
-        for (const owner of importerOwners) {
-            addEdge(edges, {
-                id: `${owner}--${database.id}`,
-                from: owner,
-                to: database.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "reads/writes",
-                sourceRefs: [{ path: database.path }],
-            });
-        }
+    // importers get inferred reads/writes data flow. One index entry per owned
+    // source file, so importer order replays the sourceFiles order.
+    const ownedFileEntries: NodeIndexEntry[] = [];
+    for (const file of sourceFiles) {
+        const owner = fileNodeOwner.get(file);
+        if (owner && nodes.some((n) => n.id === owner)) ownedFileEntries.push({ id: owner, files: [file] });
     }
+    inferEmbeddedDatabaseUse({
+        databases: embeddedDatabases,
+        entries: ownedFileEntries,
+        edges,
+        fileText,
+        edgeSuffix: "",
+        onImporters: (database, importerOwners) => {
+            const parentDistrict = importerOwners
+                .map((owner) => nodes.find((n) => n.id === owner)?.parentId)
+                .find((parent) => parent && nodes.some((n) => n.id === parent && n.kind === "scope"));
+            nodes.push({
+                id: database.id,
+                label: database.label,
+                kind: "infra",
+                archetype: "database",
+                ...(parentDistrict ? { parentId: parentDistrict } : {}),
+                description: database.description,
+                sourceRefs: [{ path: database.path }],
+                display: { flowLayer: 2 },
+            });
+        },
+    });
 
     // 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
     // a workflow_run chain, or a run step invoking repo code becomes a CI job
@@ -1109,25 +1094,13 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // 7f-i. Nodes referencing an external by SDK import or env-var prefix deliver
     // data to it (the delivery command pushing scores into Langfuse/Latitude).
     // Mirrors overview mode's delivers inference.
-    for (const external of nodes.filter((n) => n.kind === "external")) {
-        const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (name.length < 4) continue;
-        const referencePattern = externalReferencePattern(name);
-        for (const { id, files } of classificationSets) {
-            if (id === external.id || !files.length) continue;
-            if (files.some((f) => referencePattern.test(readText(join(repo, f))))) {
-                addEdge(edges, {
-                    id: `${id}--${external.id}-d`,
-                    from: id,
-                    to: external.id,
-                    kind: "data_flow",
-                    evidence: "inferred",
-                    confidence: 0.6,
-                    label: "delivers",
-                });
-            }
-        }
-    }
+    inferExternalDelivers({
+        externals: nodes.filter((n) => n.kind === "external"),
+        entries: classificationSets,
+        edges,
+        fileText,
+        guardTargets: true,
+    });
 
     for (const { id, files, entryFile } of classificationSets) {
         const node = nodes.find((n) => n.id === id);
@@ -1157,46 +1130,32 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         }
         let listens = false;
         let callsOut = false;
-        let writes = false;
-        let reads = false;
         for (const file of files) {
             const text = readText(join(repo, file));
             listens ||= LISTEN_PATTERN.test(text);
             callsOut ||= HTTP_CLIENT_PATTERN.test(text);
-            writes ||= dbWritePattern.test(text);
-            reads ||= dbReadPattern.test(text);
         }
         const tags = new Set(node.tags ?? []);
         if (listens) tags.add("listens");
         if (callsOut) tags.add("http-client");
         if (tags.size) node.tags = [...tags];
-        if (!writes && !reads) continue;
-        const database =
-            databaseNodes.find((db) => districtLookup.get(db.id) === districtLookup.get(id)) ?? databaseNodes[0];
-        if (!database || database.id === id) continue;
-        if (writes) {
-            addEdge(edges, {
-                id: `${id}--${database.id}-w`,
-                from: id,
-                to: database.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.75,
-                label: "writes",
-            });
-        }
-        if (reads) {
-            addEdge(edges, {
-                id: `${database.id}--${id}-r`,
-                from: database.id,
-                to: id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.75,
-                label: "reads",
-            });
-        }
     }
+
+    // Database sinks/sources over the same classification sets, preferring the
+    // district-local database over the first one declared.
+    inferModuleDataFlows({
+        entries: classificationSets
+            .filter(({ id, files }) => files.length && nodes.some((n) => n.id === id))
+            .map(({ id, files }) => ({ id, files, districtId: districtLookup.get(id) })),
+        edges,
+        fileText,
+        database: {
+            chooseTarget: (entry) =>
+                (databaseNodes.find((db) => districtLookup.get(db.id) === entry.districtId) ?? databaseNodes[0])?.id,
+            writePattern: dbWritePattern,
+            readPattern: dbReadPattern,
+        },
+    });
 
     return { nodes, edges, warnings };
 }
