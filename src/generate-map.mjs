@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { kebab, titleCase } from "./lib/text.ts";
 
 const IGNORED_DIRS = new Set([
     "node_modules",
@@ -159,19 +160,6 @@ function readText(path) {
     } catch {
         return "";
     }
-}
-
-function kebab(text) {
-    return (
-        text
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "") || "x"
-    );
-}
-
-function titleCase(text) {
-    return text.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const { repo, outDir, modulesAsBuildings, overview } = parseArguments(process.argv.slice(2));
