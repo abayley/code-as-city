@@ -7,7 +7,9 @@ stable, so map warnings and commit messages can cite them.
 Each group lives in a module under `src/lib/`, orchestrated by
 `src/generate-map.ts`: I in `inventory.ts`; S in `packages.ts`, `rooms.ts`,
 and `imports.ts`; C in `coupling.ts`; D in `compose.ts`, `dockerfile.ts`,
-`crontab.ts`, `wrangler.ts`, `workflows.ts`, `hosts.ts`, and `host-config.ts`;
+`crontab.ts`, `wrangler.ts`, `workflows.ts`, `hosts.ts`, `daemons.ts` (D15),
+and `host-config.ts` (with D14's published-artefact classification in
+`packages.ts`);
 R in `reachability.ts` and `path-references.ts`; M in
 `assemble-deployment.ts`; O in `assemble-overview.ts` (with `complexity.ts`
 for O6); the coverage/TSDoc/embedded-database scans in `scans.ts`; output in
@@ -38,7 +40,7 @@ by decision); I2 depends on the nested checkout retaining its `.git`.
 
 | ID | Signal | Action |
 | --- | --- | --- |
-| S1 | `package.json` | A package. `bin` -> CLI; react/next/vinext/vue/svelte dep -> web app; otherwise generic |
+| S1 | `package.json` | A package. `bin` -> CLI; react/next/vinext/vue/svelte dep -> web app; otherwise generic. A workspace-root aggregator with no source of its own (only `workspaces`/`private`) contributes no district: districts are keyed off packages that own active rooms, so a source-less root package produces no node in either view |
 | S2 | First path segment within a package | A room. A dominant segment holding >60% of files (e.g. `src/`) is expanded one level (`src/ingest`, `src/lib`, ...) |
 | S3 | Import specifiers | Resolved relative paths, `@/` alias to package root, NodeNext `./x.js` -> `x.ts`, bare specifiers matching sibling package names |
 | S4 | A loose file with file-level fan-in 0 inside a promoted building | Its own room, named after the file (a CLI, an installer); imported loose files group as a support-files room. Kebab-flattened id collisions (the file src/node.ts vs the room src/node/) get a numeric suffix |
@@ -50,22 +52,26 @@ threshold is untuned beyond the test repos.
 
 | ID | Signal | Action |
 | --- | --- | --- |
-| D1 | `docker-compose*.yml` | One host district per compose file. Overlays (`*.override.yml`, `*.build.yml`) skipped. Environment variants deduped when a higher-ranked host covers >=50% of a host's services; rank prod > uat/staging > example > unqualified > dev |
-| D2 | Compose file path | Host name from informative path segments (generic segments like `deploy` dropped) |
-| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms; the entry room is named by the first token across all ENTRYPOINT/CMD lines (in file order) that matches an inventoried file, so the split `ENTRYPOINT` interpreter plus `CMD` script form and multi-stage builds both resolve. A `*-command` entry file names the building (Delivery Command, not the compose service name delivery-worker) |
+| D1 | `docker-compose*.yml` | One host district per compose file. Overlays (`*.override.yml`, `*.build.yml`) skipped. Environment variants deduped when a higher-ranked host covers >=50% of a host's services; rank prod > uat/staging > example > unqualified > dev. Beyond dedup, a service name recurring across the surviving topology files in a directory folds to one owner node — the canonical unqualified file (`docker-compose.yml`, `compose.yaml`) if one defines it, else the highest env rank, else the lowest filename; occurrences under any other host (direct or D6-carried) are shadowed, and a host left with no node of its own is dropped. Applies in both map modes |
+| D2 | Compose file path | Host name from informative path segments (generic segments like `deploy` dropped); a root or all-generic path yields none, so the name falls back to the repo basename rather than the placeholder "host" |
+| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms (a leading `./` on a COPY source is normalised to the repo-relative path, and a COPY that names a file with no source under it — a layer-cache `COPY ./pkg/package.json` — attributes nothing); the entry room is named by the first token across all ENTRYPOINT/CMD lines (in file order) that matches an inventoried file, so the split `ENTRYPOINT` interpreter plus `CMD` script form and multi-stage builds both resolve. A `*-command` entry file names the building (Delivery Command, not the compose service name delivery-worker) |
 | D4 | Crontab line running `compose run <service>` | Service tagged `cron` (scheduled job), schedule recorded |
-| D5 | Container image name, else service name (`database`, `redis`, `proxy`, ...) | Infra classification: database/queue/storage/gateway/cloud |
+| D5 | Container image name, else service name (`database`, `redis`, `proxy`, ...) | Infra classification: database/queue/storage/gateway/cloud. A service is a database only on an exact base image name (`postgres`, `mysql`, `clickhouse-server`, ...; tag and registry/org stripped) or a store-like service name — never on a substring, so `postgrest/postgrest` and `supabase/postgres-meta` stay non-databases. Queue/storage/gateway/cloud remain vendor-family substring matches |
 | D6 | `depends_on`, harvested across ALL compose variants by service name | `depends_on` edges between the surviving host's services. A dependency only present in a deduped variant (dev-only database container) is carried onto the host as an infra node |
 | D7 | `wrangler.toml/json/jsonc` | A Cloudflare edge district with the worker and its D1 bindings; `drizzle.config.*` contributes a database node. The worker name comes from `name` (defaulting to `worker`) and its entry from `main`; in TOML both keys are read line-anchored, so `database_name` in a `[[d1_databases]]` block is not mistaken for the worker name. `main` resolves repo-relative first, then against the config file's own directory |
 | D8 | Wrangler present and the owning package has an entry dir (`app`, ...) | `deploys` edge from the entry room to the edge worker |
-| D9 | `.github/workflows/*.yml` with a cron schedule, a `workflow_run` trigger, or a run step invoking repo source | A CI job district with one job building; cron carried as a tag; `workflow_run` upstreams become declared `calls` edges ("triggers on completion") between jobs |
+| D9 | `.github/workflows/*.yml` whose run step invokes deploy-reachable source (the workflow IS the deployment mechanism) | A CI job district with one job building; cron carried as a tag; `workflow_run` upstreams become declared `calls` edges ("triggers on completion") between deploying jobs. Routine workflows (lint, release, dependency bumps, bots) are development infrastructure, not the running system, and are excluded from the deployment view — a workflow qualifies only when at least one run-step invocation resolves to deploy-reachable source. CI never appears in the overview, so this is deployment-view-only |
 | D10 | A run-step token naming an existing source file (optionally followed by a subcommand word) | Declared `calls` edge job -> entry's node; the subcommand is matched against the entry's Commander `.command('<sub>')` registration and the first imported identifier used in that chunk resolves the handler module for a second `calls` edge |
 | D11 | `aws s3 cp/sync/mv` with an `s3://` source or destination; `r2.cloudflarestorage.com` anywhere in the workflow names the store | One external storage node ("Cloudflare R2", else "S3 object storage"); declared `data_flow` edges: store -> job for downloads, job -> store for uploads |
 | D12 | An https URL assigned as a value (not a comment) in a package-root `config.yaml` | External cloud node per hostname (localhost and R2 endpoints excluded); declared `data_flow` "fetches" edge external -> the package's bin entry node (bin target mapped dist/x.js -> src/x.ts) |
 | D13 | A package.json dependency naming an embedded database SDK (`@lancedb/*`, `chromadb`, `better-sqlite3`/`sqlite3`, `duckdb`) | One database node per dependency repo-wide, applied in BOTH map modes: in the deployment map it sits in the district of the first module importing the SDK; importers get inferred `reads/writes` data flow (confidence 0.7). Overview mode's O11 shares this scan |
+| D14 | A non-private `package.json` declaring `bin` (CLI), `engines.vscode`/`contributes` (VS Code extension), or a `main`/`module`/`exports` entry with a name (published library) | A published deployment artefact: one deployable per package. The artefact's source entry (the `bin` target or library/extension entry, resolved via the dist->src and `.m/cjs`->`.ts` conventions, falling back to `src/index.ts`/`index.ts`/`src/main.ts`) becomes a deploy root (so a bundled library is not swept as an R3 orphan) and its owning node becomes the deployable — a CLI or extension reads as a `gateway`, a library as a `building` (a `gateway` when it has fewer than two rooms) — tagged `cli`/`published`/`extension`. R5 never strips a published artefact |
+| D15 | A `spawn`/`spawnSync`/`fork`/`execFile[Sync]`/`Bun.spawn` or `new Worker(...)` call in deploy-reachable (non-test) source whose first path argument is a literal (bare, or inside a `new URL('<path>', import.meta.url)`) resolving to an inventoried entry (with the dist->src / `.m/cjs`->`.ts` conventions) | The target is a daemon the caller starts: a `deployable`/`worker` process node tagged `daemon`, with a `calls` edge labelled "starts" (evidence inferred, confidence 0.7) from the supervisor's node. A spawn on a variable or an external command resolves to nothing and draws no edge. Deliberately conservative — it never invents an edge it cannot ground in a real file, so it stays silent on repos that spawn through variables |
 
-Failure modes: D1's rank list and 50% threshold are conventions; D3 assumes
-COPY paths are repo-relative; D5's tables are small and vendor-biased; D7's
+Failure modes: D1's rank list and 50% threshold are conventions; D14's
+private-vs-published signal is `private: true` alone (publishConfig unused;
+adequate across the sample); a bundled library whose source entry is neither
+the declared path nor a conventional `src/index.ts` gets no deployable; D5's tables are small and vendor-biased; D7's
 TOML reader does not track tables, so a `name` under `[env.staging]` is read
 as though it were top-level; D10's handler match assumes Commander-style
 registration in the entry file and only scans braced named imports; D12's
@@ -96,10 +102,16 @@ patched viewer.
 | R2 | File reachable only from QA scripts and from nothing that deploys | Dev tooling: stripped at FILE granularity (one operational CLI in `scripts/` survives while QA utilities around it vanish); a QA-stripped room also sheds its residue — files referenced by no root whose importers are all themselves stripped (iterated to a fixed point; OTLP producers exempt). Emptied rooms disappear. Every strip is recorded in map warnings |
 | R3 | Room with zero fan-in, unreachable from deploy and script roots, no OTLP coupling, not an entry dir, not path-referenced | Orphan: excluded (examples/, unreferenced root config files) |
 | R4 | A string literal resolving into another package's area (tried against both the file's dir and the package root, e.g. `resolve(packageRoot, "../../skills/map-codebase")`). Plain relative import specifiers are excluded — an import is an S3 dependency, not an area claim (a root QA script importing `../tools/x/src/core` must not steal the room) | The referenced area is reassigned to the referencing package's district, with a declared `path reference` edge |
+| R5 | A package no *host* deploy root reaches (compose COPY/entry, wrangler main, web entry — not package bin/main), when the repo has a host deployment shape at all | Development-only package (e2e harness, dev-only plugin SDK): excluded from the DEPLOYMENT view only, as R2 strips dev-tooling files within a package. A residual (compose-claimed) or path-referenced package is spared, and the overview keeps every such package. Deployment-view-only; does not disturb R1/R2 |
 
 Failure modes: R1's QA/operational split is a naming convention (a
 mis-named script entry flips its targets); R3's OTLP exemption is the only
-thing keeping unreferenced-but-meaningful producers (plugins/) on the map.
+thing keeping unreferenced-but-meaningful producers (plugins/) on the map. R5
+depends on D3 resolving the host's COPY sources: a Dockerfile whose COPYs the
+parser cannot map to inventoried dirs leaves the repo with no host deploy shape,
+so R5 does not fire there. When D3 does resolve a large deployed package (immich's
+server, once its `./`-prefixed COPYs are read), that package is shown in full —
+a scale concern tracked separately under HC-011, not R5.
 
 ## Map shaping (M)
 

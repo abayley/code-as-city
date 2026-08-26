@@ -1,0 +1,7 @@
+services:
+  db:
+    image: postgres:16
+  minio:
+    image: minio/minio
+  minio-setup:
+    image: minio/mc

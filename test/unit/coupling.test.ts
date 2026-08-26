@@ -3,7 +3,7 @@ import { analyseCoupling } from "../../src/lib/coupling";
 import type { Package } from "../../src/lib/packages";
 import type { Room } from "../../src/lib/rooms";
 
-const pkg: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root" };
+const pkg: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root", artefact: null };
 const room = (id: string, files: string[]): [string, Room] => [id, { id, pkg, segment: id, files, loc: 0 }];
 
 describe("analyseCoupling file coupling", () => {

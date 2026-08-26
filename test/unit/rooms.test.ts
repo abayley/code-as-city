@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Package } from "../../src/lib/packages";
 import { buildRooms } from "../../src/lib/rooms";
 
-const root: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root" };
+const root: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root", artefact: null };
 
 describe("buildRooms", () => {
     it("given a dominant src segment, when rooms are built, then src expands one level deeper", () => {

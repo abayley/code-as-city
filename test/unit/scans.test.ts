@@ -61,6 +61,7 @@ describe("findEmbeddedDatabases", () => {
             deps,
             role: "package",
             id: dir.replace(/\//g, "-"),
+            artefact: null,
         });
         const result = findEmbeddedDatabases([
             pkg(".", { "better-sqlite3": "1" }),

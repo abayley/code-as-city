@@ -9,8 +9,8 @@ import type { Room } from "../../src/lib/rooms";
 const repo = mkdtempSync(join(tmpdir(), "code-as-city-pathref-"));
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
 
-const cli: Package = { dir: "tools/cli", name: "cli", deps: {}, role: "cli", id: "cli" };
-const root: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root" };
+const cli: Package = { dir: "tools/cli", name: "cli", deps: {}, role: "cli", id: "cli", artefact: null };
+const root: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root", artefact: null };
 const skillsRoom: Room = { id: "root-skills", pkg: root, segment: "skills", files: ["skills/map/x.ts"], loc: 1 };
 const rooms = new Map([[skillsRoom.id, skillsRoom]]);
 
@@ -32,7 +32,14 @@ describe("findPathReassignments", () => {
     });
 
     it("given a claiming file owned by no package, when scanned, then it does not reassign", () => {
-        const nested: Package = { dir: "packages/c", name: "pkg-c", deps: {}, role: "package", id: "pkg-c" };
+        const nested: Package = {
+            dir: "packages/c",
+            name: "pkg-c",
+            deps: {},
+            role: "package",
+            id: "pkg-c",
+            artefact: null,
+        };
         const coreRoom: Room = {
             id: "pkg-c-core",
             pkg: nested,

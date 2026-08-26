@@ -21,6 +21,14 @@ describe("parseDockerfile", () => {
         expect(result.copies).toEqual(["packages/api"]);
     });
 
+    it("given a ./-prefixed COPY, when parsed, then the leading ./ is normalised to the inventory path", () => {
+        const result = withDockerfile(
+            ["FROM node", "COPY ./server ./server/", "COPY ./packages/plugin-sdk ./packages/plugin-sdk/"].join("\n"),
+            ["server/src/main.ts", "packages/plugin-sdk/src/index.ts"],
+        );
+        expect(result.copies).toEqual(["server", "packages/plugin-sdk"]);
+    });
+
     it("given an exec-form CMD, when parsed, then the first inventoried token is the entry file", () => {
         const result = withDockerfile('FROM node\nCMD ["node", "packages/api/src/server.ts"]', [
             "packages/api/src/server.ts",

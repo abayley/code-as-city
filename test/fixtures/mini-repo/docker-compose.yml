@@ -9,3 +9,7 @@ services:
       - db
   db:
     image: postgres:16
+  rest:
+    image: postgrest/postgrest:latest
+  meta:
+    image: supabase/postgres-meta:v0.80.0

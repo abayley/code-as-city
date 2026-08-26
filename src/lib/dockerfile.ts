@@ -27,7 +27,10 @@ export type DockerfileShape = {
 export function parseDockerfile(repo: string, path: string, allFiles: readonly string[]): DockerfileShape {
     const text = readText(join(repo, path));
     const copies = [...text.matchAll(/^COPY\s+([^\s]+)\s/gm)]
-        .flatMap((m) => (m[1] === undefined ? [] : [m[1]]))
+        // A COPY source is repo-relative; a leading `./` (immich's convention,
+        // `COPY ./server ./server/`) is the same path the inventory records
+        // without the prefix, so normalise it before matching.
+        .flatMap((m) => (m[1] === undefined ? [] : [m[1].replace(/^\.\//, "")]))
         .filter(
             (p) => !p.startsWith("--") && allFiles.some((f) => f === p || f.startsWith(`${p.replace(/\/$/, "")}/`)),
         );

@@ -1,11 +1,11 @@
 ---
 id: RFC-0004
 name: Make the deployment view match the developer's mental model
-status: Accepted
+status: Completed
 owners:
     - alistairbayley
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-08-27
 supersedes: []
 superseded_by: null
 ---
@@ -15,8 +15,8 @@ superseded_by: null
 | Stage     | Timestamp        |
 | --------- | ---------------- |
 | Authored  | 2026-08-26 16:45 |
-| Started   |                  |
-| Completed |                  |
+| Started   | 2026-08-27 09:20 |
+| Completed | 2026-08-27 10:47 |
 
 ## Summary
 
@@ -267,9 +267,15 @@ the review.
 ## Compatibility Impact
 
 `map.json` stays schema-valid throughout (the vendored validator gates every
-golden). New node tags (`published`, `cli`, `starts` edges) are additive; the
-viewer ignores tags it does not render, so an un-updated viewer degrades to the
-existing shapes. No external API.
+golden). New node tags (`published`, `cli`, `extension`, `daemon`) are additive;
+the viewer ignores tags it does not render, so an un-updated viewer degrades to
+the existing shapes. No external API.
+
+Implementation note: the schema's edge-kind enum admits only
+`depends_on`/`calls`/`data_flow`/`deploys`, with no `starts` kind, so D15's
+supervisor->daemon relationship is emitted as a `calls` edge labelled "starts"
+(evidence inferred, confidence 0.7) rather than a new `starts` kind — the
+mental model is unchanged and every golden stays schema-valid.
 
 ## Testing and Quality Gates
 
@@ -328,6 +334,60 @@ updates `HEURISTICS.md` and the `docs/heuristic-changes.md` status.
   the sample, or do we need a workspace-dependency analysis? Decide during
   phase 3 against aria-tools and supabase, once we can see how well the
   `private`/`publishConfig` detection performs in practice.
+
+  *Resolved (phase 3).* `private: true` alone was sufficient across the sample.
+  aria-tools' private root aggregator and mermaid's private `example-diagram`
+  and `local-editor` packages are correctly excluded, while the public tool and
+  library packages are recognised — 17 CLI deployables for aria-tools (from 0),
+  a CLI plus a library for ollama-code, two libraries for mermaid. `publishConfig`
+  and workspace-dependency analysis were not needed and are not implemented; the
+  simple signal wins.
+
+- **R5 depends on D3 resolving `./`-prefixed COPYs (raised during phase 2).**
+  R5 excludes a package no host deploy root reaches. Its evidence repo, immich,
+  has no resolved host deploy shape at all: its Dockerfiles use `COPY ./server`
+  / `COPY ./packages/plugin-sdk` style paths, and D3's COPY parser
+  (`dockerfile.ts`) compares the token against inventory paths that carry no
+  `./` prefix, so all 18 of immich's COPY lines resolve to nothing. R5 is
+  implemented and fixture-tested, but it cannot fire on immich until D3 strips
+  the `./`.
+
+  *Impact.* D3 is not in this RFC's rule list, and the fix is not local: with
+  the `./` normalised, immich's Dockerfile COPYs whole package directories, so
+  immich's deployment map jumps from 86 to 358 nodes (server/web/plugin-sdk
+  source becomes hundreds of host building rooms). It interacts with the
+  coarse-COPY-attribution handling (the "a COPY coarser than room granularity
+  is a packaging convenience" rule currently lives overview-side, O9). Verified
+  experimentally: with the `./` fix, R5 then excludes `@immich/e2e-auth-server`
+  and `@immich/scripts`; `plugin-sdk`/`plugin-core` stay, because the server
+  image bakes them in — so for immich they are genuinely deployed, and HC-007's
+  "used only by dev builds" premise does not hold.
+
+  *Options.* (a) Land R5 as-is now (fixture-proven; fires on any repo with a
+  resolvable host shape), and treat the D3 `./` normalisation plus the
+  coarse-whole-package-COPY handling as a **separate** change with its own
+  evidence and goldens. (b) Fold the D3 `./` fix into this RFC's phase 2 and
+  absorb the immich map restructuring here. (c) Narrow R5's host-shape signal
+  to something independent of COPY resolution (unclear what; a Dockerfile that
+  copies nothing the parser understands genuinely gives no attribution).
+
+  *Recommendation.* Option (a): R5's contract and mechanism are correct and
+  proven; the D3 COPY-parsing gap and the coarse-COPY explosion are a distinct
+  concern (a new HC entry) that deserves its own reviewed golden diff rather
+  than riding in on R5.
+
+  *Decision (folded in — option b).* The D3 `./`-COPY normalisation is included
+  in phase 2. Investigation refined the fix: the residual explosion came not
+  from the whole-directory COPY (already dropped by the existing room-match
+  filter) but from the layer-cache `COPY ./server/package.json` claiming the
+  package; the fix is to attribute a COPY only when it names a directory that
+  actually holds source. That leaves the mini-repo and aria-evals unchanged and
+  keeps supabase's core, and R5 then fires on immich (excluding
+  `@immich/e2e-auth-server` and `@immich/scripts`). The remaining consequence —
+  immich's server package, now correctly host-reachable, is shown in full, so
+  its deployment map grows to ~355 nodes — is the legibility-and-scale concern
+  this RFC lists as a Non-Goal (HC-011), and is left to that separate RFC rather
+  than solved here.
 
 ### Decided
 

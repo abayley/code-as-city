@@ -37,7 +37,13 @@ const FIXTURE_REPOSITORY = "<fixture>";
 type GeneratedMap = {
     repository: string;
     generatedAt?: string;
-    nodes: Array<{ sourceRefs?: Array<{ path?: string }> }>;
+    nodes: Array<{
+        id?: string;
+        kind?: string;
+        label?: string;
+        tags?: string[];
+        sourceRefs?: Array<{ path?: string }>;
+    }>;
 };
 
 /**
@@ -77,6 +83,52 @@ describe("generate-map golden master", () => {
             (node.sourceRefs ?? []).some((ref) => ref.path?.startsWith("scripts/")),
         );
         expect(scriptNodes).toEqual([]);
+    });
+
+    it("given CI workflows, when generating the deployment map, then only one invoking deploying source is a deployable (D9)", () => {
+        const map = generateMap([]);
+        const ciDeployables = map.nodes.filter((node) => node.id?.startsWith("ci-") && node.kind === "deployable");
+        // deploy.yml runs the api service's entry (a deploy root); ci.yml runs a test.
+        expect(ciDeployables.map((n) => n.id)).toEqual(["ci-deploy-job"]);
+    });
+
+    it("given a dev-only package, when generating, then it leaves the deployment view but stays in the overview (R5)", () => {
+        const deployment = generateMap([]);
+        const overview = generateMap(["--overview"]);
+        const hasE2eDistrict = (map: GeneratedMap) =>
+            map.nodes.some((node) => node.id?.startsWith("mini-e2e") && node.label === "@Mini/E2e");
+        // @mini/e2e is reached by no host deploy root (only its own e2e script).
+        expect(hasE2eDistrict(deployment)).toBe(false);
+        expect(hasE2eDistrict(overview)).toBe(true);
+    });
+
+    it("given published packages, when generating the deployment map, then each is a tagged deployable (D14)", () => {
+        const map = generateMap([]) as GeneratedMap & {
+            nodes: Array<{ kind?: string; archetype?: string; tags?: string[]; sourceRefs?: Array<{ path?: string }> }>;
+        };
+        const deployableAt = (path: string) =>
+            map.nodes.find(
+                (node) => node.kind === "deployable" && (node.sourceRefs ?? []).some((ref) => ref.path === path),
+            );
+        // @mini/greeter (bin) -> CLI gateway; @mini/toolkit (main) -> library building; @mini/ext (vscode) -> extension.
+        expect(deployableAt("packages/greeter/src")).toMatchObject({ archetype: "gateway", tags: ["cli"] });
+        expect(deployableAt("packages/toolkit/src")).toMatchObject({ archetype: "building", tags: ["published"] });
+        expect(deployableAt("packages/ext/src")).toMatchObject({ archetype: "gateway", tags: ["extension"] });
+    });
+
+    it("given a spawned inventoried entry, when generating, then it is a daemon with a starts edge and variable/test spawns draw nothing (D15)", () => {
+        const map = generateMap([]) as GeneratedMap & {
+            nodes: Array<{ id?: string; tags?: string[]; sourceRefs?: Array<{ path?: string }> }>;
+            edges: Array<{ from?: string; to?: string; label?: string }>;
+        };
+        const daemons = map.nodes.filter((node) => (node.tags ?? []).includes("daemon"));
+        // Only the literal `spawn("./worker.ts")` resolves; the variable spawn and
+        // the spawn in cli.test.ts draw nothing.
+        expect(daemons).toHaveLength(1);
+        const daemon = daemons[0];
+        expect(daemon?.sourceRefs?.[0]?.path).toBe("packages/greeter/src/worker.ts");
+        const startsEdge = map.edges.find((edge) => edge.label === "starts" && edge.to === daemon?.id);
+        expect(startsEdge?.from).toBe("mini-greeter-src");
     });
 
     it("given the fixture repo, when generating twice, then the maps are equal bar the timestamp", () => {

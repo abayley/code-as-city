@@ -3,7 +3,7 @@
 
 import { join } from "node:path";
 import type { Host } from "./hosts.ts";
-import type { Package } from "./packages.ts";
+import { artefactEntryCandidates, type Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
 import type { Room } from "./rooms.ts";
 import { OTLP_PATTERN } from "./scans.ts";
@@ -48,6 +48,18 @@ function reachableFrom(roots: ReadonlySet<string>, fileEdges: readonly FileEdge[
 
 export type Reachability = {
     deployReachable: Set<string>;
+    /**
+     * R5: files reachable from the *host* deployment roots only — compose
+     * service COPYs and entries, the wrangler worker entry, and web-app entry
+     * dirs — excluding package `bin`/`main`/`module` entries. A package with no
+     * file in this set is reached by nothing the hosts actually deploy, so it is
+     * development scaffolding (an e2e harness, a plugin SDK used only by dev
+     * builds) and leaves the deployment view. Distinct from `deployReachable`,
+     * which also treats every package entry as a root.
+     */
+    hostDeployReachable: Set<string>;
+    /** Whether any host deployment root exists — R5 only fires when a real deployment shape is present. */
+    hasHostDeployShape: boolean;
     scriptReachable: Set<string>;
     operationalReachable: Set<string>;
     /** Files named directly by a package.json script command — identical to R1's script roots. */
@@ -110,18 +122,21 @@ export function analyseReachability(
     };
 
     const deployRoots = new Set<string>();
+    // Host deployment roots only (no package bin/main): the basis for R5.
+    const hostDeployRoots = new Set<string>();
     const scriptRoots = new Set<string>();
     const operationalRoots = new Set<string>();
 
     for (const host of hosts) {
         for (const service of host.services) {
-            if (service.entryFile) deployRoots.add(service.entryFile);
+            if (service.entryFile) hostDeployRoots.add(service.entryFile);
             for (const copy of service.copies) {
-                for (const f of sourceFiles) if (f.startsWith(`${copy.replace(/\/$/, "")}/`)) deployRoots.add(f);
+                for (const f of sourceFiles) if (f.startsWith(`${copy.replace(/\/$/, "")}/`)) hostDeployRoots.add(f);
             }
         }
     }
-    if (edgeHost?.main && fileToRoom.has(edgeHost.main)) deployRoots.add(edgeHost.main);
+    if (edgeHost?.main && fileToRoom.has(edgeHost.main)) hostDeployRoots.add(edgeHost.main);
+    for (const root of hostDeployRoots) deployRoots.add(root);
 
     for (const pkg of packages) {
         const json = (readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {}) as PackageManifest;
@@ -134,10 +149,21 @@ export function analyseReachability(
             const resolved = value !== undefined && resolvePathToken(pkg.dir, String(value));
             if (resolved) deployRoots.add(resolved);
         }
+        // D14: a published artefact's source entry is a deploy root, so a
+        // bundled library whose `module` points at a dist file (not resolvable
+        // above) still keeps its source out of the R3 orphan sweep.
+        if (pkg.artefact !== null) {
+            const entry = artefactEntryCandidates(pkg).find((candidate) => fileToRoom.has(candidate));
+            if (entry !== undefined) deployRoots.add(entry);
+        }
         if (pkg.role === "web") {
             for (const entryDir of ["app", "pages", "src/app", "src/pages"]) {
                 const prefix = pkg.dir === "." ? entryDir : join(pkg.dir, entryDir);
-                for (const f of sourceFiles) if (f.startsWith(`${prefix}/`)) deployRoots.add(f);
+                for (const f of sourceFiles)
+                    if (f.startsWith(`${prefix}/`)) {
+                        deployRoots.add(f);
+                        hostDeployRoots.add(f); // a web app is a real deployment shape (R5)
+                    }
             }
         }
         for (const [scriptName, command] of Object.entries(json.scripts ?? {})) {
@@ -152,6 +178,7 @@ export function analyseReachability(
     }
 
     const deployReachable = reachableFrom(deployRoots, fileEdges);
+    const hostDeployReachable = reachableFrom(hostDeployRoots, fileEdges);
     const scriptReachable = reachableFrom(scriptRoots, fileEdges);
     const operationalReachable = reachableFrom(operationalRoots, fileEdges);
     /**
@@ -166,6 +193,8 @@ export function analyseReachability(
 
     return {
         deployReachable,
+        hostDeployReachable,
+        hasHostDeployShape: hostDeployRoots.size > 0,
         scriptReachable,
         operationalReachable,
         scriptReferencedFiles: scriptRoots,

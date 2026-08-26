@@ -15,6 +15,7 @@ import { runOverview } from "./lib/assemble-overview.ts";
 import { createComplexityScanner, loadComplexityCompiler } from "./lib/complexity.ts";
 import { analyseCoupling } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
+import { findSpawnedEntries } from "./lib/daemons.ts";
 import { emitArtefacts } from "./lib/emit.ts";
 import { layerHosts, scanHostConfigs } from "./lib/host-config.ts";
 import { buildHosts } from "./lib/hosts.ts";
@@ -94,7 +95,12 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
     const composeFiles = allFiles.filter((f) => /docker-compose[^/]*\.(yml|yaml)$/.test(basename(f)));
     const crontabFiles = allFiles.filter((f) => /^crontab/.test(basename(f)));
     const schedules = parseCrontabSchedules(crontabFiles.map((f) => [f, readText(join(repo, f))]));
-    const { hosts, candidateHosts, serviceDependsOn } = buildHosts(repo, allFiles, composeFiles, schedules);
+    const { hosts, candidateHosts, serviceDependsOn, serviceOwner } = buildHosts(
+        repo,
+        allFiles,
+        composeFiles,
+        schedules,
+    );
     const edgeHost = findEdgeHost(repo, allFiles);
     const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
     const embeddedDatabases = findEmbeddedDatabases(packages);
@@ -106,8 +112,15 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
 
     // 6. Dev-tooling detection by reachability
     const reachability = analyseReachability(repo, packages, hosts, edgeHost, sourceFiles, fileEdges, fileToRoom);
-    const { deployReachable, scriptReachable, scriptReferencedFiles } = reachability;
+    const { deployReachable, hostDeployReachable, hasHostDeployShape, scriptReachable, scriptReferencedFiles } =
+        reachability;
     const devToolingWarnings = stripDevTooling(repo, rooms, reachability, fileEdges);
+    // D15: daemons spawned from deploy-reachable (non-test) source.
+    const spawnedEntries = findSpawnedEntries(
+        repo,
+        sourceFiles.filter((f) => deployReachable.has(f)),
+        new Set(sourceFiles),
+    );
 
     if (overview) {
         await runOverview({
@@ -117,6 +130,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
             hosts,
             candidateHosts,
             hostScan,
+            serviceOwner,
             hostLayer,
             edgeHost,
             drizzleConfig,
@@ -158,6 +172,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         candidateHosts,
         hostScan,
         serviceDependsOn,
+        serviceOwner,
         hostLayer,
         edgeHost,
         drizzleConfig,
@@ -168,8 +183,11 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         docForFiles,
         fileMaxFunctionComplexity,
         deployReachable,
+        hostDeployReachable,
+        hasHostDeployShape,
         scriptReachable,
         scriptReferencedFiles,
+        spawnedEntries,
         devToolingWarnings,
         pathReassignments,
         entryDirNames: ENTRY_DIR_NAMES,

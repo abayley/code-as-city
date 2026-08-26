@@ -1,0 +1,6 @@
+{
+    "name": "@mini/greeter",
+    "bin": {
+        "greeter": "src/cli.ts"
+    }
+}

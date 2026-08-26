@@ -1,0 +1,10 @@
+{
+    "name": "@mini/ext",
+    "main": "src/extension.ts",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "contributes": {
+        "commands": []
+    }
+}

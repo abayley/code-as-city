@@ -241,6 +241,85 @@
       }
     },
     {
+      "id": "mini-e2e-district",
+      "label": "@Mini/E2e",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/e2e/ — 2 modules.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-e2e-src-harness",
+      "label": "Harness",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-e2e-district",
+      "description": "Test harness helpers for the end-to-end suite. Not part of the deployed system.",
+      "sourceRefs": [
+        {
+          "path": "packages/e2e/src/harness.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-e2e-src-run",
+      "label": "Run",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-e2e-district",
+      "description": "End-to-end runner, invoked by the package's own `e2e` script only.",
+      "attributes": {
+        "entry-point": "packages/e2e/src/run.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/e2e/src/run.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 10,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 1
+      }
+    },
+    {
       "id": "mini-edge-district",
       "label": "@Mini/Edge",
       "kind": "scope",
@@ -283,6 +362,192 @@
         "color": "#C77740",
         "flowLayer": 0,
         "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-ext-district",
+      "label": "@Mini/Ext",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/ext/ — 2 modules.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-ext-src-commands",
+      "label": "Commands",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-ext-district",
+      "description": "Registers the extension's commands.",
+      "sourceRefs": [
+        {
+          "path": "packages/ext/src/commands.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-ext-src-extension",
+      "label": "Extension",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-ext-district",
+      "description": "VS Code extension activation entry.",
+      "sourceRefs": [
+        {
+          "path": "packages/ext/src/extension.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 1
+      }
+    },
+    {
+      "id": "mini-greeter-district",
+      "label": "@Mini/Greeter",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/greeter/ — 3 modules.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-greeter-src-cli",
+      "label": "Cli",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-greeter-district",
+      "description": "Greeter CLI entry point: starts a worker daemon, then greets.",
+      "attributes": {
+        "entry-point": "packages/greeter/src/cli.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/cli.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 13,
+        "complexity": 2,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.2035533905932738,
+          0.6,
+          1.0230203820042827
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-greeter-src-format",
+      "label": "Format",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-greeter-district",
+      "description": "Formats a greeting for the given name.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/format.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
+        "flowOrder": 1
+      }
+    },
+    {
+      "id": "mini-greeter-src-worker",
+      "label": "Worker",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-greeter-district",
+      "description": "Background worker the greeter CLI starts at runtime.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/worker.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 2
       }
     },
     {
@@ -329,6 +594,82 @@
         "color": "#C77740",
         "flowLayer": 0,
         "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-toolkit-district",
+      "label": "@Mini/Toolkit",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/toolkit/ — 2 modules.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-toolkit-src-clamp",
+      "label": "Clamp",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-toolkit-district",
+      "description": "Clamps a value to the inclusive range [low, high].",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit/src/clamp.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "support"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.51,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 1,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-toolkit-src-index",
+      "label": "Index",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-toolkit-district",
+      "description": "Public entry of the toolkit library.",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit/src/index.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 1
       }
     },
     {
@@ -423,13 +764,13 @@
       }
     },
     {
-      "id": "host-host",
-      "label": "Host host",
+      "id": "host-s3",
+      "label": "S3 host",
       "kind": "scope",
       "archetype": "district",
-      "description": "Host host: 4 nodes.",
+      "description": "S3 host: 7 nodes.",
       "tags": [
-        "band:Host host"
+        "band:Mini Repo host"
       ],
       "display": {
         "color": "#283B47",
@@ -437,19 +778,38 @@
       }
     },
     {
-      "id": "infra-host-db",
-      "label": "Db",
+      "id": "infra-s3-minio",
+      "label": "Minio",
       "kind": "infra",
-      "archetype": "database",
-      "parentId": "host-host",
-      "description": "postgres:16 on the host host.",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "minio/minio on the s3 host.",
       "sourceRefs": [
         {
-          "path": "docker-compose.yml"
+          "path": "docker-compose.s3.yml"
         }
       ],
       "tags": [
-        "host:host"
+        "host:s3"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-s3-minio-setup",
+      "label": "Minio Setup",
+      "kind": "infra",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "minio/mc on the s3 host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.s3.yml"
+        }
+      ],
+      "tags": [
+        "host:s3"
       ],
       "display": {
         "color": "#283B47"
@@ -460,7 +820,7 @@
       "label": "Db",
       "kind": "infra",
       "archetype": "database",
-      "parentId": "host-host",
+      "parentId": "host-s3",
       "description": "postgres:16 declared in docker-compose.dev.yml.",
       "sourceRefs": [
         {
@@ -468,7 +828,7 @@
         }
       ],
       "tags": [
-        "host:host"
+        "host:s3"
       ],
       "display": {
         "color": "#283B47"
@@ -479,7 +839,7 @@
       "label": "Cache",
       "kind": "infra",
       "archetype": "queue",
-      "parentId": "host-host",
+      "parentId": "host-s3",
       "description": "redis:7 declared in docker-compose.dev.yml.",
       "sourceRefs": [
         {
@@ -487,7 +847,7 @@
         }
       ],
       "tags": [
-        "host:host"
+        "host:s3"
       ],
       "display": {
         "color": "#283B47"
@@ -498,7 +858,7 @@
       "label": "Broker",
       "kind": "infra",
       "archetype": "queue",
-      "parentId": "host-host",
+      "parentId": "host-s3",
       "description": "container declared in docker-compose.dev.yml.",
       "sourceRefs": [
         {
@@ -506,7 +866,116 @@
         }
       ],
       "tags": [
-        "host:host"
+        "host:s3"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-minio",
+      "label": "Minio",
+      "kind": "infra",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "minio/minio declared in docker-compose.s3.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.s3.yml"
+        }
+      ],
+      "tags": [
+        "host:s3"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-minio-setup",
+      "label": "Minio Setup",
+      "kind": "infra",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "minio/mc declared in docker-compose.s3.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.s3.yml"
+        }
+      ],
+      "tags": [
+        "host:s3"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "host-mini-repo",
+      "label": "Mini Repo host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Mini Repo host: 3 nodes.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#283B47",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "infra-mini-repo-db",
+      "label": "Db",
+      "kind": "infra",
+      "archetype": "database",
+      "parentId": "host-mini-repo",
+      "description": "postgres:16 on the mini-repo host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [
+        "host:mini-repo"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-mini-repo-rest",
+      "label": "Rest",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini-repo",
+      "description": "postgrest/postgrest:latest on the mini-repo host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [
+        "host:mini-repo"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-mini-repo-meta",
+      "label": "Meta",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini-repo",
+      "description": "supabase/postgres-meta:v0.80.0 on the mini-repo host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [
+        "host:mini-repo"
       ],
       "display": {
         "color": "#283B47"
@@ -580,6 +1049,38 @@
       "id": "mini-api-src-server--mini-api-src-routes-health-i",
       "from": "mini-api-src-server",
       "to": "mini-api-src-routes-health",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-e2e-src-run--mini-e2e-src-harness-i",
+      "from": "mini-e2e-src-run",
+      "to": "mini-e2e-src-harness",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-ext-src-extension--mini-ext-src-commands-i",
+      "from": "mini-ext-src-extension",
+      "to": "mini-ext-src-commands",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-greeter-src-cli--mini-greeter-src-format-i",
+      "from": "mini-greeter-src-cli",
+      "to": "mini-greeter-src-format",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-toolkit-src-index--mini-toolkit-src-clamp-i",
+      "from": "mini-toolkit-src-index",
+      "to": "mini-toolkit-src-clamp",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"

@@ -6,8 +6,54 @@
   "summary": "Deterministic draft map generated without an agent (prototype).",
   "nodes": [
     {
-      "id": "host-host",
-      "label": "Host host",
+      "id": "host-s3",
+      "label": "S3 host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Deployment host projected from docker-compose.s3.yml.",
+      "display": {
+        "flowLayer": 1000
+      }
+    },
+    {
+      "id": "host-s3-minio",
+      "label": "Minio",
+      "kind": "infra",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "Container image minio/minio.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.s3.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "host-s3-minio-setup",
+      "label": "Minio Setup",
+      "kind": "infra",
+      "archetype": "storage",
+      "parentId": "host-s3",
+      "description": "Container image minio/mc.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.s3.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "host-mini-repo",
+      "label": "Mini Repo host",
       "kind": "scope",
       "archetype": "district",
       "description": "Deployment host projected from docker-compose.yml.",
@@ -16,11 +62,11 @@
       }
     },
     {
-      "id": "host-host-api",
+      "id": "host-mini-repo-api",
       "label": "Api",
       "kind": "deployable",
       "archetype": "building",
-      "parentId": "host-host",
+      "parentId": "host-mini-repo",
       "description": "Starts the HTTP server.\n\nScheduled job: 0 3 * * *",
       "attributes": {
         "service-source": "packages/api/Dockerfile",
@@ -50,11 +96,11 @@
       }
     },
     {
-      "id": "host-host-api-packages-api",
+      "id": "host-mini-repo-api-packages-api",
       "label": "Api",
       "kind": "module",
       "archetype": "room",
-      "parentId": "host-host-api",
+      "parentId": "host-mini-repo-api",
       "description": "Source copied from packages/api/ into the api image.",
       "sourceRefs": [
         {
@@ -69,11 +115,11 @@
       }
     },
     {
-      "id": "host-host-api-packages-shared",
+      "id": "host-mini-repo-api-packages-shared",
       "label": "Shared",
       "kind": "module",
       "archetype": "room",
-      "parentId": "host-host-api",
+      "parentId": "host-mini-repo-api",
       "description": "Source copied from packages/shared/ into the api image.",
       "sourceRefs": [
         {
@@ -88,11 +134,11 @@
       }
     },
     {
-      "id": "host-host-db",
+      "id": "host-mini-repo-db",
       "label": "Db",
       "kind": "infra",
       "archetype": "database",
-      "parentId": "host-host",
+      "parentId": "host-mini-repo",
       "description": "Container image postgres:16.",
       "attributes": {},
       "sourceRefs": [
@@ -106,11 +152,47 @@
       }
     },
     {
-      "id": "host-host-cache",
+      "id": "host-mini-repo-rest",
+      "label": "Rest",
+      "kind": "infra",
+      "archetype": "worker",
+      "parentId": "host-mini-repo",
+      "description": "Container image postgrest/postgrest:latest.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
+      "id": "host-mini-repo-meta",
+      "label": "Meta",
+      "kind": "infra",
+      "archetype": "worker",
+      "parentId": "host-mini-repo",
+      "description": "Container image supabase/postgres-meta:v0.80.0.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
+      "id": "host-mini-repo-cache",
       "label": "Cache",
       "kind": "infra",
       "archetype": "queue",
-      "parentId": "host-host",
+      "parentId": "host-mini-repo",
       "description": "Backing service (image redis:7) declared in a compose variant; the deployed host provides it via configuration.",
       "sourceRefs": [
         {
@@ -122,11 +204,11 @@
       }
     },
     {
-      "id": "host-host-broker",
+      "id": "host-mini-repo-broker",
       "label": "Broker",
       "kind": "infra",
       "archetype": "queue",
-      "parentId": "host-host",
+      "parentId": "host-mini-repo",
       "description": "Backing service declared in a compose variant; the deployed host provides it via configuration.",
       "sourceRefs": [
         {
@@ -331,6 +413,141 @@
       ]
     },
     {
+      "id": "mini-ext-area",
+      "label": "@Mini/Ext",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/ext, rooted at packages/ext/."
+    },
+    {
+      "id": "mini-ext-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-ext-area",
+      "description": "Registers the extension's commands.\n\n2 source files under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/ext/src"
+        }
+      ],
+      "metrics": {
+        "loc": 12,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.646235345633661,
+          0.935
+        ]
+      },
+      "tags": [
+        "extension"
+      ]
+    },
+    {
+      "id": "mini-ext-src-files",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-ext-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/ext/src/commands.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-ext-src-extension",
+      "label": "Extension",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-ext-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/ext/src/extension.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-greeter-area",
+      "label": "@Mini/Greeter",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/greeter, rooted at packages/greeter/."
+    },
+    {
+      "id": "mini-greeter-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-greeter-area",
+      "description": "Greeter CLI entry point: starts a worker daemon, then greets.\n\n3 source files under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src"
+        }
+      ],
+      "metrics": {
+        "loc": 25,
+        "complexity": 2
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.2035533905932738,
+          0.6934587507932718,
+          1.0230203820042827
+        ]
+      },
+      "tags": [
+        "cli"
+      ]
+    },
+    {
+      "id": "mini-greeter-src-cli",
+      "label": "Cli",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-greeter-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/cli.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-greeter-src-files",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-greeter-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/format.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-greeter-src-worker",
+      "label": "Worker",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-greeter-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/worker.ts"
+        }
+      ]
+    },
+    {
       "id": "mini-shared-src",
       "label": "Src",
       "kind": "module",
@@ -356,11 +573,72 @@
       }
     },
     {
+      "id": "mini-toolkit-area",
+      "label": "@Mini/Toolkit",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/toolkit, rooted at packages/toolkit/."
+    },
+    {
+      "id": "mini-toolkit-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "building",
+      "parentId": "mini-toolkit-area",
+      "description": "Clamps a value to the inclusive range [low, high].\n\n2 source files under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit/src"
+        }
+      ],
+      "metrics": {
+        "loc": 8,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6311209406015021,
+          0.935
+        ]
+      },
+      "tags": [
+        "published"
+      ]
+    },
+    {
+      "id": "mini-toolkit-src-files",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-toolkit-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit/src/clamp.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-toolkit-src-index",
+      "label": "Index",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-toolkit-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit/src/index.ts"
+        }
+      ]
+    },
+    {
       "id": "infra-better-sqlite3",
       "label": "SQLite database",
       "kind": "infra",
       "archetype": "database",
-      "parentId": "host-host",
+      "parentId": "host-mini-repo",
       "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
       "sourceRefs": [
         {
@@ -372,25 +650,47 @@
       }
     },
     {
-      "id": "ci-ci",
-      "label": "CI: ci",
+      "id": "ci-deploy",
+      "label": "CI: deploy",
       "kind": "scope",
       "archetype": "district",
-      "description": "GitHub Actions workflow declared in .github/workflows/ci.yml."
+      "description": "GitHub Actions workflow declared in .github/workflows/deploy.yml."
     },
     {
-      "id": "ci-ci-job",
-      "label": "Ci",
+      "id": "ci-deploy-job",
+      "label": "Deploy",
       "kind": "deployable",
       "archetype": "worker",
-      "parentId": "ci-ci",
-      "description": "CI job from .github/workflows/ci.yml. Runs packages/shared/test/greeting.test.ts.",
+      "parentId": "ci-deploy",
+      "description": "CI job from .github/workflows/deploy.yml. Runs packages/api/src/server.ts.",
       "sourceRefs": [
         {
-          "path": ".github/workflows/ci.yml"
+          "path": ".github/workflows/deploy.yml"
         }
       ],
       "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
+      "id": "daemon-packages-greeter-src-worker-ts",
+      "label": "Worker",
+      "kind": "deployable",
+      "archetype": "worker",
+      "parentId": "mini-greeter-area",
+      "description": "Background process started at runtime (spawned by cli.ts).",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/worker.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 7
+      },
+      "tags": [
+        "daemon"
+      ],
       "display": {
         "flowLayer": 1
       }
@@ -398,49 +698,49 @@
   ],
   "edges": [
     {
-      "id": "host-host-api--host-host-db",
-      "from": "host-host-api",
-      "to": "host-host-db",
+      "id": "host-mini-repo-api--host-mini-repo-db",
+      "from": "host-mini-repo-api",
+      "to": "host-mini-repo-db",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "compose depends_on"
     },
     {
-      "id": "host-host-api--host-host-cache",
-      "from": "host-host-api",
-      "to": "host-host-cache",
+      "id": "host-mini-repo-api--host-mini-repo-cache",
+      "from": "host-mini-repo-api",
+      "to": "host-mini-repo-cache",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "compose depends_on"
     },
     {
-      "id": "host-host-api--host-host-broker",
-      "from": "host-host-api",
-      "to": "host-host-broker",
+      "id": "host-mini-repo-api--host-mini-repo-broker",
+      "from": "host-mini-repo-api",
+      "to": "host-mini-repo-broker",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "compose depends_on"
     },
     {
-      "id": "mini-api-src-jobs--host-host-api",
+      "id": "mini-api-src-jobs--host-mini-repo-api",
       "from": "mini-api-src-jobs",
-      "to": "host-host-api",
+      "to": "host-mini-repo-api",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"
     },
     {
-      "id": "mini-api-src-routes--host-host-api",
+      "id": "mini-api-src-routes--host-mini-repo-api",
       "from": "mini-api-src-routes",
-      "to": "host-host-api",
+      "to": "host-mini-repo-api",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"
     },
     {
-      "id": "mini-api-src-server--host-host-api",
+      "id": "mini-api-src-server--host-mini-repo-api",
       "from": "mini-api-src-server",
-      "to": "host-host-api",
+      "to": "host-mini-repo-api",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "3 imports"
@@ -462,8 +762,8 @@
       "label": "1 import"
     },
     {
-      "id": "host-host-api--infra-better-sqlite3",
-      "from": "host-host-api",
+      "id": "host-mini-repo-api--infra-better-sqlite3",
+      "from": "host-mini-repo-api",
       "to": "infra-better-sqlite3",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -476,15 +776,29 @@
       ]
     },
     {
-      "id": "ci-ci-job--host-host-api-packages-shared",
-      "from": "ci-ci-job",
-      "to": "host-host-api-packages-shared",
+      "id": "ci-deploy-job--mini-api-src-server",
+      "from": "ci-deploy-job",
+      "to": "mini-api-src-server",
       "kind": "calls",
       "evidence": "declared",
-      "label": "runs greeting.test.ts",
+      "label": "runs server.ts",
       "sourceRefs": [
         {
-          "path": ".github/workflows/ci.yml"
+          "path": ".github/workflows/deploy.yml"
+        }
+      ]
+    },
+    {
+      "id": "mini-greeter-src--daemon-packages-greeter-src-worker-ts",
+      "from": "mini-greeter-src",
+      "to": "daemon-packages-greeter-src-worker-ts",
+      "kind": "calls",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "starts",
+      "sourceRefs": [
+        {
+          "path": "packages/greeter/src/cli.ts"
         }
       ]
     }
@@ -494,6 +808,7 @@
     "Test directories and *.test/*.spec files are excluded.",
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: src/lib.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
+    "Dev-only package excluded from the deployment view (reached by no host deploy root): @mini/e2e (1 area).",
     "Orphan area excluded (unreferenced, undeployed): src (1 files)."
   ]
 }

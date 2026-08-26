@@ -19,7 +19,7 @@ import {
 import type { Coupling } from "./coupling.ts";
 import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
-import type { Host } from "./hosts.ts";
+import { type Host, isServiceShadowed } from "./hosts.ts";
 import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
@@ -81,6 +81,7 @@ export type OverviewContext = {
     hosts: readonly Host[];
     candidateHosts: readonly Host[];
     hostScan: readonly HostScanResult[];
+    serviceOwner: ReadonlyMap<string, string>;
     hostLayer: Map<string, number>;
     edgeHost: EdgeHost | null;
     drizzleConfig: string | undefined;
@@ -125,6 +126,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         hosts,
         candidateHosts,
         hostScan,
+        serviceOwner,
         hostLayer,
         edgeHost,
         drizzleConfig,
@@ -503,6 +505,9 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         const host = scan.host;
         for (const service of host.services) {
             if (service.dockerfile) continue; // built from this repo's modules
+            // D1: a service owned by another topology's canonical file folds to
+            // that owner; it is not redrawn under this host.
+            if (isServiceShadowed(serviceOwner, host, service.name)) continue;
             infraMembers.push({
                 id: kebab(`infra-${host.name}-${service.name}`),
                 label: titleCase(service.name),

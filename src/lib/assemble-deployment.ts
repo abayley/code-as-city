@@ -19,9 +19,10 @@ import {
     uniqueId,
 } from "./assembly-helpers.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
+import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
-import type { Host } from "./hosts.ts";
+import { type Host, isServiceShadowed } from "./hosts.ts";
 import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
@@ -31,7 +32,7 @@ import {
     type NodeIndexEntry,
 } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
-import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
+import { artefactEntryCandidates, owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
 import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
@@ -62,6 +63,7 @@ export type DeploymentContext = {
     candidateHosts: readonly Host[];
     hostScan: readonly HostScanResult[];
     serviceDependsOn: ReadonlyMap<string, Set<string>>;
+    serviceOwner: ReadonlyMap<string, string>;
     hostLayer: Map<string, number>;
     edgeHost: EdgeHost | null;
     drizzleConfig: string | undefined;
@@ -72,7 +74,10 @@ export type DeploymentContext = {
     docForFiles: (files: readonly string[]) => string | null;
     fileMaxFunctionComplexity: (file: string) => number;
     deployReachable: ReadonlySet<string>;
+    hostDeployReachable: ReadonlySet<string>;
+    hasHostDeployShape: boolean;
     scriptReachable: ReadonlySet<string>;
+    spawnedEntries: readonly SpawnedEntry[];
     scriptReferencedFiles: ReadonlySet<string>;
     devToolingWarnings: readonly string[];
     pathReassignments: Map<string, PathReassignment>;
@@ -133,6 +138,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         candidateHosts,
         hostScan,
         serviceDependsOn,
+        serviceOwner,
         hostLayer,
         edgeHost,
         drizzleConfig,
@@ -143,8 +149,11 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         docForFiles,
         fileMaxFunctionComplexity,
         deployReachable,
+        hostDeployReachable,
+        hasHostDeployShape,
         scriptReachable,
         scriptReferencedFiles,
+        spawnedEntries,
         devToolingWarnings,
         pathReassignments,
         entryDirNames,
@@ -247,6 +256,12 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         return EXTERNALS_DISTRICT_ID;
     };
 
+    // D1: a service that a canonical topology file owns is drawn only under
+    // its owner; the same name in another topology file of the directory is
+    // shadowed (folded to the owner's single node), so supabase's six `Db`
+    // nodes become one.
+    const isShadowed = (host: Host, serviceName: string): boolean => isServiceShadowed(serviceOwner, host, serviceName);
+
     // 7a. Host districts from deployment shape. Hosts carry explicit flow
     // layers from the declared forwarding chain (gateway before stack before
     // evaluation), so edge cycles (evaluation <-> bootstrap) cannot scramble
@@ -261,10 +276,19 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             display: { flowLayer: HOST_LAYER_BASE + (hostLayer.get(host.name) ?? 0) },
         });
         for (const service of host.services) {
+            if (isShadowed(host, service.name)) continue;
             const serviceId = kebab(`${host.id}-${service.name}`);
             const allCopiedSegments = service.copies
                 .map((copy) => copy.replace(/\/$/, ""))
-                .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`));
+                .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`))
+                // A COPY only attributes source when it names a directory that
+                // actually holds source: immich's layer-cache `COPY
+                // ./server/package.json` names a manifest with no source under
+                // it, and claiming it would flip the whole package to the
+                // residual path and explode it into per-directory districts.
+                // Reachability still counts the raw COPY, so R5 sees the package
+                // as host-deployed.
+                .filter((copy) => sourceFiles.some((f) => f.startsWith(`${copy}/`)));
             // Coupling filter: drop shared lib-like dirs (high fan-in, low fan-out).
             /**
              * Resolves a COPY'd source directory to its room id by sampling a
@@ -400,6 +424,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             const fromId = kebab(`${host.id}-${service.name}`);
             if (!nodes.some((n) => n.id === fromId)) continue;
             for (const dep of deps) {
+                // D1: a dependency owned by another topology's canonical file is
+                // not re-materialised here — it lives as the owner's single node.
+                if (isShadowed(host, dep)) continue;
                 const toId = kebab(`${host.id}-${dep}`);
                 if (!nodes.some((n) => n.id === toId)) {
                     const variant = variantServices.get(dep);
@@ -426,6 +453,16 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                     label: "compose depends_on",
                 });
             }
+        }
+    }
+
+    // D1: a host whose every service was folded into another topology's owner
+    // (e.g. a pg15-only override) has no node of its own left — drop the empty
+    // district so consolidation does not leave a bare host box.
+    for (const host of hosts) {
+        if (!nodes.some((n) => n.parentId === host.id)) {
+            const index = nodes.findIndex((n) => n.id === host.id);
+            if (index !== -1) nodes.splice(index, 1);
         }
     }
 
@@ -669,6 +706,24 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         // Residual: compose services already claimed part of this package, so the
         // remaining code is operator tooling rather than the deployable itself.
         const residual = [...serviceClaimedDirs].some((dir) => owningPackage(dir) === pkg);
+
+        // R5: a whole package that no host deploy root reaches is development
+        // scaffolding (an e2e harness, a dev-only plugin SDK) — it leaves the
+        // deployment view, the way R2 strips dev-tooling files within a package.
+        // Only fires when the repo has a real deployment shape, so a library
+        // monorepo is untouched until D14 recognises its published packages; a
+        // residual or path-referenced package is spared, and the overview keeps
+        // these packages, so this is deployment-view-only.
+        const packageDeployed = pkgRooms.some((room) => room.files.some((f) => hostDeployReachable.has(f)));
+        const pathReferenced = pkgRooms.some((room) => pathReassignments.has(room.id));
+        // A published artefact (D14) is deployed by publication, not by a host,
+        // so R5 must not strip it even though no host root reaches it.
+        if (hasHostDeployShape && !residual && !pathReferenced && !packageDeployed && pkg.artefact === null) {
+            warnings.push(
+                `Dev-only package excluded from the deployment view (reached by no host deploy root): ${pkg.name} (${pkgRooms.length} area${pkgRooms.length === 1 ? "" : "s"}).`,
+            );
+            continue;
+        }
 
         const entries = pkgRooms
             .filter((r) => entryDirNames.has(basename(r.segment)) || r.segment === "(root)")
@@ -1023,6 +1078,14 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     };
     const ciJobId = new Map(ciWorkflows.map((w) => [w.name, kebab(`ci-${w.name}-job`)]));
     for (const workflow of ciWorkflows) {
+        // D9 (revised): CI is development infrastructure, not part of the running
+        // system, unless the workflow IS the deployment mechanism — a run step
+        // invoking source that itself deploys. The proxy is a run-step invocation
+        // of deploy-reachable source; lint/release/bot workflows invoke tooling,
+        // tests, or nothing, and leave the deployment view. The overview never
+        // shows CI, so this is deployment-view-only.
+        const deploysSource = workflow.invocations.some((inv) => deployReachable.has(inv.file));
+        if (!deploysSource) continue;
         const districtId = kebab(`ci-${workflow.name}`);
         const jobId = ciJobId.get(workflow.name);
         if (jobId === undefined) throw new Error(`CI job id missing for workflow ${workflow.name}`);
@@ -1131,6 +1194,67 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 }
             }
         }
+    }
+
+    // 7c-iv. D14: a non-private package that declares a bin, a library entry,
+    // or a VS Code extension is a published deployment artefact. Its entry (the
+    // bin target, main/module/exports, or extension main) resolves to source via
+    // the dist->src convention; the owning node becomes the deployable — a CLI or
+    // extension entry reads as a gateway, a library as a building — tagged by
+    // kind so the viewer can distinguish it from a hosted service. One deployable
+    // per published package.
+    for (const pkg of packages) {
+        const artefact = pkg.artefact;
+        if (artefact === null) continue;
+        const entrySource = artefactEntryCandidates(pkg).find(fileExists);
+        const nodeId = entrySource ? nodeOwningFile(entrySource) : null;
+        const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
+        // Only reclassify a package room; never a hosted service's node.
+        if (node === undefined || node.kind !== "module" || (node.parentId ?? "").startsWith("host-")) continue;
+        node.kind = "deployable";
+        // A library reads as a building, but the validator requires a building to
+        // hold at least two rooms; a single-room entry (and every CLI/extension)
+        // reads as a gateway, which is valid with or without an interior.
+        const childCount = nodes.filter((n) => n.parentId === node.id).length;
+        node.archetype = artefact.kind === "library" && childCount >= 2 ? "building" : "gateway";
+        node.tags = [...new Set([...(node.tags ?? []), artefact.tag])];
+    }
+
+    // 7c-v. D15: runtime-supervised processes. A deploy-reachable source file
+    // that spawns an inventoried entry (found by daemons.ts) starts a daemon: a
+    // process node with a `starts`-labelled edge from the supervisor's node. The
+    // target is drawn even when it is imported by nothing (a spawned entry is not
+    // an orphan), so its process appears; a spawn on a variable or an external
+    // command resolved to nothing and is absent here already.
+    for (const { caller, target } of spawnedEntries) {
+        const supervisorId = nodeOwningFile(caller);
+        const supervisor = supervisorId ? nodes.find((n) => n.id === supervisorId) : undefined;
+        if (supervisor === undefined) continue;
+        const daemonId = kebab(`daemon-${target}`);
+        if (!nodes.some((n) => n.id === daemonId)) {
+            nodes.push({
+                id: daemonId,
+                label: titleCase(fileModuleName(target)),
+                kind: "deployable",
+                archetype: "worker",
+                parentId: supervisor.parentId,
+                description: `Background process started at runtime (spawned by ${basename(caller)}).`,
+                sourceRefs: [{ path: target }],
+                metrics: { loc: linesOf(repo, [target]) },
+                tags: ["daemon"],
+                display: { flowLayer: 1 },
+            });
+        }
+        addEdge(edges, {
+            id: `${supervisor.id}--${daemonId}`,
+            from: supervisor.id,
+            to: daemonId,
+            kind: "calls",
+            evidence: "inferred",
+            confidence: 0.7,
+            label: "starts",
+            sourceRefs: [{ path: caller }],
+        });
     }
 
     // 7e-iii. Config-declared external services (D12): an https URL assigned as a

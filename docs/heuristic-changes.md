@@ -36,18 +36,18 @@ is not yet in an RFC.
 
 | ID     | Title                                                       | Rules       | Status   |
 | ------ | ----------------------------------------------------------- | ----------- | -------- |
-| HC-001 | No deployment category for a published package              | new; D, M   | Accepted |
+| HC-001 | No deployment category for a published package              | new; D, M   | Done     |
 | HC-002 | O4 shared-district colouring never fires                    | O4          | Proposed |
 | HC-003 | Collapse a redundant sole `src/` level                      | S2, M3      | Proposed |
 | HC-004 | Disambiguate colliding module labels across packages        | O2, M3, S4  | Proposed |
-| HC-005 | CI maintenance workflows surface as deployables             | D9, D10, M3 | Accepted |
+| HC-005 | CI maintenance workflows surface as deployables             | D9, D10, M3 | Done     |
 | HC-006 | Emoji leak from workflow names into node labels             | D9          | Proposed |
-| HC-007 | Dev and test packages rank as peer districts                | S1, M3, R   | Accepted |
-| HC-008 | Monorepo root and generic hosts make empty districts        | S1, D2, M3  | Accepted |
-| HC-009 | Same service across compose files duplicates infra          | D1          | Accepted |
-| HC-010 | D5 name classification mislabels API layers as databases    | D5          | Accepted |
+| HC-007 | Dev and test packages rank as peer districts                | S1, M3, R   | Done     |
+| HC-008 | Monorepo root and generic hosts make empty districts        | S1, D2, M3  | Done     |
+| HC-009 | Same service across compose files duplicates infra          | D1          | Done     |
+| HC-010 | D5 name classification mislabels API layers as databases    | D5          | Done     |
 | HC-011 | Overview emits one node per file; unrenderable at scale     | O2; viewer  | Proposed |
-| HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Accepted |
+| HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Done     |
 
 ## HC-001: No Deployment Category for a Published Package
 
@@ -80,6 +80,28 @@ the accepted `docs/rfcs/rfc-0004-deployment-mental-model.md`, which also
 rejected the whole-repo low-signal redirect: once any published package is a
 deployable, essentially every repo has one, so there is no shapeless case to
 redirect.
+
+**Resolution (Done).** D14 classifies a non-private package.json declaring
+`bin` (CLI), `engines.vscode`/`contributes` (VS Code extension), or a
+`main`/`module`/`exports` entry with a name (published library) as a published
+artefact, one deployable per package. The `private: true` flag alone proved a
+reliable published-vs-internal signal across the sample (aria-tools' private
+root aggregator and mermaid's private `example-diagram`/`local-editor` are
+excluded; the public tool and library packages are not), so `publishConfig` and
+workspace-dependency analysis were not needed — the phase-3 open question is
+resolved in favour of the simple signal. The artefact's source entry is resolved
+(dist->src, `.m/cjs`->`.ts`, then `src/index.ts`/`index.ts`/`src/main.ts`) and
+seeded as a deploy root so a bundled library is not swept as an R3 orphan; the
+owning node becomes the deployable, a CLI/extension as a `gateway`, a library as
+a `building` (a `gateway` when it has fewer than two rooms, which the validator
+requires), tagged `cli`/`published`/`extension`. R5 never strips a published
+artefact. Verified: aria-tools now yields 17 CLI deployables (was 0),
+ollama-code a CLI plus a library, mermaid two published libraries; aria-evals is
+unchanged and every sampled repo stays schema-valid and deterministic. The
+overview already archetypes a published entry as a gateway via O2, so it remains
+recognisable there without a separate pass. Fixture: `packages/greeter` (CLI),
+`packages/toolkit` (library), `packages/ext` (extension); a `generate-map`
+assertion pins the three tags.
 
 ## HC-002: O4 Shared-District Colouring Never Fires
 
@@ -150,11 +172,19 @@ Sheet Order", "Scorecard Supply Chain Security", "E2E"; ollama-code's are
 `CI: <workflow>`, and they are the *only* deployables — routine repo
 maintenance and bots presented as the system's deployed components.
 
-**Direction (to decide).** Demote CI jobs from `deployable`, or gate D9 to
-workflows that invoke source that actually deploys (not lint, release, or bot
-maintenance), or group all CI into one clearly-labelled concern rather than
-peer districts. Interacts with HC-001: once a published package is a real
-deployable, CI jobs no longer need to fill the vacuum.
+**Resolution (Done).** D9 is gated to workflows that are the deployment
+mechanism: a workflow enters the deployment view only when at least one of its
+run-step invocations resolves to deploy-reachable source. Routine maintenance —
+lint, release, dependency bumps, bots — invokes tooling, tests, or nothing, so
+it leaves the deployment view; the `calls`/`triggers` edges among the deploying
+jobs that remain are unchanged. CI never appears in the overview, so the change
+is deployment-view-only. Verified: mermaid's four CI deployables and
+ollama-code's four both drop to zero, while a fixture `deploy.yml` that runs the
+api service's entry (a deploy root) stays and the fixture `ci.yml` that runs a
+test leaves. Until D14 lands, a library/CLI repo's deployment view can be sparse
+— that vacuum is HC-001's to fill, not CI's. Fixture: `deploy.yml` alongside
+`ci.yml`; a `generate-map` assertion pins that only the deploying workflow is a
+deployable.
 
 ## HC-006: Emoji Leak From Workflow Names Into Node Labels
 
@@ -181,11 +211,39 @@ running system, yet they are districts of the same weight as the server. R2
 strips dev tooling at file granularity within a package but does not demote a
 whole package that exists only to support development.
 
-**Direction (to decide).** Rank or fold dev, test, and tooling packages —
-detected by name (`e2e`, `scripts`, `*-config`), by being depended on only by
-other packages' dev scripts, or by never being reachable from a deploy root —
-so the deployed system reads first. Needs a signal that does not also demote a
-legitimately small deployed package.
+**Resolution (Done).** R5 (new, deployment-view-only) excludes a package that
+no *host* deploy root reaches. The host roots are the compose service COPYs and
+entries, the wrangler worker entry, and web-app entry dirs — deliberately not
+package `bin`/`main`, since those are what D14 will turn into deployables, not a
+signal that the hosts deploy the package. The primary test is pure reachability;
+a residual (compose-claimed) or path-referenced package is spared, and R5 only
+fires when the repo has a resolved host deployment shape, so a library monorepo
+stays intact until D14. The scaffolding-name hint was not needed — reachability
+alone protects genuinely-deployed packages and avoids demoting a small one.
+Verified on the fixture: a `@mini/e2e` package reachable only from its own `e2e`
+script leaves the deployment view and stays in the overview. Fixture:
+`packages/e2e`; a `generate-map` assertion pins the split.
+
+**immich (the evidence repo): D3 `./` fix folded in (per the RFC Open
+Question's decision).** immich's Dockerfiles use `./`-prefixed COPY paths
+(`COPY ./server ./server/`) that D3 previously dropped, so immich had no host
+deploy shape for R5 to read. D3 now normalises the `./` prefix, and — separately
+— a COPY that names a file with no source under it (immich's layer-cache
+`COPY ./server/package.json`) no longer claims the package, which had been
+flipping it to the residual path and exploding it into per-directory districts.
+With both in place R5 fires on immich: `@immich/e2e-auth-server` and
+`@immich/scripts` leave the deployment view, while `plugin-sdk`/`plugin-core`
+stay — they are baked into the server image, so for immich they are genuinely
+deployed and HC-007's "used only by dev builds" premise does not hold.
+
+*Scale consequence (HC-011, not this rule).* Reading immich's COPYs correctly
+also makes its whole server package host-reachable, so it is no longer hidden as
+R3 orphans and is shown in full: immich's deployment map grows from 86 to ~355
+nodes, dominated by the server package's ~342 files. That is the legibility-and-
+scale concern RFC-0004 explicitly defers to HC-011 (deployment/overview
+aggregation of a large deployed package), not something R5 or D3 should solve
+here. aria-evals stays at 53 nodes and supabase keeps its core services, so the
+change is contained to repos whose Dockerfiles COPY whole large packages.
 
 ## HC-008: Monorepo Root and Generic Hosts Make Empty Districts
 
@@ -203,6 +261,25 @@ fallback than "Host host" — the compose service name, the image, or the repo
 name. Small, isolated cleanups; group with HC-006 as the "mechanical label"
 family.
 
+**Resolution (Done).**
+
+- *D2 host name.* A root or all-generic compose path yields no informative
+  segment, so the fallback host name is now the repo basename, not the
+  placeholder "host". Verified on live excalidraw: "Host host" became
+  "Excalidraw host". Fixture: a repo-root `docker-compose.yml`; `hosts.ts`
+  unit cases.
+- *S1 empty aggregator.* Already satisfied by the existing assembly: districts
+  are keyed off packages that own active rooms, so a source-less workspace-root
+  package produces no district in either view. The mini-repo fixture's root
+  (only `name`/`private`/`workspaces` plus a QA script) exercises this and the
+  goldens pin the absence — no production change was required.
+- *Out of scope (observed).* excalidraw's "Excalidraw Monorepo" district is
+  **not** empty: its root holds `scripts/build-*.js` build tooling (nine
+  files). These survive because R1 classes "build" as operational, not QA, so
+  R2 does not strip them. That is a build-script-stripping/R5 concern, distinct
+  from S1's empty-aggregator contract, and is left for the R5 phase rather than
+  folded into S1 here.
+
 ## HC-009: Same Service Across Compose Files Duplicates Infra
 
 **Rules:** D1 (one host district per compose file, environment-variant dedup).
@@ -218,12 +295,20 @@ and `Api Gw` twice. The developer's model is one platform with one postgres;
 the map shows six. This is the multi-compose analogue of the environment-
 variant case D1 already handles.
 
-**Direction (to decide).** Recognise that several compose files can describe
-the same system in different configurations, and consolidate a service that
-recurs by name across them into one node (or pick a canonical compose — a
-`docker-compose.yml` over `docker-compose.<topology>.yml`). Distinct from
-overlays, which D1 already skips. Needs a rule for which file is canonical and
-how to fold the rest.
+**Resolution (Done).** After the existing environment-variant dedup, D1 now
+folds a service name recurring across the surviving compose files of a
+directory to a single owner node. The owner is chosen by a total order —
+canonical unqualified file (`docker-compose.yml`, `compose.yaml`) first, then
+highest env rank, then lowest filename — so the pick is independent of
+iteration order. Every other occurrence of the name is shadowed: the direct
+definition in another topology file and the D6-carried backing node alike are
+suppressed, and a host left with no node of its own (a `pg15`-only db override)
+is dropped. The rule is directory-scoped, so a separate deployment's compose
+(immich's `e2e/`) stays independent, and it applies in both map modes so the
+overview stops duplicating too. Verified on live supabase: the six `Db` nodes
+became one under the canonical `docker/docker-compose.yml`; immich keeps its
+single `Prod host` and one `Db`. Fixture: a `docker-compose.s3.yml` topology
+file beside the canonical one; `hosts.ts` unit cases for the owner order.
 
 ## HC-010: D5 Name Classification Mislabels API Layers as Databases
 
@@ -235,10 +320,18 @@ D5's name table matches a database-adjacent token in the service name and
 mislabels an API layer as the store it fronts. A reader would take the map to
 show three databases where there is one.
 
-**Direction (to decide).** Tighten D5 so a service is a database only on a
-stronger signal than a substring — a known database image (`postgres`,
-`mysql`, `redis`, `valkey`), or a name that is exactly a store, not one that
-merely contains `pg`/`postgres` as a qualifier. Small, self-contained.
+**Resolution (Done).** The mislabel was the image substring, not the service
+name: `rest`'s image is `postgrest/postgrest` and `meta`'s is
+`supabase/postgres-meta`, both of which contain `postgres`. D5 now classes a
+service as a database only when the image's base name — the final path segment
+with tag and registry/org stripped — is exactly a known store name
+(`postgres`, `postgresql`, `mysql`, `mariadb`, `clickhouse`,
+`clickhouse-server`, `mongo`, ...), or when the service name is store-like.
+`postgrest` and `postgres-meta` fail the exact match and stay non-databases;
+`supabase/postgres` still resolves to `postgres`. Verified on live supabase:
+`Rest` and `Meta` became `worker`, only `Db` remains a database (its six-way
+duplication is HC-009's D1 consolidation, separate). Fixture: `rest`/`meta`
+services in `docker-compose.yml`, plus a `hosts.ts` unit case.
 
 ## HC-011: Overview Emits One Node per File, Unrenderable at Scale
 
@@ -280,6 +373,34 @@ spawner is a supervisor, the spawned entry files are daemons it runs, drawn as
 processes with a `starts` edge. Bounded to a deployable's reachable source so
 it does not fire on test or example code. Larger and less certain than the
 manifest-based rules; a signal worth capturing but needs care to avoid noise.
+
+**Resolution (Done).** D15 (`daemons.ts`) scans deploy-reachable, non-test
+source for a `spawn`/`spawnSync`/`fork`/`execFile[Sync]`/`Bun.spawn`/`new Worker`
+call whose first path argument is a *literal* — bare, or inside a
+`new URL('<path>', import.meta.url)` — that resolves to an inventoried entry
+(dist->src and `.m/cjs`->`.ts` conventions applied). The target becomes a
+`deployable`/`worker` process node tagged `daemon`, with an edge from the
+supervisor's node labelled "starts".
+
+Two decisions worth recording:
+
+- *Edge kind.* The RFC named a `starts` edge, but the output schema's edge-kind
+  enum is `depends_on`/`calls`/`data_flow`/`deploys` only — there is no `starts`
+  kind. The edge is emitted as `calls` (the supervisor invokes the daemon) with
+  the label "starts", evidence `inferred`, confidence 0.7. A safe, local
+  reinterpretation that keeps every golden schema-valid.
+- *Coverage.* Held to the RFC's explicit rule — "a spawn on a variable draws
+  nothing" — D15 fires on none of the eleven sampled repos, aria included: aria
+  spawns its `worker-main.ts` through a variable
+  (`Bun.spawn([execPath, entrypoint])`), and the rest spawn variables or
+  external binaries (`launchctl`, `systemctl`). This is the intended silence
+  over a guess, not a defect; D15 fires when a repo spawns a direct literal,
+  which the fixture exercises. Broadening to trace a literal through an
+  intervening variable would catch aria's daemon but is exactly the variable
+  case the RFC chose to exclude, so it was not done. Fixture:
+  `packages/greeter` spawns `./worker.ts` (a daemon), plus a variable spawn and
+  a spawn in `cli.test.ts` that both draw nothing; a `generate-map` assertion
+  pins all three outcomes.
 
 ## Repositories Examined
 

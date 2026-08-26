@@ -14,7 +14,7 @@ function writeFile(path: string, content: string): void {
     writeFileSync(join(repo, path), content);
 }
 
-const pkg: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root" };
+const pkg: Package = { dir: ".", name: "root", deps: {}, role: "package", id: "root", artefact: null };
 const makeRoom = (id: string, files: string[]): Room => ({ id, pkg, segment: id, files, loc: 0 });
 
 describe("analyseReachability", () => {
