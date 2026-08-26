@@ -9,8 +9,12 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
+import { HoverDetails, type HoverFact } from "./components/hover-details";
+import { Inspector, type InspectorContent, type InspectorSource, type InspectorStat } from "./components/inspector";
+import { Legend } from "./components/legend";
 import { Sidebar, type SidebarSection } from "./components/sidebar";
 import { Topbar } from "./components/topbar";
+import { ViewportOverlays } from "./components/viewport-overlays";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
@@ -1373,6 +1377,114 @@ function CityScene({
 }
 
 /**
+ * Builds the pointer-following card's content for a hovered node: its first
+ * few source paths, plus its metrics, room count, plain type, and tags.
+ *
+ * @param node - The hovered node.
+ * @param roomCount - How many rooms the node contains.
+ * @returns The paths and facts for {@link HoverDetails}.
+ */
+function hoverCardDetails(node: CityNode, roomCount: number): { paths: string[]; facts: HoverFact[] } {
+    const paths = (node.sourceRefs ?? []).slice(0, 3).map((ref) => ref.path ?? ref.url ?? "");
+    // Complexity is now the worst single function, meaningful for buildings
+    // too, so nothing is suppressed.
+    const facts: HoverFact[] = Object.entries(node.metrics ?? {}).map(([key, value]) => ({
+        name: key,
+        value: String(value),
+    }));
+    if (roomCount > 0) facts.push({ name: "modules", value: String(roomCount) });
+    const type = plainType(node, roomCount);
+    if (type) facts.push({ name: "type", value: type.toLowerCase() });
+    if (node.tags?.length) facts.push({ name: "tags", value: node.tags.join(", ") });
+    return { paths, facts };
+}
+
+/**
+ * Builds the inspector's map-summary content: the map's name, its summary and
+ * generation paragraphs, and a count of what the current view contains.
+ *
+ * @param map - The loaded city map.
+ * @param districtCount - Number of real (non-synthetic) districts on screen.
+ * @param visibleNodes - Nodes rendered by the current view.
+ * @param visibleEdgeCount - Number of edges rendered by the current view.
+ * @returns The map-summary content for {@link Inspector}.
+ */
+function mapInspectorContent(
+    map: CityMap,
+    districtCount: number,
+    visibleNodes: readonly CityNode[],
+    visibleEdgeCount: number,
+): InspectorContent {
+    const kindLabels: Array<[string, (node: CityNode) => boolean]> = [
+        ["districts", () => false],
+        ["entry points", (node) => node.archetype === "gateway"],
+        ["services", (node) => node.kind === "deployable"],
+        ["modules", (node) => node.kind === "module" && node.archetype !== "gateway"],
+        ["data stores", (node) => node.archetype === "database" || node.archetype === "storage"],
+        [
+            "infrastructure",
+            (node) => node.kind === "infra" && node.archetype !== "database" && node.archetype !== "storage",
+        ],
+        ["external systems", (node) => node.kind === "external"],
+    ];
+    const contents: InspectorStat[] = kindLabels
+        .map(([name, test]) => ({
+            name,
+            count: name === "districts" ? districtCount : visibleNodes.filter(test).length,
+        }))
+        .filter(({ count }) => count > 0)
+        .map(({ name, count }) => ({ name, value: String(count) }));
+    contents.push({ name: "visible edges", value: String(visibleEdgeCount) });
+    const paragraphs: string[] = [];
+    if (map.summary) paragraphs.push(map.summary);
+    if (map.generatedAt) paragraphs.push(`Generated ${new Date(map.generatedAt).toLocaleString()}.`);
+    return { kind: "map", title: map.name, paragraphs, contents };
+}
+
+/**
+ * Builds the inspector's content for one node: its plain-English type,
+ * description paragraphs, source-file rows (attribute paths first), and the
+ * metrics that carry a value.
+ *
+ * @param map - The loaded city map, used to resolve source links.
+ * @param node - The node being described.
+ * @param childCount - How many rooms the node contains, for the type line.
+ * @returns The node content for {@link Inspector}.
+ */
+function nodeInspectorContent(map: CityMap, node: CityNode, childCount: number): InspectorContent {
+    const attributes = (node as CityNode & { attributes?: Record<string, string> }).attributes ?? {};
+    const attributePaths = new Set(Object.values(attributes));
+    const sources: InspectorSource[] = Object.entries(attributes).map(([name, path]) => ({
+        key: `attr-${name}`,
+        label: path,
+        tag: name,
+        href: sourceHref(map, { path }) ?? undefined,
+    }));
+    (node.sourceRefs ?? [])
+        .filter((ref) => !ref.path || !attributePaths.has(ref.path))
+        .forEach((ref) => {
+            const label = `${ref.path ?? ref.url}${ref.line ? `:${ref.line}` : ""}`;
+            sources.push({ key: label, label, href: sourceHref(map, ref) ?? undefined });
+        });
+    const { loc, complexity, coverage } = (node.metrics ?? {}) as Record<string, number>;
+    const stats: InspectorStat[] = [
+        { name: "loc", value: loc !== undefined ? String(loc) : "" },
+        { name: "complexity", value: complexity !== undefined ? String(complexity) : "" },
+        { name: "coverage", value: coverage !== undefined ? `${coverage}%` : "" },
+    ].filter((stat) => stat.value !== "");
+    const paragraphs = (node.description ?? "").split("\n\n").filter((paragraph) => paragraph.trim());
+    return {
+        kind: "node",
+        nodeId: node.id,
+        title: node.label,
+        typeLabel: plainType(node, childCount),
+        paragraphs: paragraphs.length ? paragraphs : ["Purpose not yet mapped."],
+        sources,
+        stats,
+    };
+}
+
+/**
  * The main viewer chrome for one loaded map: top bar (map picker, actions),
  * searchable component rail, the CityScene viewport with legend and hover
  * card, and the inspector panel. Owns all selection and view-mode state.
@@ -1685,6 +1797,62 @@ function MapViewer({
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [expandedId, firstCampusConnection, focusId, neighborhoodId]);
 
+    // Overlay view model: the three drill-down levels share one back button
+    // and one breadcrumb slot, so they collapse into a single description.
+    const overlayBack = activeExpandedId
+        ? closeBuilding
+        : activeFocusId
+          ? closeFocus
+          : activeNeighborhoodId
+            ? closeNeighborhood
+            : null;
+    const overlayBreadcrumb = activeExpandedId
+        ? { root: map.name, detail: `${expandedNode?.label ?? ""} rooms open` }
+        : activeFocusId
+          ? {
+                root: focusedNode?.label ?? "",
+                detail: `${focusConnections.length} direct connection${focusConnections.length === 1 ? "" : "s"}${
+                    selectedConnection?.label ? ` · ${selectedConnection.label}` : ""
+                }`,
+            }
+          : activeNeighborhoodId
+            ? {
+                  root: map.name,
+                  detail:
+                      layout.neighborhoods.find((neighborhood) => neighborhood.id === activeNeighborhoodId)?.label ??
+                      "",
+              }
+            : null;
+    const overlayHelp = activeExpandedId
+        ? "Select a room · Esc to return · the city remains around you"
+        : activeFocusId
+          ? "Click a connected structure to trace that path · Esc to return"
+          : activeNeighborhoodId
+            ? "Choose a building to open it · Esc to return to the whole city"
+            : "Click a structure or nameplate to select · double-click to open";
+
+    // Both the hover card and the inspector describe the same node; the
+    // inspector falls back to the map summary when nothing is under either.
+    const hoveredRoomCount = hoverCard
+        ? map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length
+        : 0;
+    const hoverDetails = hoverCard
+        ? hoverCardDetails(hoverCard.node, hoveredRoomCount)
+        : { paths: [] as string[], facts: [] as HoverFact[] };
+    const inspectorShown = hoverCard?.node ?? selected;
+    const inspectorContent: InspectorContent = inspectorShown
+        ? nodeInspectorContent(
+              map,
+              inspectorShown,
+              map.nodes.filter((candidate) => candidate.parentId === inspectorShown.id).length,
+          )
+        : mapInspectorContent(
+              map,
+              layout.neighborhoods.filter((neighborhood) => !neighborhood.id.startsWith("__")).length,
+              visibleNodes,
+              visibleEdges.length,
+          );
+
     return (
         <main className="shell">
             <Topbar
@@ -1738,289 +1906,24 @@ function MapViewer({
                         <strong>No mapped structures.</strong>
                     </div>
                 )}
-                <div className="viewport-viewmode">
-                    <button type="button" onClick={() => setOverheadView((value) => !value)}>
-                        {overheadView ? "Isometric" : "Overhead"}
-                    </button>
-                </div>
-                <div className="flow-legend">
-                    <span>
-                        <i className="legend-line legend-declared" /> data flow
-                    </span>
-                    <span>
-                        <i className="legend-line legend-imports-out" /> what the selected node imports
-                    </span>
-                    <span>
-                        <i className="legend-line legend-imported-by" /> what imports the selected node
-                    </span>
-                </div>
-                {hoverCard &&
-                    (() => {
-                        const roomCount = map.nodes.filter(
-                            (candidate) => candidate.parentId === hoverCard.node.id,
-                        ).length;
-                        // Complexity is now the worst single function, meaningful for
-                        // buildings too, so nothing is suppressed.
-                        const metricEntries = Object.entries(hoverCard.node.metrics ?? {});
-                        return (
-                            <div className="stats-card" style={{ left: hoverCard.x + 18, top: hoverCard.y - 12 }}>
-                                <strong>{hoverCard.node.label}</strong>
-                                {hoverCard.node.sourceRefs?.slice(0, 3).map((ref) => (
-                                    <code key={ref.path ?? ref.url}>{ref.path ?? ref.url}</code>
-                                ))}
-                                <dl>
-                                    {metricEntries.map(([key, value]) => (
-                                        <div key={key}>
-                                            <dt>{key}</dt>
-                                            <dd>{String(value)}</dd>
-                                        </div>
-                                    ))}
-                                    {roomCount > 0 && (
-                                        <div>
-                                            <dt>modules</dt>
-                                            <dd>{roomCount}</dd>
-                                        </div>
-                                    )}
-                                    {plainType(hoverCard.node, roomCount) && (
-                                        <div>
-                                            <dt>type</dt>
-                                            <dd>{plainType(hoverCard.node, roomCount).toLowerCase()}</dd>
-                                        </div>
-                                    )}
-                                    {!!hoverCard.node.tags?.length && (
-                                        <div>
-                                            <dt>tags</dt>
-                                            <dd>{hoverCard.node.tags.join(", ")}</dd>
-                                        </div>
-                                    )}
-                                </dl>
-                            </div>
-                        );
-                    })()}
-                <div className="viewport-location">
-                    {activeExpandedId ? (
-                        <button type="button" onClick={closeBuilding}>
-                            Back to city
-                        </button>
-                    ) : activeFocusId ? (
-                        <button type="button" onClick={closeFocus}>
-                            Back to city
-                        </button>
-                    ) : activeNeighborhoodId ? (
-                        <button type="button" onClick={closeNeighborhood}>
-                            Back to city
-                        </button>
-                    ) : (
-                        <span>
-                            <i className="pulse" /> Front → back flow · {layout.neighborhoods.length} neighborhoods
-                        </span>
-                    )}
-                    {activeExpandedId && (
-                        <span className="breadcrumb">
-                            <b>{map.name}</b>
-                            <i>/</i>
-                            <span>{expandedNode?.label} rooms open</span>
-                        </span>
-                    )}
-                    {activeFocusId && (
-                        <span className="breadcrumb">
-                            <b>{focusedNode?.label}</b>
-                            <i>/</i>
-                            <span>
-                                {focusConnections.length} direct connection{focusConnections.length === 1 ? "" : "s"}
-                                {selectedConnection?.label ? ` · ${selectedConnection.label}` : ""}
-                            </span>
-                        </span>
-                    )}
-                    {activeNeighborhoodId && (
-                        <span className="breadcrumb">
-                            <b>{map.name}</b>
-                            <i>/</i>
-                            <span>
-                                {
-                                    layout.neighborhoods.find(
-                                        (neighborhood) => neighborhood.id === activeNeighborhoodId,
-                                    )?.label
-                                }
-                            </span>
-                        </span>
-                    )}
-                </div>
-                <p className="viewport-help">
-                    {activeExpandedId
-                        ? "Select a room · Esc to return · the city remains around you"
-                        : activeFocusId
-                          ? "Click a connected structure to trace that path · Esc to return"
-                          : activeNeighborhoodId
-                            ? "Choose a building to open it · Esc to return to the whole city"
-                            : "Click a structure or nameplate to select · double-click to open"}
-                </p>
+                <Legend />
+                <HoverDetails
+                    at={hoverCard ? { x: hoverCard.x + 18, y: hoverCard.y - 12 } : null}
+                    title={hoverCard?.node.label ?? ""}
+                    paths={hoverDetails.paths}
+                    facts={hoverDetails.facts}
+                />
+                <ViewportOverlays
+                    overhead={overheadView}
+                    onOverheadChange={setOverheadView}
+                    onBack={overlayBack}
+                    statusLabel={`Front → back flow · ${layout.neighborhoods.length} neighborhoods`}
+                    breadcrumb={overlayBreadcrumb}
+                    helpText={overlayHelp}
+                />
             </section>
 
-            <aside className="inspector">
-                {(() => {
-                    // The panel follows the pointer like the stats card: hovered node
-                    // first, the selection otherwise.
-                    const shown = hoverCard?.node ?? selected;
-                    if (!shown) {
-                        // Map summary: what the panel shows when nothing is selected.
-                        const districts = layout.neighborhoods.filter(
-                            (neighborhood) => !neighborhood.id.startsWith("__"),
-                        );
-                        const kindLabels: Array<[string, (n: CityNode) => boolean]> = [
-                            ["districts", () => false],
-                            ["entry points", (n) => n.archetype === "gateway"],
-                            ["services", (n) => n.kind === "deployable"],
-                            ["modules", (n) => n.kind === "module" && n.archetype !== "gateway"],
-                            ["data stores", (n) => n.archetype === "database" || n.archetype === "storage"],
-                            [
-                                "infrastructure",
-                                (n) => n.kind === "infra" && n.archetype !== "database" && n.archetype !== "storage",
-                            ],
-                            ["external systems", (n) => n.kind === "external"],
-                        ];
-                        const summary: Array<[string, string]> = kindLabels
-                            .map(
-                                ([name, test]) =>
-                                    [
-                                        name,
-                                        name === "districts" ? districts.length : visibleNodes.filter(test).length,
-                                    ] as [string, number],
-                            )
-                            .filter(([, count]) => Number(count) > 0)
-                            .map(([name, count]) => [name, String(count)]);
-                        summary.push(["visible edges", String(visibleEdges.length)]);
-                        return (
-                            <div className="inspector-content" key="map-summary">
-                                <p className="eyebrow">This map</p>
-                                <h2>{map.name}</h2>
-                                {map.summary && <p className="description">{map.summary}</p>}
-                                {map.generatedAt && (
-                                    <p className="description">
-                                        Generated {new Date(map.generatedAt).toLocaleString()}.
-                                    </p>
-                                )}
-                                <section className="stats-section">
-                                    <p className="eyebrow">Contents</p>
-                                    <dl>
-                                        {summary.map(([name, value]) => (
-                                            <div key={name}>
-                                                <dt>{name}</dt>
-                                                <dd>{value}</dd>
-                                            </div>
-                                        ))}
-                                    </dl>
-                                </section>
-                            </div>
-                        );
-                    }
-                    const shownChildren = map.nodes.filter((candidate) => candidate.parentId === shown.id).length;
-                    const attributes = (shown as CityNode & { attributes?: Record<string, string> }).attributes ?? {};
-                    const attributeEntries = Object.entries(attributes);
-                    const attributePaths = new Set(Object.values(attributes));
-                    const plainRefs = (shown.sourceRefs ?? []).filter(
-                        (ref) => !ref.path || !attributePaths.has(ref.path),
-                    );
-                    const { loc, complexity, coverage } = (shown.metrics ?? {}) as Record<string, number>;
-                    const stats: Array<[string, string]> = [
-                        ["loc", loc !== undefined ? String(loc) : ""],
-                        ["complexity", complexity !== undefined ? String(complexity) : ""],
-                        ["coverage", coverage !== undefined ? `${coverage}%` : ""],
-                    ].filter(([, value]) => value !== "") as Array<[string, string]>;
-                    /**
-                     * Renders one source-file row: a link when the path
-                     * resolves to a URL, plain text otherwise.
-                     *
-                     * @param path - The source path to show.
-                     * @param key - React key for the row.
-                     * @param tag - Optional attribute name shown as a prefix tag.
-                     * @returns The anchor or div row element.
-                     */
-                    const sourceRow = (path: string, key: string, tag?: string) => {
-                        const href = sourceHref(map, { path });
-                        const body = (
-                            <>
-                                <span className="ref-main">
-                                    {tag && <span className="ref-tag">{tag}</span>}
-                                    <code>{path}</code>
-                                </span>
-                                {href && <span aria-hidden="true">↗</span>}
-                            </>
-                        );
-                        return href ? (
-                            <a
-                                href={href}
-                                target="_blank"
-                                rel="noreferrer"
-                                key={key}
-                                aria-label={`Open ${path} in source`}
-                            >
-                                {body}
-                            </a>
-                        ) : (
-                            <div key={key}>{body}</div>
-                        );
-                    };
-                    const paragraphs = (shown.description ?? "").split("\n\n").filter((p) => p.trim());
-                    return (
-                        <div className="inspector-content" key={shown.id}>
-                            <p className="eyebrow">What it does</p>
-                            {plainType(shown, shownChildren) && (
-                                <div className={`plain-type type-${shown.kind}`}>{plainType(shown, shownChildren)}</div>
-                            )}
-                            <h2>{shown.label}</h2>
-                            {paragraphs.length ? (
-                                paragraphs.map((paragraph) => (
-                                    <p className="description" key={paragraph}>
-                                        {paragraph}
-                                    </p>
-                                ))
-                            ) : (
-                                <p className="description">Purpose not yet mapped.</p>
-                            )}
-                            {(attributeEntries.length > 0 || plainRefs.length > 0) && (
-                                <section className="source-list">
-                                    <p className="eyebrow">Source files</p>
-                                    {attributeEntries.map(([name, path]) => sourceRow(path, `attr-${name}`, name))}
-                                    {plainRefs.map((ref) => {
-                                        const label = `${ref.path ?? ref.url}${ref.line ? `:${ref.line}` : ""}`;
-                                        const href = sourceHref(map, ref);
-                                        return href ? (
-                                            <a
-                                                href={href}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                key={label}
-                                                aria-label={`Open ${label} in source`}
-                                            >
-                                                <code>{label}</code>
-                                                <span aria-hidden="true">↗</span>
-                                            </a>
-                                        ) : (
-                                            <div key={label}>
-                                                <code>{label}</code>
-                                            </div>
-                                        );
-                                    })}
-                                </section>
-                            )}
-                            {stats.length > 0 && (
-                                <section className="stats-section">
-                                    <p className="eyebrow">Stats</p>
-                                    <dl>
-                                        {stats.map(([name, value]) => (
-                                            <div key={name}>
-                                                <dt>{name}</dt>
-                                                <dd>{value}</dd>
-                                            </div>
-                                        ))}
-                                    </dl>
-                                </section>
-                            )}
-                        </div>
-                    );
-                })()}
-            </aside>
+            <Inspector content={inspectorContent} />
         </main>
     );
 }

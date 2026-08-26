@@ -78,11 +78,30 @@ generator work settled.
 Update this plan document as you go. When an item is complete, immediately
 mark it as complete in the phase checklist.
 
+## Design constraint: stock components only
+
+Added 2026-08-26 by the user, and it overrides anything below that conflicts.
+
+- Use only stock shadcn components, added with the CLI. No custom controls,
+  no hand-rolled surfaces, no bespoke visual styling.
+- Prefer each component's stock variants and sizes over ad-hoc class lists.
+  Layout-only utilities (positioning, grid/flex, gap, max-width) are fine;
+  custom colours, borders, shadows, radii, and backdrop filters are not.
+- The registry carries a primitive for nearly every piece of this chrome —
+  `sidebar`, `item`, `input-group`, `card`, `table`, `empty`, `field`,
+  `breadcrumb`, `toggle`/`toggle-group`, `button-group`, `hover-card`,
+  `tooltip`, `kbd`, `dialog`, `scroll-area` — so reach for those first.
+- If a stock component cannot express something, say so explicitly rather
+  than hand-rolling it.
+- The exception is the three.js scene itself (geometry, materials, camera,
+  palette). DOM chrome layered over the canvas is NOT exempt: the hover card
+  that follows the cursor should be a stock `hover-card`/`tooltip`.
+
 ## Goals
 
-- All chrome rendered by shadcn/ui components (Base UI, Mira, Roboto) styled
-  with Tailwind tokens; `globals.css` shrinks to canvas/layout essentials and
-  the specificity hacks disappear.
+- All chrome rendered by STOCK shadcn/ui components (Base UI, Mira, Roboto);
+  `globals.css` shrinks to canvas/layout essentials and the specificity hacks
+  disappear.
 - Light and dark themes, class-strategy toggle, persisted preference.
 - Chrome extracted into `viewer/components/` with typed props; RepoCity.tsx
   keeps only the scene graph, camera, and selection state it owns.
@@ -120,13 +139,12 @@ mark it as complete in the phase checklist.
   light-palette; if ground plots or nameplates lose legibility on the dark
   background, the minimal contrast fix is in scope and noted in HEURISTICS'
   colour-coupling note if palette.ts gains a dark-background constant.
-- Component mapping (indicative): map select -> Select/Combobox; Map-a-folder
-  -> Dialog + Input + Checkbox (overview mode) + Button; sidebar -> Input
-  (search) + ScrollArea + always-open sections + row buttons with Badge for
-  entry points; inspector -> Card + Badge (tags/refs) + a small stats table;
-  legend and viewport overlays -> lightweight styled divs with Mira tokens
-  (not everything needs a component); toasts/errors -> whatever the folder
-  dialog uses today, kept simple.
+- Component mapping (all stock): map select -> Select; breadcrumb ->
+  Breadcrumb; topbar actions -> Button / ButtonGroup; sidebar -> Sidebar
+  primitives with Item rows and InputGroup search; inspector -> Card + Item
+  + Table + Badge; legend and viewport overlays -> Card / Item / Toggle;
+  canvas hover card -> HoverCard or Tooltip; folder dialog -> Dialog + Field
+  + Input + Checkbox + Button; showcase cards -> Card; empty state -> Empty.
 - Extraction: one file per chrome area under `viewer/components/`, props-in/
   callbacks-out (no context object in the first pass); RepoCity.tsx renders
   them and keeps ownership of selection/camera state.
@@ -216,17 +234,42 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ### Phase 3 — inspector, legend, overlays
 
-- [ ] Extract the inspector panel (Card, Badges, stats), the legend, and the
+- [x] Extract the inspector panel (Card, Badges, stats), the legend, and the
       viewport overlays (view mode, location, help, Overhead toggle).
       Note from Phase 0: the overlays are dark ink and become illegible on
       the dark canvas, so they must move to theme tokens here.
-- [ ] Browser smoke + screenshots.
+      `viewer/components/inspector.tsx` (Card + Item + Table + Badge),
+      `legend.tsx` and `viewport-overlays.tsx` (Card + Toggle + Button +
+      Separator), and `hover-details.tsx` (the pointer-following card, now a
+      controlled shadcn HoverCard anchored to a zero-size element at the
+      pointer). shadcn `card`, `toggle`, `item`, `table`, and `hover-card`
+      were added. Decision: chrome uses only stock shadcn components and
+      their variants; the sole exception is the legend's line swatches, which
+      no stock component draws. `biome.json` gained an override turning off
+      `a11y/useSemanticElements` for `viewer/components/ui/**`, because
+      shadcn's generated `Item`/`ItemGroup` use `role="list"` on a div and
+      generated files are not hand-edited. No globals.css change was needed.
+- [x] Browser smoke + screenshots (both themes, node and map inspector,
+      Overhead toggle, back-to-city, hover card).
 
 ### Phase 4 — dialogs, showcase, empty state
 
 - [ ] Extract the Map-a-folder Dialog (path input, overview checkbox,
       generate flow) and the showcase cards / empty state.
 - [ ] Browser smoke + screenshots.
+
+### Phase 4b — stock-component conformance
+
+Phases 1-3 were written before the stock-only constraint and used bespoke
+markup in places (a hand-built sidebar and rows, hand-styled overlays).
+
+- [ ] Rework the topbar to stock Breadcrumb (and ButtonGroup if it suits).
+- [ ] Rework the sidebar onto the stock Sidebar primitives, Item rows, and
+      InputGroup search, keeping always-open sections and behaviour.
+- [ ] Rework any remaining hand-styled inspector, legend, or overlay markup
+      onto stock Card / Item / Table / Toggle.
+- [ ] Replace the canvas hover card with a stock HoverCard or Tooltip.
+- [ ] Browser smoke + screenshots (both themes).
 
 ### Phase 5 — CSS retirement
 

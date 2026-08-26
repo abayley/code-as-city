@@ -20,6 +20,18 @@
             "preset": "recommended"
         }
     },
+    "overrides": [
+        {
+            "includes": ["viewer/components/ui/**"],
+            "linter": {
+                "rules": {
+                    "a11y": {
+                        "useSemanticElements": "off"
+                    }
+                }
+            }
+        }
+    ],
     "javascript": {
         "formatter": {
             "quoteStyle": "double"
