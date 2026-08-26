@@ -17,7 +17,10 @@
     "linter": {
         "enabled": true,
         "rules": {
-            "preset": "recommended"
+            "preset": "recommended",
+            "style": {
+                "useComponentExportOnlyModules": "error"
+            }
         }
     },
     "overrides": [
@@ -34,10 +37,23 @@
                     "correctness": {
                         "useExhaustiveDependencies": "off"
                     },
+                    "style": {
+                        "useComponentExportOnlyModules": "off"
+                    },
                     "suspicious": {
                         "noDoubleEquals": "off",
                         "noArrayIndexKey": "off",
                         "noDocumentCookie": "off"
+                    }
+                }
+            }
+        },
+        {
+            "includes": ["test/**"],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "useComponentExportOnlyModules": "off"
                     }
                 }
             }
