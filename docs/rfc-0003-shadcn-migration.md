@@ -28,9 +28,11 @@ primitives, Mira style, Roboto type, initialised via
 bunx --bun shadcn@latest init --preset b1D0dwB6 --template vite
 ```
 
-Light and dark themes both ship. The chrome moves out of RepoCity.tsx into
-`viewer/components/`; the react-three-fiber scene, camera, and
-`viewer/lib/palette.ts` are untouched. A final phase adds behaviour-only UI
+Light and dark themes both ship, including the map background and the
+in-viewport buttons/legend. The chrome moves out of RepoCity.tsx into
+`viewer/components/`; the react-three-fiber scene structure and its
+building/edge palette are untouched (palette.ts gains only a dark
+background counterpart). A final phase adds behaviour-only UI
 tests (no styling or visual assertions). This is a deliberate restyle: the
 chrome's appearance changes to Mira's look, so review is visual (browser
 screenshots per phase), not golden-diff.
@@ -93,9 +95,11 @@ mark it as complete in the phase checklist.
 
 ## Non-Goals
 
-- No scene changes: palette.ts, OVERVIEW_* constants, geometry, camera,
-  raycasting, and layout stay as they are. The scene keeps its light palette
-  under dark chrome (accepted; revisit after seeing it).
+- No scene-structure changes: OVERVIEW_* constants, geometry, camera,
+  raycasting, and layout stay as they are. Building/edge colours keep the
+  light palette; the one scene concession to dark mode is the background
+  (see Proposal), plus any ground-plot/nameplate contrast tweak that the
+  dark background forces.
 - No decomposition of the scene graph or its hooks — chrome extraction only.
 - No visual-regression or styling tests.
 - No generator or map-schema changes.
@@ -108,9 +112,17 @@ mark it as complete in the phase checklist.
   capable and deterministic.
 - Theme: Mira's token set on `:root`/`.dark`, toggle in the topbar, stored in
   localStorage; `--ink/--paper/--mid` consumers move to the Mira tokens.
+- Dark mode covers the whole viewport: the scene background (today
+  `<color attach="background" args={[SCENE_PAPER]} />` from palette.ts
+  PAPER) switches to a dark equivalent when the dark theme is active, and
+  the in-viewport chrome (Overhead toggle, legend, view-mode/location/help
+  overlays) follows the Mira dark tokens. Building and edge colours stay
+  light-palette; if ground plots or nameplates lose legibility on the dark
+  background, the minimal contrast fix is in scope and noted in HEURISTICS'
+  colour-coupling note if palette.ts gains a dark-background constant.
 - Component mapping (indicative): map select -> Select/Combobox; Map-a-folder
   -> Dialog + Input + Checkbox (overview mode) + Button; sidebar -> Input
-  (search) + ScrollArea + Collapsible sections + row buttons with Badge for
+  (search) + ScrollArea + always-open sections + row buttons with Badge for
   entry points; inspector -> Card + Badge (tags/refs) + a small stats table;
   legend and viewport overlays -> lightweight styled divs with Mira tokens
   (not everything needs a component); toasts/errors -> whatever the folder
@@ -229,8 +241,6 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ## Open Questions
 
-- Dark chrome over the light scene: accepted for now; if it jars, options are
-  a scene-viewport paper border, a dark canvas clear colour, or a follow-up
-  scene palette RFC.
-- Whether the sidebar's neighbourhood sections become Collapsible or stay
-  always-open (decide at Phase 2 with the real data on screen).
+None — the two originally open items are decided: dark mode includes the map
+background and the in-viewport buttons/legend (Proposal), and sidebar
+sections stay always-open (Phase 2).
