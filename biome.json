@@ -26,7 +26,13 @@
             "linter": {
                 "rules": {
                     "a11y": {
-                        "useSemanticElements": "off"
+                        "useSemanticElements": "off",
+                        "useFocusableInteractive": "off",
+                        "noLabelWithoutControl": "off"
+                    },
+                    "suspicious": {
+                        "noDoubleEquals": "off",
+                        "noArrayIndexKey": "off"
                     }
                 }
             }

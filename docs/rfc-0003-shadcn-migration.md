@@ -257,9 +257,22 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ### Phase 4 — dialogs, showcase, empty state
 
-- [ ] Extract the Map-a-folder Dialog (path input, overview checkbox,
+- [x] Extract the Map-a-folder Dialog (path input, overview checkbox,
       generate flow) and the showcase cards / empty state.
-- [ ] Browser smoke + screenshots.
+      `viewer/components/folder-browser.tsx` (Dialog + Breadcrumb + Badge +
+      Item/ItemGroup + Field/FieldGroup + Checkbox + Alert + Spinner + Kbd)
+      and `viewer/components/empty-state.tsx` (Empty + ButtonGroup + Card).
+      shadcn `dialog`, `field` (pulling `label`), `checkbox`, `alert`,
+      `spinner`, `empty`, `button-group`, `breadcrumb`, and `kbd` were added.
+      Decisions: the two generate buttons collapse into a Checkbox plus one
+      Generate button, per this phase's brief; the row highlight uses the
+      stock Item `outline` variant (Item has no selected state, and `muted`
+      is invisible on the dark surface); the showcase `accent` colour is
+      dropped, since a per-card border colour is bespoke styling. No
+      globals.css change was needed. `biome.json` gained four more
+      `viewer/components/ui/**` rule exemptions for the generated Breadcrumb,
+      Field, and Label files.
+- [x] Browser smoke + screenshots.
 
 ### Phase 4b — stock-component conformance
 

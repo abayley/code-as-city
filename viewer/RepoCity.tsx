@@ -9,6 +9,8 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
+import { EmptyState } from "./components/empty-state";
+import { FolderBrowser } from "./components/folder-browser";
 import { HoverDetails, type HoverFact } from "./components/hover-details";
 import { Inspector, type InspectorContent, type InspectorSource, type InspectorStat } from "./components/inspector";
 import { Legend } from "./components/legend";
@@ -2043,217 +2045,6 @@ export default function Functionary() {
 }
 
 /**
- * Modal overlay for generating a map from a local folder: browses the server
- * filesystem via /api/browse (keyboard-navigable with type-ahead) and asks
- * /api/generate for a deployment map or module overview of the chosen repo.
- *
- * @param props - `onClose` dismisses the overlay; `onGenerated` receives the
- *   validated map and its JSON path on success.
- * @returns The dialog overlay with folder list, actions, and any error text.
- */
-function FolderBrowser({
-    onClose,
-    onGenerated,
-}: {
-    onClose: () => void;
-    onGenerated: (payload: { map: CityMap; jsonPath: string }) => void;
-}) {
-    type Listing = { path: string; parent: string; entries: Array<{ name: string; path: string }>; isRepo: boolean };
-    const [listing, setListing] = useState<Listing | null>(null);
-    const [busy, setBusy] = useState<false | "overview" | "deployment">(false);
-    const [error, setError] = useState<string | null>(null);
-    // Roving highlight over the folder list: 0 is "../", entries follow.
-    const [highlight, setHighlight] = useState(0);
-
-    /**
-     * Fetches a directory listing from the server and resets the highlight,
-     * recording any failure for display.
-     *
-     * @param path - The directory to list; the server's default when omitted.
-     */
-    const load = useCallback(async (path?: string) => {
-        try {
-            const response = await fetch(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`);
-            const data = await response.json();
-            if (data.error) throw new Error(data.error);
-            setListing(data);
-            setHighlight(0);
-            setError(null);
-        } catch (browseError) {
-            setError(browseError instanceof Error ? browseError.message : String(browseError));
-        }
-    }, []);
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    // Keyboard: arrows move the highlight, Enter/Right opens the highlighted
-    // folder, Left goes up, typing jumps to the first matching folder
-    // (type-ahead, 1s reset), Cmd/Ctrl+Enter generates the deployment map,
-    // Cmd/Ctrl+Shift+Enter the module overview, Esc clears type-ahead then cancels.
-    const typeAhead = useRef<{ text: string; timer: ReturnType<typeof setTimeout> | null }>({ text: "", timer: null });
-    useEffect(() => {
-        const onKeyDown = (event: KeyboardEvent) => {
-            const consume = () => {
-                event.stopPropagation();
-                event.preventDefault();
-            };
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                consume();
-                generateRef.current(event.shiftKey);
-                return;
-            }
-            if (event.metaKey || event.ctrlKey || event.altKey) return;
-            // Type-ahead: printable characters accumulate and jump the highlight.
-            if (event.key.length === 1 && /[\w.-]/.test(event.key) && listing) {
-                consume();
-                if (typeAhead.current.timer) clearTimeout(typeAhead.current.timer);
-                typeAhead.current.text += event.key.toLowerCase();
-                typeAhead.current.timer = setTimeout(() => {
-                    typeAhead.current.text = "";
-                }, 1000);
-                const index = listing.entries.findIndex((entry) =>
-                    entry.name.toLowerCase().startsWith(typeAhead.current.text),
-                );
-                if (index >= 0) setHighlight(index + 1);
-                return;
-            }
-            const rowCount = 1 + (listing?.entries.length ?? 0);
-            const open = () => {
-                if (!listing) return;
-                load(highlight === 0 ? listing.parent : listing.entries[highlight - 1]?.path);
-            };
-            const handlers: Record<string, () => void> = {
-                Escape: () => {
-                    if (typeAhead.current.text) {
-                        typeAhead.current.text = "";
-                        return;
-                    }
-                    onClose();
-                },
-                ArrowDown: () => setHighlight((value) => Math.min(rowCount - 1, value + 1)),
-                ArrowUp: () => setHighlight((value) => Math.max(0, value - 1)),
-                ArrowRight: open,
-                Enter: open,
-                ArrowLeft: () => {
-                    if (listing) load(listing.parent);
-                },
-            };
-            const handler = handlers[event.key];
-            if (!handler) return;
-            consume();
-            handler();
-        };
-        window.addEventListener("keydown", onKeyDown, true);
-        return () => window.removeEventListener("keydown", onKeyDown, true);
-    }, [highlight, listing, load, onClose]);
-
-    /**
-     * Asks the server to generate a map for the current folder, validates the
-     * result, and hands it to the caller; failures surface as inline errors.
-     *
-     * @param overview - True for the module overview, false for the deployment map.
-     */
-    async function generate(overview: boolean) {
-        if (!listing || busy) return;
-        setBusy(overview ? "overview" : "deployment");
-        setError(null);
-        try {
-            const response = await fetch("/api/generate", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ repoPath: listing.path, overview }),
-            });
-            const data = await response.json();
-            if (data.error) throw new Error(data.error);
-            const errors = validateCityMap(data.map);
-            if (errors.length) throw new Error(errors.slice(0, 3).join(" "));
-            onGenerated(data);
-        } catch (generateError) {
-            setError(generateError instanceof Error ? generateError.message : String(generateError));
-            setBusy(false);
-        }
-    }
-    const generateRef = useRef(generate);
-    generateRef.current = generate;
-
-    return (
-        <div className="folder-overlay" role="dialog" aria-label="Map a folder">
-            <div className="folder-browser">
-                <header>
-                    <strong>Map a folder</strong>
-                    <button type="button" aria-label="Close" onClick={onClose}>
-                        ×
-                    </button>
-                </header>
-                {listing && (
-                    <>
-                        <div className="folder-path">
-                            <code>{listing.path}</code>
-                            {listing.isRepo && <span className="repo-badge">git</span>}
-                        </div>
-                        <div className="folder-list">
-                            <button
-                                type="button"
-                                className={highlight === 0 ? "highlighted" : undefined}
-                                onClick={() => load(listing.parent)}
-                            >
-                                ../
-                            </button>
-                            {listing.entries.map((entry, index) => (
-                                <button
-                                    type="button"
-                                    key={entry.path}
-                                    className={highlight === index + 1 ? "highlighted" : undefined}
-                                    ref={(element) => {
-                                        if (element && highlight === index + 1)
-                                            element.scrollIntoView({ block: "nearest" });
-                                    }}
-                                    onClick={() => load(entry.path)}
-                                >
-                                    {entry.name}/
-                                </button>
-                            ))}
-                        </div>
-                        <footer className="folder-actions">
-                            <button
-                                className="map-action"
-                                type="button"
-                                disabled={!!busy}
-                                onClick={() => generate(false)}
-                            >
-                                {busy === "deployment" ? (
-                                    "Generating…"
-                                ) : (
-                                    <>
-                                        Deployment map <kbd>⌘↵</kbd>
-                                    </>
-                                )}
-                            </button>
-                            <button
-                                className="map-action"
-                                type="button"
-                                disabled={!!busy}
-                                onClick={() => generate(true)}
-                            >
-                                {busy === "overview" ? (
-                                    "Generating…"
-                                ) : (
-                                    <>
-                                        Module overview <kbd>⌘⇧↵</kbd>
-                                    </>
-                                )}
-                            </button>
-                        </footer>
-                    </>
-                )}
-                {error && <p className="folder-error">{error}</p>}
-            </div>
-        </div>
-    );
-}
-
-/**
  * The landing screen shown before any map is loaded: the map picker, open and
  * map-a-folder actions, and one card per bundled showcase.
  *
@@ -2275,7 +2066,7 @@ function EmptyShell({
     onToggleTheme: () => void;
 }) {
     return (
-        <main className="empty-shell">
+        <main className="flex min-h-screen flex-col bg-background text-foreground">
             <Topbar
                 showcases={showcases}
                 selectedSlug={null}
@@ -2286,34 +2077,12 @@ function EmptyShell({
                 theme={theme}
                 onToggleTheme={onToggleTheme}
             />
-            <section className="empty-state">
-                <div className="empty-actions">
-                    <button className="map-action empty-open" type="button" onClick={onImport}>
-                        Open map
-                    </button>
-                    <button className="secondary-action empty-open" type="button" onClick={onMapFolder}>
-                        Map a folder
-                    </button>
-                </div>
-                <p className="empty-or">or explore a showcase</p>
-                <div className="showcase-cards">
-                    {showcases.map((candidate) => (
-                        <button
-                            className="showcase-card"
-                            key={candidate.slug}
-                            type="button"
-                            onClick={() => onSelectShowcase(candidate)}
-                            style={{ "--card-accent": candidate.accent } as React.CSSProperties}
-                        >
-                            <strong>{candidate.map.name}</strong>
-                            <span>
-                                {candidate.language} · {candidate.shape}
-                            </span>
-                            <small>{candidate.map.summary}</small>
-                        </button>
-                    ))}
-                </div>
-            </section>
+            <EmptyState
+                showcases={showcases}
+                onSelectShowcase={onSelectShowcase}
+                onOpenMap={onImport}
+                onMapFolder={onMapFolder}
+            />
         </main>
     );
 }
