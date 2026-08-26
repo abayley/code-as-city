@@ -61,9 +61,9 @@ function mapApiPlugin() {
                             return;
                         }
                         const outDir = resolve("out", `${basename(repo)}${overview ? "-overview" : ""}`);
-                        const args = [resolve("src/generate-map.mjs"), repo, "--out-dir", outDir];
+                        const args = [resolve("src/generate-map.ts"), repo, "--out-dir", outDir];
                         if (overview) args.push("--overview");
-                        const child = spawn("node", args, {
+                        const child = spawn("bun", args, {
                             cwd: resolve("."),
                             stdio: ["ignore", "pipe", "pipe"],
                         });
