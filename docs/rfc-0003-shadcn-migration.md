@@ -325,10 +325,10 @@ markup in places (a hand-built sidebar and rows, hand-styled overlays).
 
 ### Phase 5 — CSS retirement
 
-- [ ] Delete the retired globals.css rules; keep only canvas/layout
+- [x] Delete the retired globals.css rules; keep only canvas/layout
       essentials; the specificity-lift hacks and reduced-motion block are
       replaced by Tailwind equivalents.
-- [ ] Full behaviour checklist in the browser, both themes, plus a
+- [x] Full behaviour checklist in the browser, both themes, plus a
       `bun run build` production build check.
 
 ### Phase 6 — behaviour tests

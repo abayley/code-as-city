@@ -1894,7 +1894,12 @@ function MapViewer({
                 onSelectRow={exploreNode}
             />
 
-            <section className="viewport" aria-label="Interactive repository city">
+            {/* Utilities mirror the retired `.viewport` rules: the canvas column
+                under the topbar, becoming a fixed-height band on phones. */}
+            <section
+                className="relative min-w-0 overflow-hidden bg-background max-[680px]:h-[66vh] max-[680px]:border-b max-[680px]:border-border"
+                aria-label="Interactive repository city"
+            >
                 {visibleNodes.length ? (
                     <CityScene
                         background={theme === "dark" ? SCENE_PAPER_DARK : SCENE_PAPER}
@@ -1920,7 +1925,7 @@ function MapViewer({
                         }}
                     />
                 ) : (
-                    <div className="empty-view">
+                    <div className="grid h-full place-content-center justify-items-center gap-4">
                         <strong>No mapped structures.</strong>
                     </div>
                 )}
