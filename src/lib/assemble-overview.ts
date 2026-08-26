@@ -676,6 +676,12 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     const otlpTarget =
         uniqueInfra.find((m) => /collector/.test(m.id) && /gateway/.test(m.id)) ??
         uniqueInfra.find((m) => /collector/.test(m.id));
+    // The shared pass prefers a district-local database and falls back to the
+    // first. That preference is inert here by construction, not by oversight:
+    // overview modules sit in directory districts while infra members sit in
+    // host districts, so the two district spaces never intersect and the
+    // overview always targets one database. See BACKLOG "Mode differences by
+    // design".
     const databaseTarget = uniqueInfra.find((m) => m.archetype === "database");
     inferModuleDataFlows({
         entries: allModules,

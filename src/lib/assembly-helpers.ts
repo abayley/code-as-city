@@ -54,7 +54,9 @@ export function roomLabel(segment: string): string {
 }
 
 /**
- * Module name for a source file: its basename minus the extension.
+ * Module name for a source file: its basename minus a lower-case
+ * extension. Only the final `.ext` is stripped, so `x.d.ts` yields `x.d`,
+ * and an upper-case extension is left in place.
  *
  * @param file - Repo-relative path of the source file.
  * @returns The extension-less basename used as the module's name.
@@ -80,7 +82,8 @@ export function uniqueId(base: string, taken: (id: string) => boolean): string {
  * Sanitises a node id for use as a mermaid identifier.
  *
  * @param id - The map node id, which may contain characters mermaid rejects.
- * @returns The id with every non-alphanumeric character replaced by "_".
+ * @returns The id with every character outside [A-Za-z0-9_] replaced by
+ *   "_"; underscores already present are kept.
  */
 export function mermaidId(id: string): string {
     return id.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -98,6 +101,18 @@ export function footprintFor(complexity: number): number {
 }
 
 /**
+ * Escapes a string for literal use inside a regular expression. Every value
+ * interpolated into a `RegExp` here comes from the target repository, so an
+ * unescaped metacharacter would either throw or silently mismatch.
+ *
+ * @param text - Arbitrary text read from the repository under inspection.
+ * @returns The text with every regex metacharacter backslash-escaped.
+ */
+export function escapeRegex(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Pattern matching an import or require of the given dependency name.
  *
  * @param depName - The npm dependency name as declared in package.json
@@ -105,8 +120,7 @@ export function footprintFor(complexity: number): number {
  * @returns A pattern that matches `from "dep"` / `require("dep"` forms.
  */
 export function sdkImportPattern(depName: string): RegExp {
-    const escaped = depName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(from\\s+|require\\()["']${escaped}`);
+    return new RegExp(`(from\\s+|require\\()["']${escapeRegex(depName)}`);
 }
 
 /**
@@ -119,6 +133,6 @@ export function sdkImportPattern(depName: string): RegExp {
  *   upper-cased NAME_* environment-variable prefix.
  */
 export function externalReferencePattern(name: string): RegExp {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = escapeRegex(name);
     return new RegExp(`from\\s+["'][^"']*${escaped}|\\b${escaped.toUpperCase()}_[A-Z]`);
 }

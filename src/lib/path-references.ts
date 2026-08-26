@@ -7,7 +7,7 @@ import { owningPackage, type Package } from "./packages.ts";
 import { readText } from "./read.ts";
 import type { Room } from "./rooms.ts";
 
-export type PathReassignment = { pkg: Package | null; fromFile: string };
+export type PathReassignment = { pkg: Package; fromFile: string };
 
 /**
  * R4: a string literal in one package's code that resolves into another
@@ -23,7 +23,8 @@ export type PathReassignment = { pkg: Package | null; fromFile: string };
  * @param rooms - Every room; candidate targets for reassignment (a file's
  *   own package and "(root)" rooms are never claimed).
  * @param sourceFiles - Repo-relative paths of the source files to scan for
- *   "../"-prefixed string literals.
+ *   "../"-prefixed string literals. A file owned by no package is skipped:
+ *   without an owning district there is nothing for it to claim the area into.
  * @returns Room id to its reassignment: the claiming package and the file
  *   containing the literal (first claim wins).
  */
@@ -37,11 +38,14 @@ export function findPathReassignments(
     for (const file of sourceFiles) {
         const text = readText(join(repo, file));
         const fromPkg = owningPackage(packages, file);
+        // A file under no package (a repo with no root package.json) has no
+        // district to claim the referenced area into, so it cannot reassign.
+        if (fromPkg === null) continue;
         const importSpecifiers = new Set([...text.matchAll(IMPORT_PATTERN)].map((m) => m[1]));
         for (const match of text.matchAll(/["']((?:\.\.\/)+[^"'\n]+)["']/g)) {
             const literal = match[1];
             if (literal === undefined || importSpecifiers.has(literal)) continue;
-            const bases = [dirname(file), fromPkg?.dir ?? "."];
+            const bases = [dirname(file), fromPkg.dir];
             for (const base of bases) {
                 const resolved = join(base === "." ? "" : base, literal);
                 if (resolved.startsWith("..")) continue;

@@ -13,8 +13,11 @@ R in `reachability.ts` and `path-references.ts`; M in
 for O6); the coverage/TSDoc/embedded-database scans in `scans.ts`; output in
 `emit.ts`. Rules documented as shared between the modes (M1/M8/M10 with O8,
 D13 with O11, and the M3/O2 entry classification) are implemented once in
-`inference.ts` with per-mode options; the delivers guards and district-local
-database targeting apply in both modes. `map-types.ts` and
+`inference.ts` with per-mode options; the delivers guards apply in both modes.
+Database targeting prefers a district-local database and falls back to the
+first, which only ever selects in the deployment map: overview modules sit in
+directory districts while infra sits in host districts, so the overview always
+targets one database. `map-types.ts` and
 `assembly-helpers.ts` hold the shared vocabulary and helpers; `emit.ts`
 builds the map envelope and applies M4 for both modes.
 
@@ -49,11 +52,11 @@ threshold is untuned beyond the test repos.
 | --- | --- | --- |
 | D1 | `docker-compose*.yml` | One host district per compose file. Overlays (`*.override.yml`, `*.build.yml`) skipped. Environment variants deduped when a higher-ranked host covers >=50% of a host's services; rank prod > uat/staging > example > unqualified > dev |
 | D2 | Compose file path | Host name from informative path segments (generic segments like `deploy` dropped) |
-| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms; ENTRYPOINT/CMD names the entry room. A `*-command` entry file names the building (Delivery Command, not the compose service name delivery-worker) |
+| D3 | Service `build.dockerfile`, or `images/<service>.Dockerfile` convention | Service bound to its Dockerfile; `COPY src/...` lines become the service building's rooms; the entry room is named by the first token across all ENTRYPOINT/CMD lines (in file order) that matches an inventoried file, so the split `ENTRYPOINT` interpreter plus `CMD` script form and multi-stage builds both resolve. A `*-command` entry file names the building (Delivery Command, not the compose service name delivery-worker) |
 | D4 | Crontab line running `compose run <service>` | Service tagged `cron` (scheduled job), schedule recorded |
 | D5 | Container image name, else service name (`database`, `redis`, `proxy`, ...) | Infra classification: database/queue/storage/gateway/cloud |
 | D6 | `depends_on`, harvested across ALL compose variants by service name | `depends_on` edges between the surviving host's services. A dependency only present in a deduped variant (dev-only database container) is carried onto the host as an infra node |
-| D7 | `wrangler.toml/json/jsonc` | A Cloudflare edge district with the worker (entry from `main`) and D1 bindings; `drizzle.config.*` contributes a database node |
+| D7 | `wrangler.toml/json/jsonc` | A Cloudflare edge district with the worker and its D1 bindings; `drizzle.config.*` contributes a database node. The worker name comes from `name` (defaulting to `worker`) and its entry from `main`; in TOML both keys are read line-anchored, so `database_name` in a `[[d1_databases]]` block is not mistaken for the worker name. `main` resolves repo-relative first, then against the config file's own directory |
 | D8 | Wrangler present and the owning package has an entry dir (`app`, ...) | `deploys` edge from the entry room to the edge worker |
 | D9 | `.github/workflows/*.yml` with a cron schedule, a `workflow_run` trigger, or a run step invoking repo source | A CI job district with one job building; cron carried as a tag; `workflow_run` upstreams become declared `calls` edges ("triggers on completion") between jobs |
 | D10 | A run-step token naming an existing source file (optionally followed by a subcommand word) | Declared `calls` edge job -> entry's node; the subcommand is matched against the entry's Commander `.command('<sub>')` registration and the first imported identifier used in that chunk resolves the handler module for a second `calls` edge |
@@ -62,8 +65,10 @@ threshold is untuned beyond the test repos.
 | D13 | A package.json dependency naming an embedded database SDK (`@lancedb/*`, `chromadb`, `better-sqlite3`/`sqlite3`, `duckdb`) | One database node per dependency repo-wide, applied in BOTH map modes: in the deployment map it sits in the district of the first module importing the SDK; importers get inferred `reads/writes` data flow (confidence 0.7). Overview mode's O11 shares this scan |
 
 Failure modes: D1's rank list and 50% threshold are conventions; D3 assumes
-COPY paths are repo-relative; D5's tables are small and vendor-biased; D10's
-handler match assumes Commander-style registration in the entry file; D12's
+COPY paths are repo-relative; D5's tables are small and vendor-biased; D7's
+TOML reader does not track tables, so a `name` under `[env.staging]` is read
+as though it were top-level; D10's handler match assumes Commander-style
+registration in the entry file and only scans braced named imports; D12's
 dist->src bin mapping is a convention.
 
 ## Coupling (C)
@@ -149,13 +154,13 @@ COPYing module-level dirs.
 
 ## Tuning constants
 
-| Constant                             | Value                                            | Rule |
-| ------------------------------------ | ------------------------------------------------ | ---- |
-| Dominant-segment expansion threshold | >60% of package files                            | S2   |
-| Utility elimination                  | fan-in >= 3, instability <= 0.25                 | C2   |
-| Mid-coupling anchor                  | degree >= 5, 0.25 < instability < 0.8            | C2   |
-| Host dedup coverage                  | >=50% shared services                            | D1   |
-| OTLP edge confidence                 | 0.7                                              | M1   |
-| Environment rank                     | prod 5, uat/staging 4, example 3, plain 2, dev 1 | D1   |
-| Overview shared-district cut         | >=60% utility modules (fan-in >= 2, inst <= 0.33) | O4   |
+| Constant                             | Value                                                       | Rule |
+| ------------------------------------ | ----------------------------------------------------------- | ---- |
+| Dominant-segment expansion threshold | >60% of package files                                       | S2   |
+| Utility elimination                  | fan-in >= 3, instability <= 0.25                            | C2   |
+| Mid-coupling anchor                  | degree >= 5, 0.25 < instability < 0.8                       | C2   |
+| Host dedup coverage                  | >=50% shared services                                       | D1   |
+| OTLP edge confidence                 | 0.7                                                         | M1   |
+| Environment rank                     | prod 5, uat/staging 4, example 3, plain 2, dev 1            | D1   |
+| Overview shared-district cut         | >=60% utility modules (fan-in >= 2, inst <= 0.33)           | O4   |
 | Overview height / footprint          | 0.55 + min(loc, 1500)/320; 0.85 + sqrt(max fn complexity)/4 | O5   |

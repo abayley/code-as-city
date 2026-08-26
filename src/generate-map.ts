@@ -12,7 +12,7 @@ import { basename, join } from "node:path";
 import { parseArguments, USAGE } from "./lib/arguments.ts";
 import { assembleDeployment } from "./lib/assemble-deployment.ts";
 import { runOverview } from "./lib/assemble-overview.ts";
-import { createComplexityScanner } from "./lib/complexity.ts";
+import { createComplexityScanner, loadComplexityCompiler } from "./lib/complexity.ts";
 import { analyseCoupling } from "./lib/coupling.ts";
 import { parseCrontabSchedules } from "./lib/crontab.ts";
 import { emitArtefacts } from "./lib/emit.ts";
@@ -87,7 +87,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         rooms,
         sourceFiles,
     );
-    const { fileComplexity, fileMaxFunctionComplexity } = createComplexityScanner(repo);
+    const { fileComplexity, fileMaxFunctionComplexity } = createComplexityScanner(repo, await loadComplexityCompiler());
     const { fileCoupling, roomCoupling, isUtilityRoom, eliminatedRooms } = analyseCoupling(fileEdges, roomEdges, rooms);
 
     // 5. Deployment shape

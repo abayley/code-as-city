@@ -34,7 +34,7 @@ export default defineConfig({
         coverage: {
             provider: "v8",
             reportsDirectory: "coverage",
-            include: ["src/**", "viewer/lib/**"],
+            include: ["src/**", "viewer/lib/**", "viewer/components/**", "viewer/hooks/**"],
         },
     },
 });

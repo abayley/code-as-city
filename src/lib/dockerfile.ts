@@ -11,9 +11,11 @@ export type DockerfileShape = {
 
 /**
  * Extracts a Dockerfile's repo-relative COPY sources (only those that exist
- * in the inventory) and its entry file: the first ENTRYPOINT/CMD token that
- * names an inventoried file. Paths are taken repo-relative, matching the
- * monorepo convention of building from the repo root.
+ * in the inventory) and its entry file: the first token naming an inventoried
+ * file across every ENTRYPOINT/CMD line, in file order, so that the split form
+ * (ENTRYPOINT names the interpreter, CMD the script) and multi-stage builds
+ * both resolve. Paths are taken repo-relative, matching the monorepo
+ * convention of building from the repo root.
  *
  * @param repo - Absolute path of the repository being mapped.
  * @param path - Repo-relative path of the Dockerfile.
@@ -29,12 +31,20 @@ export function parseDockerfile(repo: string, path: string, allFiles: readonly s
         .filter(
             (p) => !p.startsWith("--") && allFiles.some((f) => f === p || f.startsWith(`${p.replace(/\/$/, "")}/`)),
         );
-    const entryMatch = /^(?:ENTRYPOINT|CMD)\s+(\[.*\]|.+)$/m.exec(text)?.[1];
+    // Every ENTRYPOINT/CMD line is considered, in file order: the split form
+    // (ENTRYPOINT names the interpreter, CMD names the script) and multi-stage
+    // builds both put the interesting token on a later line than the first.
     let entryFile: string | null = null;
-    if (entryMatch !== undefined) {
+    for (const match of text.matchAll(/^(?:ENTRYPOINT|CMD)\s+(\[.*\]|.+)$/gm)) {
+        const entryMatch = match[1];
+        if (entryMatch === undefined) continue;
         const parsed = entryMatch.startsWith("[") ? (readJsonSafe(entryMatch) ?? []) : entryMatch.split(/\s+/);
         const tokens = Array.isArray(parsed) ? parsed : [];
-        entryFile = tokens.find((t): t is string => typeof t === "string" && allFiles.includes(t)) ?? null;
+        const found = tokens.find((t): t is string => typeof t === "string" && allFiles.includes(t));
+        if (found !== undefined) {
+            entryFile = found;
+            break;
+        }
     }
     return { copies, entryFile };
 }

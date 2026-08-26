@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
     addEdge,
+    escapeRegex,
     externalReferencePattern,
     fileModuleName,
     footprintFor,
@@ -118,5 +119,21 @@ describe("externalReferencePattern", () => {
         expect(pattern.test('import { Langfuse } from "langfuse-node";')).toBe(true);
         expect(pattern.test("process.env.LANGFUSE_SECRET")).toBe(true);
         expect(pattern.test("unrelated text")).toBe(false);
+    });
+});
+
+describe("escapeRegex", () => {
+    it("given regex metacharacters, when escaped, then the result matches them literally", () => {
+        const pattern = new RegExp(escapeRegex("run(a+b)"));
+        expect(pattern.test("run(a+b)")).toBe(true);
+        expect(pattern.test("runaab")).toBe(false);
+    });
+
+    it("given a token with a quantifier, when embedded in a pattern, then it does not throw", () => {
+        expect(() => new RegExp(`\\.command\\(['"]${escapeRegex("sync-*")}`)).not.toThrow();
+    });
+
+    it("given plain text, when escaped, then it is unchanged", () => {
+        expect(escapeRegex("deploy-worker")).toBe("deploy-worker");
     });
 });

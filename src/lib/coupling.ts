@@ -26,7 +26,7 @@ export const COUPLING_THRESHOLDS = {
  * @returns Per-node coupling: distinct fan-in, fan-out, and instability
  *   (out / (in + out), defaulting to 1 for isolated nodes).
  */
-export function couplingFromEdges(pairs: Iterable<readonly [string, string]>): Map<string, Coupling> {
+function couplingFromEdges(pairs: Iterable<readonly [string, string]>): Map<string, Coupling> {
     const stats = new Map<string, { in: Set<string>; out: Set<string> }>();
     /**
      * Fetches (creating on first sight) the node's neighbour sets.

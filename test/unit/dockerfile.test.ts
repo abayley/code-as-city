@@ -37,4 +37,21 @@ describe("parseDockerfile", () => {
         const result = withDockerfile('FROM node\nCMD ["node", "dist/bundle.js"]', ["src/main.ts"]);
         expect(result.entryFile).toBeNull();
     });
+
+    it("given an ENTRYPOINT interpreter followed by a CMD script, when parsed, then the CMD names the entry file", () => {
+        const result = withDockerfile('FROM oven/bun\nENTRYPOINT ["bun", "run"]\nCMD ["src/worker.ts"]', [
+            "src/worker.ts",
+        ]);
+        expect(result.entryFile).toBe("src/worker.ts");
+    });
+
+    it("given an earlier stage whose entry is not inventoried, when parsed, then a later stage's entry still wins", () => {
+        const result = withDockerfile(
+            ["FROM node AS build", 'CMD ["node", "dist/build.js"]', "FROM node", 'CMD ["node", "src/main.ts"]'].join(
+                "\n",
+            ),
+            ["src/main.ts"],
+        );
+        expect(result.entryFile).toBe("src/main.ts");
+    });
 });

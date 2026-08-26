@@ -2,12 +2,15 @@
  * Deployment-map assembly (section 7 of the generator). Turns the deployment
  * shape (compose hosts, wrangler edge config, CI workflows), the room/package
  * structure, and the import graph into the city map's nodes, edges, and
- * warnings. Rule IDs (7a-7f, D9-D12, C2, O-series parallels) refer to
- * HEURISTICS.md.
+ * warnings. D9-D12, C2 and the O-series parallels are HEURISTICS.md rule
+ * IDs; the 7a-7f markers are this file's own section headings, inherited
+ * from section 7 of the pre-extraction generator, and are not in the rule
+ * catalogue.
  */
 import { basename, join, relative, sep } from "node:path";
 import {
     addEdge,
+    escapeRegex,
     fileModuleName,
     footprintFor,
     linesOf,
@@ -268,8 +271,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
              * file inside it.
              *
              * @param copy - Source directory named by a Dockerfile COPY.
-             * @returns The room id owning that directory, or null when no
-             *   source file lives under it.
+             * @returns The room id owning that directory; null when no
+             *   source file lives under it, or undefined when the sampled
+             *   file belongs to no room.
              */
             const roomIdForCopy = (copy: string) => {
                 const sample = sourceFiles.find((f) => f.startsWith(`${copy}/`));
@@ -599,7 +603,8 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     }
 
     /**
-     * Source refs for a child of a room: the subdirectory when dir-backed, the
+     * Source refs for a child of a room: the single file's own path when the
+     * child holds exactly one file, the subdirectory when dir-backed, and the
      * concrete files (capped at five) when it is a loose-file group.
      *
      * @param room - Room the child was split from.
@@ -695,7 +700,6 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             const reassigned = pathReassignments.get(room.id);
             if (reassigned) {
                 const reassignedPkg = reassigned.pkg;
-                if (!reassignedPkg) throw new Error(`Path reassignment without a package for ${room.id}`);
                 parentId = `${reassignedPkg.id}-area`;
                 if (!nodes.some((n) => n.id === parentId)) {
                     nodes.push({
@@ -765,6 +769,10 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
                 }
                 continue;
             }
+            // Not the isEntryPoint rule: this is a room-level archetype choice
+            // (gateway vs worker) from the directory name alone. isEntryPoint
+            // also treats a script-referenced file as an entry, which would
+            // change archetypes here, so the two stay separate by design.
             const isEntry = entryDirNames.has(basename(room.segment));
             const leafAsBuilding = modulesAsBuildings && !expandable && room.files.length >= 2;
             nodes.push({
@@ -974,9 +982,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     };
     /**
      * Resolves a Commander subcommand to the module that implements it: the
-     * handler is the first imported identifier used inside the
+     * handler is the first braced named import used inside the
      * `.command('<sub>')` chunk of the entry file, resolved back through the
-     * import graph.
+     * import graph. Default and namespace imports are not scanned.
      *
      * @param entryFile - CLI entry file that registers the subcommand.
      * @param sub - Subcommand name as invoked by the CI workflow.
@@ -999,7 +1007,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             }
         }
         const chunkMatch = new RegExp(
-            `\\.command\\(['"]${sub}(?:\\s[^'"]*)?['"]\\)([\\s\\S]*?)(?=\\.command\\(|$)`,
+            `\\.command\\(['"]${escapeRegex(sub)}(?:\\s[^'"]*)?['"]\\)([\\s\\S]*?)(?=\\.command\\(|$)`,
         ).exec(text);
         if (!chunkMatch) return null;
         const chunk = chunkMatch[1];

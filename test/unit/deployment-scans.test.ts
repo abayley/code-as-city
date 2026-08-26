@@ -49,6 +49,24 @@ describe("findEdgeHost", () => {
         expect(host).toMatchObject({ name: "w", main: "src/w.ts" });
     });
 
+    it("given a d1 binding but no top-level name, when found, then database_name is not read as the worker name", () => {
+        writeFile(
+            "packages/d1/wrangler.toml",
+            'main = "./src/worker.ts"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "prod-db"\n',
+        );
+        const host = findEdgeHost(repo, ["packages/d1/wrangler.toml", "packages/d1/src/worker.ts"]);
+        expect(host).toMatchObject({ name: "worker" });
+    });
+
+    it("given a d1 binding declared before the worker name, when found, then the top-level name wins", () => {
+        writeFile(
+            "packages/d1b/wrangler.toml",
+            '[[d1_databases]]\nbinding = "DB"\ndatabase_name = "prod-db"\n\nname = "real-edge"\nmain = "./src/worker.ts"\n',
+        );
+        const host = findEdgeHost(repo, ["packages/d1b/wrangler.toml", "packages/d1b/src/worker.ts"]);
+        expect(host).toMatchObject({ name: "real-edge" });
+    });
+
     it("given no wrangler config, when searched, then returns null", () => {
         expect(findEdgeHost(repo, ["src/a.ts"])).toBeNull();
     });

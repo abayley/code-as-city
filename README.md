@@ -20,15 +20,17 @@ bun run test        # vitest (golden-master tests over test/fixtures/mini-repo)
 The golden-master tests in `test/generate-map.test.ts` run the generator over
 the committed fixture repo `test/fixtures/mini-repo`, validate the output with
 the vendored functionary validator, and compare against the golden maps in
-`test/golden/` (ignoring `generatedAt`). If a generator change intentionally
-alters output, regenerate the goldens. Run the tests once first: they write
-the fixture's gitignored coverage/coverage-summary.json (Istanbul keys are
-absolute paths, so it cannot be committed), which the coverage scan reads.
+`test/golden/` (ignoring `generatedAt`, and with `repository` normalised to
+`<fixture>` so the goldens match in any clone). If a generator change
+intentionally alters output, regenerate the goldens. Run the tests once first:
+they write the fixture's gitignored coverage/coverage-summary.json (Istanbul
+keys are absolute paths, so it cannot be committed), which the coverage scan
+reads.
 
 ```bash
 bun run test
-bun src/generate-map.ts test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt)' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
-bun src/generate-map.ts test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
+bun src/generate-map.ts test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'del(.generatedAt) | .repository = "<fixture>"' /tmp/mini-dep/map.json > test/golden/mini-repo-deployment.json
+bun src/generate-map.ts test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt) | .repository = "<fixture>"' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
 ```
 
 Knip ignores `viewer/components/ui/`: those files are shadcn CLI output, not
@@ -78,7 +80,7 @@ The viewer's "Map a folder" dialog offers the same choice as a checkbox.
 MIT) hosted as a plain Vite React app, with two local changes:
 
 - **District-less nodes**: campus structures without a `parentId` render in an
-  implicit "System" neighbourhood (upstream drops them). The change is the
+  implicit "System" district (upstream drops them). The change is the
   `isCampusNode` filter in `viewer/RepoCity.tsx`.
 - `viewer/lib/local-showcases.ts` registers the generated maps in
   `out/` as showcases, so no file picker is needed.

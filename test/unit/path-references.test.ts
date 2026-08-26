@@ -30,4 +30,18 @@ describe("findPathReassignments", () => {
         writeFile("tools/cli/src/imp.ts", 'import { x } from "../../skills/map";\n');
         expect(findPathReassignments(repo, [root, cli], rooms, ["tools/cli/src/imp.ts"]).size).toBe(0);
     });
+
+    it("given a claiming file owned by no package, when scanned, then it does not reassign", () => {
+        const nested: Package = { dir: "packages/c", name: "pkg-c", deps: {}, role: "package", id: "pkg-c" };
+        const coreRoom: Room = {
+            id: "pkg-c-core",
+            pkg: nested,
+            segment: "core",
+            files: ["packages/c/core/engine.ts"],
+            loc: 1,
+        };
+        writeFile("tools/gen.ts", 'const target = "../packages/c/core";\n');
+        const result = findPathReassignments(repo, [nested], new Map([[coreRoom.id, coreRoom]]), ["tools/gen.ts"]);
+        expect(result.size).toBe(0);
+    });
 });

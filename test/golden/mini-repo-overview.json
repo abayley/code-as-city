@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mini-repo-overview",
   "name": "Mini Repo overview",
-  "repository": "/Users/alistairbayley/git/code-as-city/test/fixtures/mini-repo",
+  "repository": "<fixture>",
   "summary": "Module overview: every module as a structure, grouped by directory; no dependency edges.",
   "nodes": [
     {

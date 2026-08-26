@@ -85,7 +85,8 @@ export type HostShape = {
  * (explicit build.dockerfile, resolved relative to the compose dir when
  * needed, or the images/<name>.Dockerfile convention) and classified by image
  * or name. Environment variants are deduped — a host covered >=50% by a
- * higher-ranked variant (prod > uat > example > unqualified > dev) is
+ * higher-ranked variant (prod > uat > example > unqualified > dev), or by
+ * an equally-ranked variant with the lower filename, is
  * dropped — while service-level depends_on is harvested across ALL variants
  * so wiring declared only in a deduped variant still informs edges.
  *

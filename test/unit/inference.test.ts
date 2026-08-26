@@ -49,24 +49,44 @@ describe("inferEmbeddedDatabaseUse", () => {
         ]);
     });
 
-    it("given per-file entries (deployment mode), when owners repeat, then importers dedupe in first-match order and onImporters runs before the unsuffixed edges", () => {
+    it("given per-file entries (deployment mode), when owners repeat, then importers dedupe in first-match order", () => {
         const edges: MapEdge[] = [];
         const entries: NodeIndexEntry[] = [
             { id: "svc-a", files: ["src/store.ts"] },
             { id: "svc-b", files: ["src/report.ts"] },
             { id: "svc-a", files: ["src/report.ts"] },
         ];
-        const calls: { db: string; importers: readonly string[]; edgesSoFar: number }[] = [];
+        const importerCalls: (readonly string[])[] = [];
         inferEmbeddedDatabaseUse({
             databases: [database],
             entries,
             edges,
             fileText: texts,
             edgeSuffix: "",
-            onImporters: (db, importers) => calls.push({ db: db.id, importers, edgesSoFar: edges.length }),
+            onImporters: (_db, importers) => importerCalls.push(importers),
         });
-        expect(calls).toEqual([{ db: "embedded-duckdb", importers: ["svc-a", "svc-b"], edgesSoFar: 0 }]);
+        expect(importerCalls).toEqual([["svc-a", "svc-b"]]);
         expect(edges.map((e) => e.id)).toEqual(["svc-a--embedded-duckdb", "svc-b--embedded-duckdb"]);
+    });
+
+    // The documented contract: the deployment map parents the database node
+    // into its importers' district from this callback, so the node must exist
+    // before any edge references it.
+    it("given an onImporters callback, when it runs, then no edge has been emitted yet", () => {
+        const edges: MapEdge[] = [];
+        let edgesWhenCalled: number | null = null;
+        inferEmbeddedDatabaseUse({
+            databases: [database],
+            entries: [{ id: "svc-a", files: ["src/store.ts"] }],
+            edges,
+            fileText: texts,
+            edgeSuffix: "",
+            onImporters: () => {
+                edgesWhenCalled = edges.length;
+            },
+        });
+        expect(edgesWhenCalled).toBe(0);
+        expect(edges).not.toHaveLength(0);
     });
 });
 

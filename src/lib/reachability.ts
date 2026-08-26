@@ -20,7 +20,9 @@ const QA_SCRIPT_PATTERN =
 type FileEdge = { from: string; to: string };
 
 /**
- * Breadth-first closure of the import graph from the given roots.
+ * Transitive closure of the import graph from the given roots. The walk
+ * order is depth-first (the queue pops from the end); the result is a
+ * membership set, so the order is not observable.
  *
  * @param roots - The root files seeding the traversal.
  * @param fileEdges - File-level import edges (from importer to imported).
@@ -153,7 +155,7 @@ export function analyseReachability(
     const scriptReachable = reachableFrom(scriptRoots, fileEdges);
     const operationalReachable = reachableFrom(operationalRoots, fileEdges);
     /**
-     * R1's dev-tooling test: reachable from QA scripts only — from nothing
+     * R2's dev-tooling test: reachable from QA scripts only — from nothing
      * that deploys and from no operationally-named script.
      *
      * @param file - Repo-relative path of the source file.

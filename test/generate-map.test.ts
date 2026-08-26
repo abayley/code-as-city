@@ -21,7 +21,17 @@ afterAll(() => {
     for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** Runs the generator against the fixture repo and returns the map with the timestamp removed. */
+/**
+ * Stands in for the fixture's absolute path in the goldens. The generator
+ * records where it ran, which differs per clone, so the goldens would
+ * otherwise only match on the machine that wrote them.
+ */
+const FIXTURE_REPOSITORY = "<fixture>";
+
+/**
+ * Runs the generator against the fixture repo and returns the map with the
+ * timestamp removed and the machine-specific repository path normalised.
+ */
 function generateMap(extraArguments: readonly string[]): Record<string, unknown> {
     const outDir = mkdtempSync(join(tmpdir(), "code-as-city-test-"));
     tempDirs.push(outDir);
@@ -30,6 +40,8 @@ function generateMap(extraArguments: readonly string[]): Record<string, unknown>
     execFileSync("node", [validator, mapPath], { stdio: "pipe" });
     const map = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, unknown> & { generatedAt?: string };
     delete map.generatedAt;
+    expect(map["repository"], "the generator must record the repo it mapped").toBe(fixtureRepo);
+    map["repository"] = FIXTURE_REPOSITORY;
     return map;
 }
 
@@ -56,7 +68,14 @@ describe("generate-map golden master", () => {
         expect(scriptNodes).toEqual([]);
     });
 
-    it("given the fixture repo, when generating twice, then output is byte-identical bar the timestamp", () => {
+    it("given the fixture repo, when generating twice, then the maps are equal bar the timestamp", () => {
         expect(generateMap([])).toEqual(generateMap([]));
+    });
+
+    it("given the committed goldens, when read, then they hold no absolute path from the machine that wrote them", () => {
+        for (const name of ["mini-repo-deployment.json", "mini-repo-overview.json"]) {
+            const text = readFileSync(join(repoRoot, "test", "golden", name), "utf8");
+            expect(text, `${name} must stay portable across clones`).not.toMatch(/"\/(Users|home)\//);
+        }
     });
 });

@@ -12,13 +12,9 @@ type ComplexityStats = { sum: number; max: number };
 // top-level statements form an implicit function). A file carries the sum
 // and the max function complexity. Falls back to a decision-point regex
 // (sum == max, no function attribution) when typescript is unavailable.
-let ts: typeof import("typescript") | null = null;
-try {
-    ts = (await import("typescript")).default;
-} catch {
-    /* fall back below */
-}
 const COMPLEXITY_FALLBACK_PATTERN = /\bif\s*\(|\bfor\s*(?:\(|await)|\bwhile\s*\(|\bcase\s|\bcatch\b|&&|\|\||\?\?/g;
+
+export type ComplexityCompiler = typeof import("typescript");
 
 export type ComplexityScanner = {
     fileComplexity: (file: string) => number;
@@ -26,14 +22,39 @@ export type ComplexityScanner = {
 };
 
 /**
+ * Loads the TypeScript compiler for per-function complexity attribution. The
+ * import is a system seam: `typescript` is only a devDependency, and an ESM
+ * interop shape that resolves without exposing the compiler API is not an
+ * error but a signal to use the regex fallback. Resolving successfully is
+ * therefore not enough — the result is probed for the API actually used.
+ *
+ * @param importCompiler - Loader for the compiler module, injectable so a
+ *   test can supply an unusable or failing module.
+ * @returns The compiler when it exposes a usable API, otherwise null.
+ */
+export async function loadComplexityCompiler(
+    importCompiler: () => Promise<{ default?: unknown }> = () => import("typescript"),
+): Promise<ComplexityCompiler | null> {
+    try {
+        const loaded = (await importCompiler()).default as Partial<ComplexityCompiler> | undefined;
+        if (typeof loaded?.createSourceFile !== "function" || loaded.ScriptTarget === undefined) return null;
+        return loaded as ComplexityCompiler;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Creates a cached per-file complexity scanner rooted at the repo.
  *
  * @param repo - Absolute path of the repository being mapped; files handed
  *   to the scanner are read relative to it.
+ * @param ts - The TypeScript compiler from {@link loadComplexityCompiler}, or
+ *   null to use the decision-point regex fallback.
  * @returns Accessors for a file's summed complexity (all functions) and its
  *   worst single-function complexity, memoised per file.
  */
-export function createComplexityScanner(repo: string): ComplexityScanner {
+export function createComplexityScanner(repo: string, ts: ComplexityCompiler | null): ComplexityScanner {
     const complexityCache = new Map<string, ComplexityStats>();
     /**
      * Computes (and caches) the file's complexity stats: per-function McCabe

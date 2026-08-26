@@ -22,7 +22,8 @@ export type Room = {
  * @param pkg - The package being segmented.
  * @param packages - All packages, for owning-package attribution.
  * @param sourceFiles - Repo-relative paths of every source file.
- * @returns The dominant first segment, or null when none qualifies.
+ * @returns The package's segmentation: `dominant` is the first segment
+ *   holding the majority of its files, or null when none qualifies.
  */
 function segmentsFor(pkg: Package, packages: readonly Package[], sourceFiles: readonly string[]) {
     const locals = sourceFiles
