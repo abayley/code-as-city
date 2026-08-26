@@ -179,12 +179,18 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ### Phase 0 — toolchain
 
-- [ ] Run the init command; point components.json aliases and Tailwind
+- [x] Run the init command; point components.json aliases and Tailwind
       content at `viewer/`; add the Tailwind Vite plugin; self-host Roboto.
-- [ ] Reconcile Tailwind preflight with the existing app: viewer renders
+- [x] Reconcile Tailwind preflight with the existing app: viewer renders
       exactly as before (globals.css still in charge), canvas unaffected.
-- [ ] Wire the theme provider and class-strategy dark mode (toggle can be
-      temporary); verify both themes render.
+      Nothing was needed beyond the cascade itself: Tailwind's preflight sits
+      in `@layer base`, and globals.css is unlayered, so the old rules win
+      until each is deleted.
+- [x] Wire the theme provider and class-strategy dark mode (toggle can be
+      temporary); verify both themes render. The scene background moved here
+      too (it needed the same state): palette.ts gains PAPER_DARK and the
+      canvas follows the theme. Chrome tokens are live but still overridden
+      by globals.css, so chrome appearance changes land per phase below.
 
 ### Phase 1 — shell and topbar
 
@@ -203,6 +209,8 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 - [ ] Extract the inspector panel (Card, Badges, stats), the legend, and the
       viewport overlays (view mode, location, help, Overhead toggle).
+      Note from Phase 0: the overlays are dark ink and become illegible on
+      the dark canvas, so they must move to theme tokens here.
 - [ ] Browser smoke + screenshots.
 
 ### Phase 4 — dialogs, showcase, empty state

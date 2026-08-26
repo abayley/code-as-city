@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -96,5 +97,10 @@ function mapApiPlugin() {
 }
 
 export default defineConfig({
-    plugins: [react(), mapApiPlugin()],
+    plugins: [react(), tailwindcss(), mapApiPlugin()],
+    resolve: {
+        alias: {
+            "@": resolve("viewer"),
+        },
+    },
 });

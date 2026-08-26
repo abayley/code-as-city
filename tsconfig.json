@@ -40,7 +40,13 @@
         /* Interop Constraints */
         "isolatedModules": true,
         "allowSyntheticDefaultImports": true,
-        "forceConsistentCasingInFileNames": true
+        "forceConsistentCasingInFileNames": true,
+
+        /* The viewer is the "@/" app root; shadcn generates imports this way */
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["./viewer/*"]
+        }
     },
     "include": ["viewer", "test", "src/**/*.ts"],
     "exclude": ["test/fixtures"]

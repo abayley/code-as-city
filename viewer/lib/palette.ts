@@ -10,7 +10,10 @@
 
 // --- Neutrals -------------------------------------------------------------
 export const INK = "#202020"; // text, outlines, declared data-flow lines
-export const PAPER = "#f0f0f0"; // scene background
+export const PAPER = "#f0f0f0"; // scene background (light theme)
+// Dark-theme scene background, matching Mira's dark --background token so
+// the map and the chrome share one ground.
+export const PAPER_DARK = "#0f0f0f";
 export const PANEL = "#fafafa"; // plaques, signs, selected-text foreground
 
 // --- Structure fills -------------------------------------------------------

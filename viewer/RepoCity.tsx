@@ -9,11 +9,13 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
+import { ThemeToggle } from "./components/theme-toggle";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { type Showcase, showcases } from "./lib/local-showcases";
 import * as palette from "./lib/palette";
+import { type Theme, useTheme } from "./lib/theme";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
 // Main-thread typesetting keeps labels functional without the broken worker.
@@ -21,6 +23,7 @@ configureTextBuilder({ useWorker: false });
 
 const SCENE_INK = palette.INK;
 const SCENE_PAPER = palette.PAPER;
+const SCENE_PAPER_DARK = palette.PAPER_DARK;
 const SCENE_PANEL = palette.PANEL;
 const NEIGHBORHOOD_ACCENTS = palette.NEIGHBORHOOD_ACCENTS;
 
@@ -1086,6 +1089,7 @@ function CityScene({
     viewKey,
     overheadView,
     onDeselect,
+    background,
 }: {
     nodes: CityNode[];
     allNodes: CityNode[];
@@ -1103,6 +1107,7 @@ function CityScene({
     viewKey: string;
     overheadView: boolean;
     onDeselect: () => void;
+    background: string;
 }) {
     const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
     const edgeRouter = useMemo(() => createEdgeRouter(layout, nodes), [layout, nodes]);
@@ -1238,7 +1243,7 @@ function CityScene({
                 bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? neighborhoodModel?.bounds ?? layout.bounds}
                 overhead={overheadView}
             />
-            <color attach="background" args={[SCENE_PAPER]} />
+            <color attach="background" args={[background]} />
             <ambientLight intensity={1.6} />
             <directionalLight position={[-6, 12, 7]} intensity={2.25} castShadow shadow-mapSize={[1024, 1024]} />
             <NeighborhoodPlots
@@ -1384,6 +1389,8 @@ function MapViewer({
     onSelectShowcase,
     onImport,
     onMapFolder,
+    theme,
+    onToggleTheme,
 }: {
     map: CityMap;
     slug: string | null;
@@ -1391,6 +1398,8 @@ function MapViewer({
     onSelectShowcase: (showcase: Showcase) => void;
     onImport: () => void;
     onMapFolder: () => void;
+    theme: Theme;
+    onToggleTheme: () => void;
 }) {
     const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
     // Local change: campus structures may be district-less (no parentId).
@@ -1677,6 +1686,7 @@ function MapViewer({
                     </button>
                 )}
                 <div className="header-actions">
+                    <ThemeToggle theme={theme} onToggle={onToggleTheme} />
                     <button className="secondary-action" type="button" onClick={onMapFolder}>
                         Map a folder
                     </button>
@@ -1760,6 +1770,7 @@ function MapViewer({
             <section className="viewport" aria-label="Interactive repository city">
                 {visibleNodes.length ? (
                     <CityScene
+                        background={theme === "dark" ? SCENE_PAPER_DARK : SCENE_PAPER}
                         nodes={visibleNodes}
                         allNodes={map.nodes}
                         edges={visibleEdges}
@@ -2080,6 +2091,7 @@ function MapViewer({
  * @returns The viewer or empty shell, plus the import input and any overlay.
  */
 export default function Functionary() {
+    const { theme, toggleTheme } = useTheme();
     const [current, setCurrent] = useState<{ map: CityMap | null; slug: string | null; jsonPath: string | null }>({
         map: null,
         slug: null,
@@ -2150,12 +2162,16 @@ export default function Functionary() {
                     onSelectShowcase={openShowcase}
                     onImport={() => fileInput.current?.click()}
                     onMapFolder={() => setBrowserOpen(true)}
+                    theme={theme}
+                    onToggleTheme={toggleTheme}
                 />
             ) : (
                 <EmptyShell
                     onSelectShowcase={openShowcase}
                     onImport={() => fileInput.current?.click()}
                     onMapFolder={() => setBrowserOpen(true)}
+                    theme={theme}
+                    onToggleTheme={toggleTheme}
                 />
             )}
             {browserOpen && <FolderBrowser onClose={() => setBrowserOpen(false)} onGenerated={acceptGenerated} />}
@@ -2386,10 +2402,14 @@ function EmptyShell({
     onSelectShowcase,
     onImport,
     onMapFolder,
+    theme,
+    onToggleTheme,
 }: {
     onSelectShowcase: (showcase: Showcase) => void;
     onImport: () => void;
     onMapFolder: () => void;
+    theme: Theme;
+    onToggleTheme: () => void;
 }) {
     return (
         <main className="empty-shell">
@@ -2413,6 +2433,7 @@ function EmptyShell({
                     ))}
                 </select>
                 <div className="header-actions">
+                    <ThemeToggle theme={theme} onToggle={onToggleTheme} />
                     <button className="secondary-action" type="button" onClick={onMapFolder}>
                         Map a folder
                     </button>
