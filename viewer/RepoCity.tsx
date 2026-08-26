@@ -29,15 +29,26 @@ configureTextBuilder({ useWorker: false });
 const SCENE_INK = palette.INK;
 const SCENE_PAPER = palette.PAPER;
 const SCENE_PAPER_DARK = palette.PAPER_DARK;
+const SCENE_INK_ON_DARK = palette.INK_ON_DARK;
 const SCENE_PANEL = palette.PANEL;
 const NEIGHBORHOOD_ACCENTS = palette.NEIGHBORHOOD_ACCENTS;
 
 const IMPORTS_OUT_COLOR = palette.IMPORTS_OUT;
-const EVIDENCE_COLORS: Record<EvidenceKind, string> = {
-    declared: SCENE_INK,
-    observed: palette.EDGE_OBSERVED,
-    inferred: palette.EDGE_INFERRED,
-};
+/**
+ * Edge colours by evidence kind. Declared and inferred data flow both draw
+ * in ink, so they take the canvas-facing ink of the active theme; observed
+ * evidence keeps its own green in both.
+ *
+ * @param ink - The ink that reads against the current canvas background.
+ * @returns The colour to draw each evidence kind in.
+ */
+function evidenceColors(ink: string): Record<EvidenceKind, string> {
+    return {
+        declared: ink,
+        observed: palette.EDGE_OBSERVED,
+        inferred: ink,
+    };
+}
 
 /**
  * Drives the orthographic camera: fits it to the current view's bounds, flies
@@ -334,6 +345,7 @@ function Connections({
     focusedEdgeIds,
     routes,
     selectedId,
+    ink,
 }: {
     edges: CityEdge[];
     positions: Map<string, [number, number]>;
@@ -341,6 +353,7 @@ function Connections({
     focusedEdgeIds?: Set<string> | undefined;
     routes?: Map<string, Array<[number, number]>> | undefined;
     selectedId?: string | undefined;
+    ink: string;
 }) {
     return edges.map((edge) => {
         const from = positions.get(edge.from);
@@ -385,7 +398,7 @@ function Connections({
         // appear on selection and must read instantly.
         const selectedImport = touchesSelected && edge.kind === "depends_on";
         const importedBy = selectedImport && edge.to === selectedId;
-        const edgeColor = selectedImport ? IMPORTS_OUT_COLOR : EVIDENCE_COLORS[edge.evidence];
+        const edgeColor = selectedImport ? IMPORTS_OUT_COLOR : evidenceColors(ink)[edge.evidence];
         return (
             <group key={edge.id}>
                 <Line
@@ -1095,6 +1108,7 @@ function CityScene({
     overheadView,
     onDeselect,
     background,
+    ink,
 }: {
     nodes: CityNode[];
     allNodes: CityNode[];
@@ -1113,6 +1127,7 @@ function CityScene({
     overheadView: boolean;
     onDeselect: () => void;
     background: string;
+    ink: string;
 }) {
     const layout = useMemo(() => computeFlowLayout(nodes, edges, allNodes), [allNodes, edges, nodes]);
     const edgeRouter = useMemo(() => createEdgeRouter(layout, nodes), [layout, nodes]);
@@ -1264,6 +1279,7 @@ function CityScene({
                 focusedEdgeIds={focusModel?.edgeIds}
                 routes={activeRoutes}
                 selectedId={selectedId}
+                ink={ink}
             />
             {interiorModel && (
                 <>
@@ -1273,6 +1289,7 @@ function CityScene({
                         positions={interiorModel.positions}
                         activeEdgeId={interiorActiveEdgeId}
                         selectedId={selectedId}
+                        ink={ink}
                     />
                 </>
             )}
@@ -1881,6 +1898,7 @@ function MapViewer({
                 {visibleNodes.length ? (
                     <CityScene
                         background={theme === "dark" ? SCENE_PAPER_DARK : SCENE_PAPER}
+                        ink={theme === "dark" ? SCENE_INK_ON_DARK : SCENE_INK}
                         nodes={visibleNodes}
                         allNodes={map.nodes}
                         edges={visibleEdges}

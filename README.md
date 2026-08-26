@@ -31,9 +31,8 @@ bun src/generate-map.ts test/fixtures/mini-repo --out-dir /tmp/mini-dep && jq 'd
 bun src/generate-map.ts test/fixtures/mini-repo --overview --out-dir /tmp/mini-ov && jq 'del(.generatedAt)' /tmp/mini-ov/map.json > test/golden/mini-repo-overview.json
 ```
 
-Knip's duplicate-export check is excluded: `viewer/lib/palette.ts` aliases
-`EDGE_INFERRED = INK` deliberately (one charcoal for declared and inferred
-data flow, for now).
+Knip ignores `viewer/components/ui/`: those files are shadcn CLI output, not
+hand-edited, and their export surface is fixed by the generator.
 
 ## Inspiration
 

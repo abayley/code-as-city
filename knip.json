@@ -2,6 +2,5 @@
     "$schema": "https://unpkg.com/knip@5/schema.json",
     "entry": ["test/**/*.test.ts"],
     "project": ["src/**", "viewer/**", "test/**", "!test/fixtures/**"],
-    "exclude": ["duplicates"],
     "ignore": ["viewer/components/ui/**"]
 }

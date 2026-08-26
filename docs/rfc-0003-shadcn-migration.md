@@ -115,10 +115,13 @@ Added 2026-08-26 by the user, and it overrides anything below that conflicts.
 ## Non-Goals
 
 - No scene-structure changes: OVERVIEW_* constants, geometry, camera,
-  raycasting, and layout stay as they are. Building/edge colours keep the
-  light palette; the one scene concession to dark mode is the background
-  (see Proposal), plus any ground-plot/nameplate contrast tweak that the
-  dark background forces.
+  raycasting, and layout stay as they are. Building colours keep the light
+  palette. Two scene concessions to dark mode, both forced by the dark
+  background this RFC introduces: the background itself, and the ground-plane
+  connection lines, which were ink on near-black and therefore invisible
+  (palette.INK_ON_DARK, chosen by theme in evidenceColors). Ink drawn ON a
+  light-palette building — outlines, floor lines, plaque text — is unchanged
+  in both themes.
 - No decomposition of the scene graph or its hooks — chrome extraction only.
 - No visual-regression or styling tests.
 - No generator or map-schema changes.
