@@ -1,7 +1,7 @@
 ---
 id: RFC-0003
 name: Migrate the viewer chrome to shadcn/ui (Base UI, Mira, Roboto)
-status: Draft
+status: Completed
 owners:
     - alistairbayley
 created: 2026-08-26
@@ -16,7 +16,7 @@ superseded_by: null
 |-----------|------------------|
 | Authored  | 2026-08-26 11:30 |
 | Started   | 2026-08-26 12:20 |
-| Completed |                  |
+| Completed | 2026-08-26 14:00 |
 
 ## Summary
 
@@ -333,13 +333,23 @@ markup in places (a hand-built sidebar and rows, hand-styled overlays).
 
 ### Phase 6 — behaviour tests
 
-- [ ] vitest + Testing Library setup (jsdom environment for viewer tests
-      only; generator tests unaffected).
-- [ ] Behaviour tests: search filters rows; row click fires selection;
+- [x] vitest + Testing Library setup (jsdom environment for viewer tests
+      only; generator tests unaffected). `vitest.config.ts` now declares two
+      projects: `generator` (node, `test/**/*.test.ts`) and `viewer` (jsdom,
+      `test/unit/viewer/**/*.test.tsx`, the React plugin, the `@` alias, and
+      `test/unit/viewer/setup.ts`). The setup file adds jest-dom's matchers,
+      an automatic `cleanup`, `matchMedia`, `scrollIntoView`, and an in-memory
+      `localStorage` — node 26 defines a `localStorage` global that is
+      unavailable without `--localstorage-file`, and vitest's jsdom
+      environment leaves pre-existing globals alone, so jsdom's own storage
+      never reaches the tests.
+- [x] Behaviour tests: search filters rows; row click fires selection;
       inspector renders a node's stats/refs from fixture data; folder dialog
       validates and submits; keyboard shortcuts dispatch; theme toggle flips
-      the class. No styling assertions.
-- [ ] Mark this RFC completed.
+      the class. No styling assertions. 33 tests over ComponentRow, Sidebar,
+      Inspector, EmptyState, FolderBrowser (a hand-written recording fake for
+      the `fetch` seam), and ThemeToggle with `useTheme`.
+- [x] Mark this RFC completed.
 
 ### Rollout Plan Escape Hatch
 
