@@ -48,3 +48,7 @@ explicit exception to the constraint for data-driven (not decorative) colour.
   code, shared-code districts coloured purple, zero edges. The viewer wraps
   edge-less district rows into a grid and honours district colours from the
   map. Height ∝ loc is a first slice of the stats-driven dimensions item.
+
+- Viewer hover card: the last table row (type / entry point) is clipped by
+  the popup collision boundary. Pre-existing (confirmed against the
+  pre-shadcn CSS during RFC-0003 Phase 5), not introduced by the migration.
