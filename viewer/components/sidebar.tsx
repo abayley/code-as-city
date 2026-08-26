@@ -1,5 +1,5 @@
 // The viewer's left rail: a search box over the mapped components, grouped
-// into always-open neighbourhood sections.
+// into always-open district sections.
 
 import { SearchIcon, XIcon } from "lucide-react";
 import { ComponentRow, type ComponentRowProps } from "@/components/component-row";
@@ -24,17 +24,17 @@ type SidebarRow = Omit<ComponentRowProps, "onSelect"> & {
     id: string;
 };
 
-/** One always-open neighbourhood section of the rail. */
+/** One always-open district section of the rail. */
 export type SidebarSection = {
-    /** Neighbourhood id, passed back when the header is pressed. */
+    /** District id, passed back when the header is pressed. */
     id: string;
-    /** Neighbourhood name shown in the header. */
+    /** District name shown in the header. */
     label: string;
     /** Zero-based position; rendered one-based as "N1", "N2", ... */
     index: number;
     /** Band (strip) heading rendered above this section, when it starts one. */
     bandLabel?: string | undefined;
-    /** True when this neighbourhood is the one currently being explored. */
+    /** True when this district is the one currently being explored. */
     active: boolean;
     /** Rows surviving the current search filter, in display order. */
     rows: readonly SidebarRow[];
@@ -48,7 +48,7 @@ export type SidebarProps = {
     onSearchChange: (value: string) => void;
     /** Sections to render, already filtered and ordered by the caller. */
     sections: readonly SidebarSection[];
-    /** Called with a neighbourhood id when its header is pressed. */
+    /** Called with a district id when its header is pressed. */
     onExploreSection: (sectionId: string) => void;
     /** Called with a node id when a component row is pressed. */
     onSelectRow: (nodeId: string) => void;
@@ -56,7 +56,7 @@ export type SidebarProps = {
 
 /**
  * Renders the component rail: the InputGroup search with its clear button, and
- * the neighbourhood sections with their component rows, on the stock Sidebar
+ * the district sections with their component rows, on the stock Sidebar
  * primitives.
  *
  * The shell is a CSS grid that owns the rail's column, so the stock
@@ -116,7 +116,7 @@ export function Sidebar({ search, onSearchChange, sections, onExploreSection, on
                                             aria-pressed={section.active}
                                             onClick={() => onExploreSection(section.id)}
                                         >
-                                            <span className="shrink-0 font-mono tabular-nums">{`N${section.index + 1}`}</span>
+                                            <span className="shrink-0 font-mono tabular-nums">{`D${section.index + 1}`}</span>
                                             <span className="truncate font-medium uppercase">{section.label}</span>
                                         </SidebarMenuButton>
                                         <SidebarMenuSub>

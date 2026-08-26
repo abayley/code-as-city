@@ -33,9 +33,9 @@ export const EDGE_OBSERVED = "#2e6b52"; // runtime evidence (hand-made maps only
 export const IMPORTS_OUT = "#3F93C7"; // what the selected node imports
 
 // --- Districts ---------------------------------------------------------------
-// Plot fills cycle per neighbourhood. The matching rail accents were retired
+// Plot fills cycle per district. The matching rail accents were retired
 // with the sidebar's move to stock shadcn components (RFC-0003 Phase 4b).
-export const NEIGHBORHOOD_PLOT_FILLS = ["#f1dccb", "#f0e5c8", "#d5dde2", "#e2ded0", "#d9e9f4"];
+export const DISTRICT_PLOT_FILLS = ["#f1dccb", "#f0e5c8", "#d5dde2", "#e2ded0", "#d9e9f4"];
 
 // --- Map furniture -----------------------------------------------------------
 export const MARKER_MUTED = "#828282"; // footprint/outline lines at rest

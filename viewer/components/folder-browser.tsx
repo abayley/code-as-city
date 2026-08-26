@@ -132,13 +132,15 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
         }
     }
     // The keyboard effect must not re-subscribe on every render, so the current
-    // submit closure is held in a ref instead of being a dependency.
-    const submitRef = useRef((forceOverview: boolean) => {
-        void forceOverview;
+    // submit closure is held in a ref instead of being a dependency. The ref is
+    // written in an effect rather than during render: writing it in the render
+    // body is unsafe once rendering can be interrupted or replayed.
+    const submitRef = useRef<(forceOverview: boolean) => void>(() => {});
+    useEffect(() => {
+        submitRef.current = (forceOverview: boolean) => {
+            void generate(forceOverview || overview);
+        };
     });
-    submitRef.current = (forceOverview: boolean) => {
-        void generate(forceOverview || overview);
-    };
 
     // Keyboard: arrows move the highlight, Enter/Right opens the highlighted
     // folder, Left goes up, typing jumps to the first matching folder

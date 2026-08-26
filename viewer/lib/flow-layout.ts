@@ -1,12 +1,12 @@
 // Deterministic ground-plane layout for the city view: assigns nodes to
-// front-to-back flow layers, packs them into district neighbourhoods, and
+// front-to-back flow layers, packs them into districts, and
 // routes edges around the resulting buildings.
 import type { CityEdge, CityNode } from "./city-map";
 
 export type FlowLayout = {
     positions: Map<string, [number, number]>;
     layers: Map<string, number>;
-    neighborhoods: Array<{
+    districts: Array<{
         id: string;
         label: string;
         color?: string | undefined;
@@ -70,7 +70,7 @@ function flowEdges(nodes: CityNode[], edges: CityEdge[]) {
 
 /**
  * Computes the whole ground-plane layout: each node's flow layer (front to
- * back), its 2D position, the district neighbourhoods with their plot bounds,
+ * back), its 2D position, the districts with their plot bounds,
  * and the overall map bounds. Deterministic for a given map, so the camera
  * and edge router can rely on stable coordinates.
  *
@@ -78,7 +78,7 @@ function flowEdges(nodes: CityNode[], edges: CityEdge[]) {
  * @param edges - Edges between those nodes, used for layering and affinity.
  * @param allNodes - Every node in the map, used to resolve district scopes
  *   and to detect interiors when sizing nameplate clearances.
- * @returns The positions, layer assignments, neighbourhood descriptors, and
+ * @returns The positions, layer assignments, district descriptors, and
  *   bounding box for the laid-out map.
  */
 export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes: CityNode[]): FlowLayout {
@@ -86,7 +86,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         return {
             positions: new Map(),
             layers: new Map(),
-            neighborhoods: [],
+            districts: [],
             bounds: { minX: -1, maxX: 1, minZ: -1, maxZ: 1 },
         };
     }
@@ -184,27 +184,29 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         if (best) affinity.set(node.id, best[0]);
     });
     /**
-     * Resolves the neighbourhood a node lays out in: its parent district, a
-     * satellite strip near its most-connected district, or the "__system"
-     * fallback.
+     * Resolves the district a node lays out in. Most nodes land in their
+     * parent scope; a scope-less node with edges lands in a satellite strip
+     * beside the scope it is most connected to, and anything left lands in
+     * the synthetic "__system" district.
      *
      * @param node - The node to group.
-     * @returns The neighbourhood id (a scope id, "__near:<scope>", or "__system").
+     * @returns The district id: a scope id, "__near:<scope>", or "__system".
      */
-    const neighborhoodFor = (node: CityNode) =>
+    const districtFor = (node: CityNode) =>
         node.parentId && scopeById.has(node.parentId)
             ? node.parentId
             : affinity.has(node.id)
               ? `__near:${affinity.get(node.id)}`
               : "__system";
     /**
-     * Orders neighbourhoods: districts in scope order, each satellite strip
-     * directly after its district, and the system fallback last.
+     * Orders districts: scope-backed districts in scope order, each satellite
+     * strip directly after the scope it hangs off, and the system district
+     * last.
      *
-     * @param id - A neighbourhood id from neighborhoodFor.
+     * @param id - A district id from districtFor.
      * @returns A sortable rank; lower ranks lay out first.
      */
-    const neighborhoodRank = (id: string) => {
+    const districtRank = (id: string) => {
         const order = scopeOrder.get(id);
         if (order !== undefined) return order * 2;
         if (id.startsWith("__near:")) return (scopeOrder.get(id.slice(7)) ?? Number.MAX_SAFE_INTEGER / 4) * 2 + 1;
@@ -212,11 +214,11 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     };
     const groupedNodes = new Map<string, CityNode[]>();
     nodes.forEach((node) => {
-        const neighborhoodId = neighborhoodFor(node);
-        groupedNodes.set(neighborhoodId, [...(groupedNodes.get(neighborhoodId) ?? []), node]);
+        const districtId = districtFor(node);
+        groupedNodes.set(districtId, [...(groupedNodes.get(districtId) ?? []), node]);
     });
-    const neighborhoodEntries = [...groupedNodes].sort(
-        ([left], [right]) => neighborhoodRank(left) - neighborhoodRank(right) || left.localeCompare(right),
+    const districtEntries = [...groupedNodes].sort(
+        ([left], [right]) => districtRank(left) - districtRank(right) || left.localeCompare(right),
     );
     const nodeStepX = 2.0;
     const nodeStepZ = 1.7;
@@ -229,25 +231,25 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
      */
     const columnsFor = (count: number) => Math.max(1, Math.ceil(Math.sqrt(count)));
     // Local change: tighter packing for many-district maps. A single-structure
-    // neighbourhood only needs its own footprint, and the gap between
-    // neighbourhoods is decorative, not structural.
-    const neighborhoodGap = 0.9;
+    // district only needs its own footprint, and the gap between
+    // districts is decorative, not structural.
+    const districtGap = 0.9;
 
     // Local change: district-level flow layering. Districts themselves are
     // layered by their cross-district edges (producers in front, consumers
     // behind) and laid out in rows instead of one long ribbon. Groups with no
     // cross-district edges at all go to the back row.
-    const neighborhoodOf = new Map<string, string>();
+    const districtOf = new Map<string, string>();
     nodes.forEach((node) => {
-        neighborhoodOf.set(node.id, neighborhoodFor(node));
+        districtOf.set(node.id, districtFor(node));
     });
     const quotientEdges = new Set<string>();
     relevantEdges.forEach((edge) => {
-        const from = neighborhoodOf.get(edge.from);
-        const to = neighborhoodOf.get(edge.to);
+        const from = districtOf.get(edge.from);
+        const to = districtOf.get(edge.to);
         if (from && to && from !== to) quotientEdges.add(`${from}=>${to}`);
     });
-    const groupIds = neighborhoodEntries.map(([id]) => id);
+    const groupIds = districtEntries.map(([id]) => id);
     const hasQuotientEdge = new Set([...quotientEdges].flatMap((key) => key.split("=>")));
     const incomingCount = new Map(groupIds.map((id) => [id, 0]));
     quotientEdges.forEach((key) => {
@@ -291,15 +293,15 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     // Local change: stable, legible ordering — band (front to back), then
     // label. Drives both the rail listing and left-to-right order within rows.
     /**
-     * Produces the human-readable name for a neighbourhood.
+     * Produces the human-readable name for a district.
      *
-     * @param id - The neighbourhood id.
+     * @param id - The district id.
      * @returns The scope's label, "Near <scope>" for satellite strips, or "System".
      */
     const groupLabel = (id: string) =>
         scopeById.get(id)?.label ??
         (id.startsWith("__near:") ? `Near ${scopeById.get(id.slice(7))?.label ?? ""}` : "System");
-    neighborhoodEntries.sort(
+    districtEntries.sort(
         ([left], [right]) =>
             (districtLayer.get(left) ?? maxDistrictLayer) - (districtLayer.get(right) ?? maxDistrictLayer) ||
             groupLabel(left).localeCompare(groupLabel(right)),
@@ -312,55 +314,52 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
      * Decides whether a district's flow layers should collapse into one, so a
      * district of many tiny layers packs square instead of as a skinny strip.
      *
-     * @param neighborhoodNodes - The district's structures.
+     * @param districtNodes - The district's structures.
      * @returns True when every layer holds at most two nodes and flattening helps.
      */
-    const flattenLayers = (neighborhoodNodes: CityNode[]) => {
-        if (neighborhoodNodes.length < 4) return false;
+    const flattenLayers = (districtNodes: CityNode[]) => {
+        if (districtNodes.length < 4) return false;
         const counts = new Map<number, number>();
-        neighborhoodNodes.forEach((node) => {
+        districtNodes.forEach((node) => {
             const layer = globalLayerOf(node);
             counts.set(layer, (counts.get(layer) ?? 0) + 1);
         });
         return counts.size >= 2 && [...counts.values()].every((count) => count <= 2);
     };
-    const flattened = new Map(
-        neighborhoodEntries.map(([id, neighborhoodNodes]) => [id, flattenLayers(neighborhoodNodes)]),
-    );
+    const flattened = new Map(districtEntries.map(([id, districtNodes]) => [id, flattenLayers(districtNodes)]));
     /**
      * A node's layer within its own district: zero everywhere in a flattened
      * district, the global layer otherwise.
      *
-     * @param neighborhoodId - The district the node belongs to.
+     * @param districtId - The district the node belongs to.
      * @param node - The node being placed.
      * @returns The layer index used for in-district depth packing.
      */
-    const localLayerOf = (neighborhoodId: string, node: CityNode) =>
-        flattened.get(neighborhoodId) ? 0 : globalLayerOf(node);
+    const localLayerOf = (districtId: string, node: CityNode) => (flattened.get(districtId) ? 0 : globalLayerOf(node));
 
-    const neighborhoodWidths = neighborhoodEntries.map(([id, neighborhoodNodes]) => {
+    const districtWidths = districtEntries.map(([id, districtNodes]) => {
         const largestCell = Math.max(
-            ...[...new Set(neighborhoodNodes.map((node) => localLayerOf(id, node)))].map(
-                (layer) => neighborhoodNodes.filter((node) => localLayerOf(id, node) === layer).length,
+            ...[...new Set(districtNodes.map((node) => localLayerOf(id, node)))].map(
+                (layer) => districtNodes.filter((node) => localLayerOf(id, node) === layer).length,
             ),
             1,
         );
         return Math.max(3.2, columnsFor(largestCell) * nodeStepX + 0.7);
     });
     /**
-     * Looks up a neighbourhood's computed plot width.
+     * Looks up a district's computed plot width.
      *
-     * @param index - Position in neighborhoodEntries.
+     * @param index - Position in districtEntries.
      * @returns The width in world units.
      */
     const widthAt = (index: number): number => {
-        const width = neighborhoodWidths[index];
-        if (width === undefined) throw new Error("Neighbourhood width missing.");
+        const width = districtWidths[index];
+        if (width === undefined) throw new Error("District width missing.");
         return width;
     };
 
     const rowMembers = new Map<number, number[]>();
-    neighborhoodEntries.forEach((entry, index) => {
+    districtEntries.forEach((entry, index) => {
         const rowLayer = districtLayer.get(entry[0]) ?? maxDistrictLayer;
         rowMembers.set(rowLayer, [...(rowMembers.get(rowLayer) ?? []), index]);
     });
@@ -374,16 +373,14 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         number,
         { layerIndex: Map<number, number>; layerOffsets: Map<number, number>; depth: number }
     >();
-    neighborhoodEntries.forEach(([id, neighborhoodNodes], index) => {
-        const uniqueLayers = [...new Set(neighborhoodNodes.map((node) => localLayerOf(id, node)))].sort(
-            (a, b) => a - b,
-        );
+    districtEntries.forEach(([id, districtNodes], index) => {
+        const uniqueLayers = [...new Set(districtNodes.map((node) => localLayerOf(id, node)))].sort((a, b) => a - b);
         const layerIndex = new Map(uniqueLayers.map((layer, position) => [layer, position]));
         const layerOffsets = new Map<number, number>();
         let offset = 0;
         for (const layer of uniqueLayers) {
             layerOffsets.set(layer, offset);
-            const count = neighborhoodNodes.filter((node) => localLayerOf(id, node) === layer).length;
+            const count = districtNodes.filter((node) => localLayerOf(id, node) === layer).length;
             const rows = Math.ceil(count / columnsFor(count));
             offset += rows * nodeStepZ + layerGap;
         }
@@ -391,15 +388,15 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
         localInfo.set(index, { layerIndex, layerOffsets, depth });
     });
     /**
-     * Looks up a neighbourhood's per-layer packing info (layer order, depth
+     * Looks up a district's per-layer packing info (layer order, depth
      * offsets, and total depth).
      *
-     * @param index - Position in neighborhoodEntries.
-     * @returns The neighbourhood's local layout info.
+     * @param index - Position in districtEntries.
+     * @returns The district's local layout info.
      */
     const infoAt = (index: number) => {
         const info = localInfo.get(index);
-        if (info === undefined) throw new Error("Neighbourhood layout info missing.");
+        if (info === undefined) throw new Error("District layout info missing.");
         return info;
     };
 
@@ -414,7 +411,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
             let width = 0;
             let part = 0;
             for (const index of entryIndexes) {
-                const step = widthAt(index) + (chunk.length ? neighborhoodGap : 0);
+                const step = widthAt(index) + (chunk.length ? districtGap : 0);
                 if (chunk.length && width + step > MAX_ROW_WIDTH) {
                     sortedRows.push([rowLayer + part * 1e-3, chunk]);
                     part += 1;
@@ -422,7 +419,7 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
                     width = 0;
                 }
                 chunk.push(index);
-                width += widthAt(index) + (chunk.length > 1 ? neighborhoodGap : 0);
+                width += widthAt(index) + (chunk.length > 1 ? districtGap : 0);
             }
             if (chunk.length) sortedRows.push([rowLayer + part * 1e-3, chunk]);
         });
@@ -440,21 +437,21 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
     for (const [rowLayer, entryIndexes] of sortedRows) {
         const rowWidth =
             entryIndexes.reduce((total, index) => total + widthAt(index), 0) +
-            neighborhoodGap * Math.max(0, entryIndexes.length - 1);
+            districtGap * Math.max(0, entryIndexes.length - 1);
         const rowBase = rowBases.get(rowLayer);
         if (rowBase === undefined) throw new Error("Row base missing for row layer.");
         const rowZ = rowBase + zShift;
-        let neighborhoodCursor = -rowWidth / 2;
-        for (const neighborhoodIndex of entryIndexes) {
-            const neighborhoodEntry = neighborhoodEntries[neighborhoodIndex];
-            if (neighborhoodEntry === undefined) throw new Error("Neighbourhood entry missing.");
-            const [neighborhoodId, neighborhoodNodes] = neighborhoodEntry;
-            const neighborhoodWidth = widthAt(neighborhoodIndex);
-            const { layerOffsets } = infoAt(neighborhoodIndex);
-            const centerX = neighborhoodCursor + neighborhoodWidth / 2;
+        let districtCursor = -rowWidth / 2;
+        for (const districtIndex of entryIndexes) {
+            const districtEntry = districtEntries[districtIndex];
+            if (districtEntry === undefined) throw new Error("District entry missing.");
+            const [districtId, districtNodes] = districtEntry;
+            const districtWidth = widthAt(districtIndex);
+            const { layerOffsets } = infoAt(districtIndex);
+            const centerX = districtCursor + districtWidth / 2;
             const localLayers = new Map<number, CityNode[]>();
-            neighborhoodNodes.forEach((node) => {
-                const layer = localLayerOf(neighborhoodId, node);
+            districtNodes.forEach((node) => {
+                const layer = localLayerOf(districtId, node);
                 localLayers.set(layer, [...(localLayers.get(layer) ?? []), node]);
             });
             for (const [layer, layerNodes] of localLayers) {
@@ -477,12 +474,12 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
                     positions.set(node.id, [x, z]);
                 });
             }
-            neighborhoodCursor += neighborhoodWidth + neighborhoodGap;
+            districtCursor += districtWidth + districtGap;
         }
     }
 
-    const neighborhoods = neighborhoodEntries.map(([id, neighborhoodNodes]) => {
-        const neighborhoodExtents = neighborhoodNodes.map((node) => {
+    const districts = districtEntries.map(([id, districtNodes]) => {
+        const districtExtents = districtNodes.map((node) => {
             const position = positions.get(node.id);
             if (position === undefined) throw new Error("Node missing from positions map.");
             const [x, z] = position;
@@ -516,29 +513,29 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
             band: districtLayer.get(id) ?? 0,
             bandLabel: scope?.tags?.find((tag) => tag.startsWith("band:"))?.slice(5),
             description: scope?.description,
-            nodeIds: neighborhoodNodes.map((node) => node.id),
+            nodeIds: districtNodes.map((node) => node.id),
             bounds: {
-                minX: Math.min(...neighborhoodExtents.map((extent) => extent.minX)) - 0.35,
-                maxX: Math.max(...neighborhoodExtents.map((extent) => extent.maxX)) + 0.35,
-                minZ: Math.min(...neighborhoodExtents.map((extent) => extent.minZ)) - 0.45,
+                minX: Math.min(...districtExtents.map((extent) => extent.minX)) - 0.35,
+                maxX: Math.max(...districtExtents.map((extent) => extent.maxX)) + 0.35,
+                minZ: Math.min(...districtExtents.map((extent) => extent.minZ)) - 0.45,
                 // The front edge keeps room for the district sign (0.78 + inset).
-                maxZ: Math.max(...neighborhoodExtents.map((extent) => extent.maxZ)) + 1.3,
+                maxZ: Math.max(...districtExtents.map((extent) => extent.maxZ)) + 1.3,
             },
         };
     });
 
-    const neighborhoodBounds = neighborhoods.map((neighborhood) => neighborhood.bounds);
+    const districtBounds = districts.map((district) => district.bounds);
     const bounds = {
-        minX: Math.min(...neighborhoodBounds.map((item) => item.minX)),
-        maxX: Math.max(...neighborhoodBounds.map((item) => item.maxX)),
-        minZ: Math.min(...neighborhoodBounds.map((item) => item.minZ)),
-        maxZ: Math.max(...neighborhoodBounds.map((item) => item.maxZ)) + 0.65,
+        minX: Math.min(...districtBounds.map((item) => item.minX)),
+        maxX: Math.max(...districtBounds.map((item) => item.maxX)),
+        minZ: Math.min(...districtBounds.map((item) => item.minZ)),
+        maxZ: Math.max(...districtBounds.map((item) => item.maxZ)) + 0.65,
     };
 
     return {
         positions,
         layers,
-        neighborhoods,
+        districts,
         bounds,
     };
 }
@@ -612,9 +609,9 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
         }
     };
 
-    for (const neighborhood of layout.neighborhoods) {
-        if (neighborhood.id.startsWith("__")) continue;
-        rasterise(neighborhood.bounds, DISTRICT_COST);
+    for (const district of layout.districts) {
+        if (district.id.startsWith("__")) continue;
+        rasterise(district.bounds, DISTRICT_COST);
     }
     const nodeCells = new Map<string, Set<number>>();
     for (const node of allNodes) {

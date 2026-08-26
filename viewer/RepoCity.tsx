@@ -22,6 +22,7 @@ import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { type Showcase, showcases } from "./lib/local-showcases";
 import * as palette from "./lib/palette";
+import { matchesRailSearch } from "./lib/rail-search";
 import { type Theme, useTheme } from "./lib/theme";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
@@ -148,7 +149,6 @@ function CameraRig({
     }, [bounds, camera, overhead, viewKey, viewportSize.height, viewportSize.width]);
 
     // React Three Fiber scene objects are intentionally updated inside the render loop.
-    // eslint-disable-next-line react-hooks/immutability
     useFrame((_, delta) => {
         if (!fitting.current) return;
         const blend = reduceMotion.current ? 1 : 1 - Math.exp(-delta * 7.5);
@@ -161,7 +161,7 @@ function CameraRig({
         camera.quaternion.slerp(targetQuaternion.current, blend);
         if (controls?.target) controls.target.copy(currentTarget.current);
         if (camera instanceof THREE.OrthographicCamera) {
-            // eslint-disable-next-line react-hooks/immutability
+            // Mutating the camera in place is the R3F convention; see above.
             camera.zoom = THREE.MathUtils.damp(camera.zoom, targetZoom.current, reduceMotion.current ? 1000 : 8, delta);
             camera.updateProjectionMatrix();
         }
@@ -194,38 +194,36 @@ function CameraRig({
  * Renders every district's ground plot: a tinted floor plane, an outline, and
  * a two-column sign (N-code plus label), with active/dimmed emphasis.
  *
- * @param props - `layout` supplies the neighbourhoods and their bounds;
+ * @param props - `layout` supplies the districts and their bounds;
  *   `selectedId` marks the district containing the selection as active;
- *   `activeNeighborhoodId` is the explicitly explored district, dimming the
+ *   `activeDistrictId` is the explicitly explored district, dimming the
  *   rest; `hideLabels` suppresses the signs (used while an interior is open).
  * @returns One group per visible district; implicit groups render nothing.
  */
-function NeighborhoodPlots({
+function DistrictPlots({
     layout,
     selectedId,
-    activeNeighborhoodId,
+    activeDistrictId,
     hideLabels = false,
 }: {
     layout: FlowLayout;
     selectedId: string;
-    activeNeighborhoodId: string | null;
+    activeDistrictId: string | null;
     hideLabels?: boolean;
 }) {
-    const colors = palette.NEIGHBORHOOD_PLOT_FILLS;
+    const colors = palette.DISTRICT_PLOT_FILLS;
 
-    return layout.neighborhoods.map((neighborhood, index) => {
+    return layout.districts.map((district, index) => {
         // Local change: implicit groups (satellites of a district, the System
         // fallback) are placement-only — no plot, no label; their nodes float.
-        if (neighborhood.id.startsWith("__")) return null;
-        const { minX, maxX, minZ, maxZ } = neighborhood.bounds;
+        if (district.id.startsWith("__")) return null;
+        const { minX, maxX, minZ, maxZ } = district.bounds;
         const width = maxX - minX;
         const depth = maxZ - minZ;
         const centerX = (minX + maxX) / 2;
         const centerZ = (minZ + maxZ) / 2;
-        const active =
-            neighborhood.id === activeNeighborhoodId ||
-            (!activeNeighborhoodId && neighborhood.nodeIds.includes(selectedId));
-        const dimmed = !!activeNeighborhoodId && neighborhood.id !== activeNeighborhoodId;
+        const active = district.id === activeDistrictId || (!activeDistrictId && district.nodeIds.includes(selectedId));
+        const dimmed = !!activeDistrictId && district.id !== activeDistrictId;
         // Narrow districts keep a readable sign: never below 2.2 wide, and the
         // label font shrinks to fit at most two wrapped lines.
         const signWidth = Math.min(Math.max(width - 0.3, 2.2), 5.4);
@@ -235,7 +233,7 @@ function NeighborhoodPlots({
         const labelAvailable = signWidth - codeColumnWidth - 0.32;
         const labelFontSize = Math.min(
             0.27,
-            Math.max(0.14, (labelAvailable * 2) / (Math.max(1, neighborhood.label.length) * 0.62)),
+            Math.max(0.14, (labelAvailable * 2) / (Math.max(1, district.label.length) * 0.62)),
         );
         const dividerX = -signWidth / 2 + codeColumnWidth;
         const outline: [number, number, number][] = [
@@ -247,11 +245,11 @@ function NeighborhoodPlots({
         ];
 
         return (
-            <group key={neighborhood.id}>
+            <group key={district.id}>
                 <mesh position={[centerX, -0.027, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
                     <planeGeometry args={[width, depth]} />
                     <meshBasicMaterial
-                        color={neighborhood.color ?? colors[index % colors.length] ?? SCENE_INK}
+                        color={district.color ?? colors[index % colors.length] ?? SCENE_INK}
                         transparent
                         opacity={dimmed ? 0.1 : active ? 0.5 : 0.34}
                         depthWrite={false}
@@ -305,7 +303,7 @@ function NeighborhoodPlots({
                             anchorY="middle"
                             fillOpacity={dimmed ? 0.2 : 1}
                         >
-                            {`N${index + 1}`}
+                            {`D${index + 1}`}
                         </Text>
                         <Text
                             position={[dividerX + 0.18, 0, 0.014]}
@@ -318,7 +316,7 @@ function NeighborhoodPlots({
                             anchorY="middle"
                             fillOpacity={dimmed ? 0.2 : 1}
                         >
-                            {neighborhood.label}
+                            {district.label}
                         </Text>
                     </group>
                 )}
@@ -356,6 +354,8 @@ function Connections({
     selectedId?: string | undefined;
     ink: string;
 }) {
+    // Built once per render, not once per edge: the record only depends on ink.
+    const colorsForEvidence = evidenceColors(ink);
     return edges.map((edge) => {
         const from = positions.get(edge.from);
         const to = positions.get(edge.to);
@@ -399,7 +399,7 @@ function Connections({
         // appear on selection and must read instantly.
         const selectedImport = touchesSelected && edge.kind === "depends_on";
         const importedBy = selectedImport && edge.to === selectedId;
-        const edgeColor = selectedImport ? IMPORTS_OUT_COLOR : evidenceColors(ink)[edge.evidence];
+        const edgeColor = selectedImport ? IMPORTS_OUT_COLOR : colorsForEvidence[edge.evidence];
         return (
             <group key={edge.id}>
                 <Line
@@ -567,7 +567,7 @@ function segmentGeometry(segment: BoxSegment) {
  *   is the ground-plane [x, z]; `selected` drives emphasis; `hasInterior`
  *   marks buildings with rooms; `expanded` flattens the shell while its
  *   interior is open; `interior` renders it as a room inside a building;
- *   `dimmed` fades it during focus/neighbourhood modes; `onSelect`/`onEnter`
+ *   `dimmed` fades it during focus/district modes; `onSelect`/`onEnter`
  *   fire on click and double-click.
  * @returns The structure's mesh group (empty while expanded).
  */
@@ -1080,12 +1080,12 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
 
 /**
  * The react-three-fiber canvas: computes the layout and edge routes, derives
- * the interior/focus/neighbourhood view models, and composes the camera rig,
+ * the interior/focus/district view models, and composes the camera rig,
  * lights, plots, connections, structures, markers, and map controls.
  *
  * @param props - `nodes`/`edges` are the campus-level view; `allNodes`/
  *   `allEdges` the whole map (for interiors); `selectedId`, `activeEdgeId`,
- *   `interiorActiveEdgeId`, `expandedId`, `focusId`, and `neighborhoodId`
+ *   `interiorActiveEdgeId`, `expandedId`, `focusId`, and `districtId`
  *   describe the current selection and view mode; `onSelect`, `onEnter`,
  *   `onHover`, and `onDeselect` report interactions upward; `viewKey` and
  *   `overheadView` steer the camera rig.
@@ -1101,7 +1101,7 @@ function CityScene({
     interiorActiveEdgeId,
     expandedId,
     focusId,
-    neighborhoodId,
+    districtId,
     onSelect,
     onEnter,
     onHover,
@@ -1120,7 +1120,7 @@ function CityScene({
     interiorActiveEdgeId: string | null;
     expandedId: string | null;
     focusId: string | null;
-    neighborhoodId: string | null;
+    districtId: string | null;
     onSelect: (id: string) => void;
     onEnter: (id: string) => void;
     onHover: (node: CityNode | null, x: number, y: number) => void;
@@ -1220,15 +1220,15 @@ function CityScene({
         };
         return { nodeIds, edgeIds: new Set(focusedEdges.map((edge) => edge.id)), bounds };
     }, [edges, focusId, interiorModel, layout, nodes]);
-    const neighborhoodModel = useMemo(() => {
-        if (!neighborhoodId || interiorModel || focusModel) return null;
-        const neighborhood = layout.neighborhoods.find((candidate) => candidate.id === neighborhoodId);
-        if (!neighborhood) return null;
+    const districtModel = useMemo(() => {
+        if (!districtId || interiorModel || focusModel) return null;
+        const district = layout.districts.find((candidate) => candidate.id === districtId);
+        if (!district) return null;
         return {
-            nodeIds: new Set(neighborhood.nodeIds),
-            bounds: { ...neighborhood.bounds, maxZ: neighborhood.bounds.maxZ + 0.9 },
+            nodeIds: new Set(district.nodeIds),
+            bounds: { ...district.bounds, maxZ: district.bounds.maxZ + 0.9 },
         };
-    }, [focusModel, interiorModel, layout, neighborhoodId]);
+    }, [focusModel, interiorModel, layout, districtId]);
 
     // Import edges of the selected/focused node route on demand: the router
     // caches per edge, so re-selecting is instant.
@@ -1261,16 +1261,16 @@ function CityScene({
         >
             <CameraRig
                 viewKey={viewKey}
-                bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? neighborhoodModel?.bounds ?? layout.bounds}
+                bounds={interiorModel?.cameraBounds ?? focusModel?.bounds ?? districtModel?.bounds ?? layout.bounds}
                 overhead={overheadView}
             />
             <color attach="background" args={[background]} />
             <ambientLight intensity={1.6} />
             <directionalLight position={[-6, 12, 7]} intensity={2.25} castShadow shadow-mapSize={[1024, 1024]} />
-            <NeighborhoodPlots
+            <DistrictPlots
                 layout={layout}
                 selectedId={selectedId}
-                activeNeighborhoodId={neighborhoodId}
+                activeDistrictId={districtId}
                 hideLabels={!!interiorModel}
             />
             <Connections
@@ -1315,8 +1315,8 @@ function CityScene({
                             dimmed={
                                 interiorModel
                                     ? node.id !== expandedId
-                                    : neighborhoodModel
-                                      ? !neighborhoodModel.nodeIds.has(node.id)
+                                    : districtModel
+                                      ? !districtModel.nodeIds.has(node.id)
                                       : !!focusModel && !focusModel.nodeIds.has(node.id)
                             }
                             onSelect={() => onSelect(node.id)}
@@ -1332,8 +1332,8 @@ function CityScene({
                                 expanded={node.id === expandedId}
                                 exploring={node.id === focusId}
                                 dimmed={
-                                    neighborhoodModel
-                                        ? !neighborhoodModel.nodeIds.has(node.id)
+                                    districtModel
+                                        ? !districtModel.nodeIds.has(node.id)
                                         : !!focusModel && !focusModel.nodeIds.has(node.id)
                                 }
                                 onSelect={() => onSelect(node.id)}
@@ -1550,7 +1550,7 @@ function MapViewer({
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [focusId, setFocusId] = useState<string | null>(null);
-    const [neighborhoodId, setNeighborhoodId] = useState<string | null>(null);
+    const [districtId, setDistrictId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
     const [overheadView, setOverheadView] = useState(false);
@@ -1599,12 +1599,12 @@ function MapViewer({
         () => computeFlowLayout(visibleNodes, visibleEdges, map.nodes),
         [map.nodes, visibleEdges, visibleNodes],
     );
-    const activeNeighborhoodId =
-        neighborhoodId &&
-        layout.neighborhoods.some((neighborhood) => neighborhood.id === neighborhoodId) &&
+    const activeDistrictId =
+        districtId &&
+        layout.districts.some((district) => district.id === districtId) &&
         !activeExpandedId &&
         !activeFocusId
-            ? neighborhoodId
+            ? districtId
             : null;
     // Local change: no forced selection — an empty selection shows the map
     // summary in the panel, and clicking the background deselects.
@@ -1624,27 +1624,25 @@ function MapViewer({
         selectedConnectionFrom && selectedConnectionTo && selectedConnectionFrom !== selectedConnectionTo
             ? `campus:${selectedConnectionFrom}->${selectedConnectionTo}`
             : null;
-    const filteredRailNodes = visibleNodes.filter((node) =>
-        `${node.label} ${node.kind} ${node.description ?? ""}`.toLowerCase().includes(search.toLowerCase()),
-    );
-    // Rail view model: neighbourhoods that still hold a matching node, each
+    const filteredRailNodes = visibleNodes.filter((node) => matchesRailSearch(node, search));
+    // Rail view model: districts that still hold a matching node, each
     // with its band heading (only on the first section of a new band).
     const railSections: SidebarSection[] = [];
     let lastRailBand: number | undefined;
-    layout.neighborhoods.forEach((neighborhood, neighborhoodIndex) => {
-        const neighborhoodIds = new Set(neighborhood.nodeIds);
+    layout.districts.forEach((district, districtIndex) => {
+        const districtIds = new Set(district.nodeIds);
         const nodes = filteredRailNodes
-            .filter((node) => neighborhoodIds.has(node.id))
+            .filter((node) => districtIds.has(node.id))
             .sort((a, b) => a.label.localeCompare(b.label));
         if (!nodes.length) return;
-        const showBandHeader = neighborhood.bandLabel !== undefined && neighborhood.band !== lastRailBand;
-        lastRailBand = neighborhood.band;
+        const showBandHeader = district.bandLabel !== undefined && district.band !== lastRailBand;
+        lastRailBand = district.band;
         railSections.push({
-            id: neighborhood.id,
-            label: neighborhood.label,
-            index: neighborhoodIndex,
-            bandLabel: showBandHeader ? neighborhood.bandLabel : undefined,
-            active: activeNeighborhoodId === neighborhood.id,
+            id: district.id,
+            label: district.label,
+            index: districtIndex,
+            bandLabel: showBandHeader ? district.bandLabel : undefined,
+            active: activeDistrictId === district.id,
             rows: nodes.map((node) => {
                 const roomCount = map.nodes.filter((candidate) => candidate.parentId === node.id).length;
                 return {
@@ -1726,7 +1724,7 @@ function MapViewer({
      * @param nodeId - The activated node's id.
      */
     function exploreNode(nodeId: string) {
-        setNeighborhoodId(null);
+        setDistrictId(null);
         const children = map.nodes.filter((node) => node.parentId === nodeId);
         if (children.length) {
             setFocusId(null);
@@ -1752,22 +1750,22 @@ function MapViewer({
     }
 
     /**
-     * Toggles neighbourhood mode: zooms to a district, selecting its first
+     * Toggles district mode: zooms to a district, selecting its first
      * node, or leaves the mode when the same district is chosen again.
      *
-     * @param nextNeighborhoodId - The district (neighbourhood) id to explore.
+     * @param nextDistrictId - The district (district) id to explore.
      */
-    function exploreNeighborhood(nextNeighborhoodId: string) {
-        if (activeNeighborhoodId === nextNeighborhoodId) {
-            setNeighborhoodId(null);
+    function exploreDistrict(nextDistrictId: string) {
+        if (activeDistrictId === nextDistrictId) {
+            setDistrictId(null);
             return;
         }
-        const neighborhood = layout.neighborhoods.find((candidate) => candidate.id === nextNeighborhoodId);
-        const firstNodeId = neighborhood?.nodeIds[0];
-        if (!neighborhood || !firstNodeId) return;
+        const district = layout.districts.find((candidate) => candidate.id === nextDistrictId);
+        const firstNodeId = district?.nodeIds[0];
+        if (!district || !firstNodeId) return;
         setExpandedId(null);
         setFocusId(null);
-        setNeighborhoodId(nextNeighborhoodId);
+        setDistrictId(nextDistrictId);
         setSelectedId(firstNodeId);
         setSelectedConnectionId(firstCampusConnection(firstNodeId)?.id ?? null);
     }
@@ -1784,15 +1782,15 @@ function MapViewer({
         setFocusId(null);
     }
 
-    /** Leaves neighbourhood mode, returning to the whole city. */
-    function closeNeighborhood() {
-        setNeighborhoodId(null);
+    /** Leaves district mode, returning to the whole city. */
+    function closeDistrict() {
+        setDistrictId(null);
     }
 
     useEffect(() => {
         /**
          * Escape steps back one view level: interior, then focus, then
-         * neighbourhood mode.
+         * district mode.
          *
          * @param event - The window keydown event.
          */
@@ -1806,13 +1804,13 @@ function MapViewer({
                 setSelectedId(focusId);
                 setSelectedConnectionId(firstCampusConnection(focusId)?.id ?? null);
                 setFocusId(null);
-            } else if (neighborhoodId) {
-                setNeighborhoodId(null);
+            } else if (districtId) {
+                setDistrictId(null);
             }
         }
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [expandedId, firstCampusConnection, focusId, neighborhoodId]);
+    }, [expandedId, firstCampusConnection, focusId, districtId]);
 
     // Overlay view model: the three drill-down levels share one back button
     // and one breadcrumb slot, so they collapse into a single description.
@@ -1820,8 +1818,8 @@ function MapViewer({
         ? closeBuilding
         : activeFocusId
           ? closeFocus
-          : activeNeighborhoodId
-            ? closeNeighborhood
+          : activeDistrictId
+            ? closeDistrict
             : null;
     const overlayBreadcrumb = activeExpandedId
         ? { root: map.name, detail: `${expandedNode?.label ?? ""} rooms open` }
@@ -1832,19 +1830,17 @@ function MapViewer({
                     selectedConnection?.label ? ` · ${selectedConnection.label}` : ""
                 }`,
             }
-          : activeNeighborhoodId
+          : activeDistrictId
             ? {
                   root: map.name,
-                  detail:
-                      layout.neighborhoods.find((neighborhood) => neighborhood.id === activeNeighborhoodId)?.label ??
-                      "",
+                  detail: layout.districts.find((district) => district.id === activeDistrictId)?.label ?? "",
               }
             : null;
     const overlayHelp = activeExpandedId
         ? "Select a room · Esc to return · the city remains around you"
         : activeFocusId
           ? "Click a connected structure to trace that path · Esc to return"
-          : activeNeighborhoodId
+          : activeDistrictId
             ? "Choose a building to open it · Esc to return to the whole city"
             : "Click a structure or nameplate to select · double-click to open";
 
@@ -1865,7 +1861,7 @@ function MapViewer({
           )
         : mapInspectorContent(
               map,
-              layout.neighborhoods.filter((neighborhood) => !neighborhood.id.startsWith("__")).length,
+              layout.districts.filter((district) => !district.id.startsWith("__")).length,
               visibleNodes,
               visibleEdges.length,
           );
@@ -1890,7 +1886,7 @@ function MapViewer({
                 search={search}
                 onSearchChange={setSearch}
                 sections={railSections}
-                onExploreSection={exploreNeighborhood}
+                onExploreSection={exploreDistrict}
                 onSelectRow={exploreNode}
             />
 
@@ -1913,11 +1909,11 @@ function MapViewer({
                         interiorActiveEdgeId={selectedConnectionId}
                         expandedId={activeExpandedId}
                         focusId={activeFocusId}
-                        neighborhoodId={activeNeighborhoodId}
+                        districtId={activeDistrictId}
                         onSelect={selectNode}
                         onEnter={exploreNode}
                         onHover={handleHover}
-                        viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeNeighborhoodId ? `neighborhood:${activeNeighborhoodId}` : "campus"}`}
+                        viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeDistrictId ? `district:${activeDistrictId}` : "campus"}`}
                         overheadView={overheadView}
                         onDeselect={() => {
                             setSelectedId("");
@@ -1940,7 +1936,7 @@ function MapViewer({
                     overhead={overheadView}
                     onOverheadChange={setOverheadView}
                     onBack={overlayBack}
-                    statusLabel={`Front → back flow · ${layout.neighborhoods.length} neighborhoods`}
+                    statusLabel={`Front → back flow · ${layout.districts.length} districts`}
                     breadcrumb={overlayBreadcrumb}
                     helpText={overlayHelp}
                 />

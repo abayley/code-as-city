@@ -22,7 +22,7 @@ export type ViewportOverlaysProps = {
     onOverheadChange: (next: boolean) => void;
     /** Steps back to the whole city; null at city level, where the status shows instead. */
     onBack: (() => void) | null;
-    /** City-level status line, e.g. "Front → back flow · 8 neighborhoods". */
+    /** City-level status line, e.g. "Front → back flow · 8 districts". */
     statusLabel: string;
     /** Trail for the current drill-down, or null at city level. */
     breadcrumb: ViewportBreadcrumb | null;

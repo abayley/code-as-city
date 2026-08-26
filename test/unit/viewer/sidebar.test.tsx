@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Sidebar, type SidebarProps, type SidebarSection } from "@/components/sidebar";
+import { matchesRailSearch } from "@/lib/rail-search";
 
 type Row = SidebarSection["rows"][number];
 
@@ -29,6 +30,14 @@ function row(id: string, label: string, markerIndex: number): Row {
 
 const rows: readonly Row[] = [row("checkout", "Checkout API", 0), row("billing", "Billing worker", 1)];
 
+// The searchable node behind each row, as the viewer holds it. The rail
+// filters nodes, not rows, so the harness below filters through the same
+// predicate the viewer uses rather than restating the rule.
+const nodeForRow: Record<string, { label: string; kind: string; description?: string }> = {
+    checkout: { label: "Checkout API", kind: "deployable", description: "Takes card payments." },
+    billing: { label: "Billing worker", kind: "worker", description: "Issues invoices nightly." },
+};
+
 const section: SidebarSection = {
     id: "payments",
     label: "Payments",
@@ -47,8 +56,10 @@ const section: SidebarSection = {
 function renderRail(overrides: Partial<SidebarProps> = {}): void {
     function Harness() {
         const [search, setSearch] = useState("");
-        const term = search.trim().toLowerCase();
-        const visible = term ? rows.filter((candidate) => candidate.label.toLowerCase().includes(term)) : rows;
+        const visible = rows.filter((candidate) => {
+            const node = nodeForRow[candidate.id];
+            return node !== undefined && matchesRailSearch(node, search);
+        });
         return (
             <Sidebar
                 search={search}
@@ -67,6 +78,20 @@ describe("Sidebar", () => {
     it("given rows and a search term, when the term is typed, then only matching rows stay visible", async () => {
         renderRail();
         await userEvent.type(screen.getByLabelText("Find a component"), "billing");
+        expect(screen.getByText("Billing worker")).toBeInTheDocument();
+        expect(screen.queryByText("Checkout API")).not.toBeInTheDocument();
+    });
+
+    it("given a term matching only a node's kind, when it is typed, then that row stays visible", async () => {
+        renderRail();
+        await userEvent.type(screen.getByLabelText("Find a component"), "deployable");
+        expect(screen.getByText("Checkout API")).toBeInTheDocument();
+        expect(screen.queryByText("Billing worker")).not.toBeInTheDocument();
+    });
+
+    it("given a term matching only a node's description, when it is typed, then that row stays visible", async () => {
+        renderRail();
+        await userEvent.type(screen.getByLabelText("Find a component"), "invoices");
         expect(screen.getByText("Billing worker")).toBeInTheDocument();
         expect(screen.queryByText("Checkout API")).not.toBeInTheDocument();
     });
@@ -97,6 +122,11 @@ describe("Sidebar", () => {
         renderRail({ onExploreSection });
         await userEvent.click(screen.getByRole("button", { name: /PAYMENTS/i }));
         expect(onExploreSection).toHaveBeenCalledWith("payments");
+    });
+
+    it("given a section, when the rail renders, then its marker is the district number", () => {
+        renderRail();
+        expect(screen.getByText("D1")).toBeInTheDocument();
     });
 
     it("given a section with a band label, when the rail renders, then the band heading is shown", () => {
