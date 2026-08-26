@@ -9,6 +9,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
+import { Sidebar, type SidebarSection } from "./components/sidebar";
 import { Topbar } from "./components/topbar";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
@@ -1496,6 +1497,40 @@ function MapViewer({
     const filteredRailNodes = visibleNodes.filter((node) =>
         `${node.label} ${node.kind} ${node.description ?? ""}`.toLowerCase().includes(search.toLowerCase()),
     );
+    // Rail view model: neighbourhoods that still hold a matching node, each
+    // with its band heading (only on the first section of a new band).
+    const railSections: SidebarSection[] = [];
+    let lastRailBand: number | undefined;
+    layout.neighborhoods.forEach((neighborhood, neighborhoodIndex) => {
+        const neighborhoodIds = new Set(neighborhood.nodeIds);
+        const nodes = filteredRailNodes
+            .filter((node) => neighborhoodIds.has(node.id))
+            .sort((a, b) => a.label.localeCompare(b.label));
+        if (!nodes.length) return;
+        const showBandHeader = neighborhood.bandLabel !== undefined && neighborhood.band !== lastRailBand;
+        lastRailBand = neighborhood.band;
+        railSections.push({
+            id: neighborhood.id,
+            label: neighborhood.label,
+            index: neighborhoodIndex,
+            bandLabel: showBandHeader ? neighborhood.bandLabel : undefined,
+            accent: NEIGHBORHOOD_ACCENTS[neighborhoodIndex % NEIGHBORHOOD_ACCENTS.length] ?? "transparent",
+            active: activeNeighborhoodId === neighborhood.id,
+            rows: nodes.map((node) => {
+                const roomCount = map.nodes.filter((candidate) => candidate.parentId === node.id).length;
+                return {
+                    id: node.id,
+                    label: node.label,
+                    markerIndex: visibleNodes.indexOf(node),
+                    typeLabel: plainType(node, roomCount),
+                    entryPoint: node.archetype === "gateway",
+                    landmark: roomCount > 0,
+                    quieter: node.kind === "external",
+                    selected: node.id === effectiveSelectedId,
+                };
+            }),
+        });
+    });
 
     /**
      * Finds the first map edge that, projected to campus level, touches the
@@ -1666,76 +1701,13 @@ function MapViewer({
                 onToggleTheme={onToggleTheme}
             />
 
-            <aside className="rail">
-                <label className="search-box">
-                    <span>⌕</span>
-                    <input
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Find a component"
-                    />
-                    {search && (
-                        <button
-                            type="button"
-                            className="search-clear"
-                            aria-label="Clear search"
-                            onClick={() => setSearch("")}
-                        >
-                            ×
-                        </button>
-                    )}
-                </label>
-                <nav className="component-list" aria-label="Mapped components">
-                    {(() => {
-                        let lastBand: number | undefined;
-                        return layout.neighborhoods.map((neighborhood, neighborhoodIndex) => {
-                            const neighborhoodIds = new Set(neighborhood.nodeIds);
-                            const nodes = filteredRailNodes
-                                .filter((node) => neighborhoodIds.has(node.id))
-                                .sort((a, b) => a.label.localeCompare(b.label));
-                            if (!nodes.length) return null;
-                            const showBandHeader =
-                                neighborhood.bandLabel !== undefined && neighborhood.band !== lastBand;
-                            lastBand = neighborhood.band;
-                            return (
-                                <section
-                                    className="rail-group"
-                                    key={neighborhood.id}
-                                    style={
-                                        {
-                                            "--district-accent":
-                                                NEIGHBORHOOD_ACCENTS[neighborhoodIndex % NEIGHBORHOOD_ACCENTS.length],
-                                        } as React.CSSProperties
-                                    }
-                                >
-                                    {showBandHeader && <p className="rail-band">{neighborhood.bandLabel}</p>}
-                                    <button
-                                        className="neighborhood-button"
-                                        type="button"
-                                        aria-pressed={activeNeighborhoodId === neighborhood.id}
-                                        onClick={() => exploreNeighborhood(neighborhood.id)}
-                                    >
-                                        <span>{`N${neighborhoodIndex + 1}`}</span>
-                                        <strong>{neighborhood.label}</strong>
-                                    </button>
-                                    {nodes.map((node) => (
-                                        <ComponentRow
-                                            key={node.id}
-                                            node={node}
-                                            markerIndex={visibleNodes.indexOf(node)}
-                                            roomCount={
-                                                map.nodes.filter((candidate) => candidate.parentId === node.id).length
-                                            }
-                                            active={node.id === effectiveSelectedId}
-                                            onSelect={() => exploreNode(node.id)}
-                                        />
-                                    ))}
-                                </section>
-                            );
-                        });
-                    })()}
-                </nav>
-            </aside>
+            <Sidebar
+                search={search}
+                onSearchChange={setSearch}
+                sections={railSections}
+                onExploreSection={exploreNeighborhood}
+                onSelectRow={exploreNode}
+            />
 
             <section className="viewport" aria-label="Interactive repository city">
                 {visibleNodes.length ? (
@@ -2422,50 +2394,5 @@ function EmptyShell({
                 </div>
             </section>
         </main>
-    );
-}
-
-/**
- * One entry in the component rail: the marker index, label, and plain type,
- * scrolling itself into view when it becomes the active selection.
- *
- * @param props - `node` supplies the label and kind; `markerIndex` matches
- *   the map marker's number; `roomCount` marks landmarks and feeds the type
- *   label; `active` highlights the row; `onSelect` fires on click.
- * @returns The rail row button.
- */
-function ComponentRow({
-    node,
-    markerIndex,
-    roomCount,
-    active,
-    onSelect,
-}: {
-    node: CityNode;
-    markerIndex: number;
-    roomCount: number;
-    active: boolean;
-    onSelect: () => void;
-}) {
-    const row = useRef<HTMLButtonElement>(null);
-    useEffect(() => {
-        if (active) row.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }, [active]);
-    const className = [
-        "component-row",
-        roomCount ? "landmark" : "",
-        node.kind === "external" ? "quieter" : "",
-        active ? "active" : "",
-    ]
-        .filter(Boolean)
-        .join(" ");
-    return (
-        <button ref={row} className={className} aria-pressed={active} onClick={onSelect} type="button">
-            <span className="row-index">{String(markerIndex + 1).padStart(2, "0")}</span>
-            <span>
-                <strong>{node.label}</strong>
-                {plainType(node, roomCount) && <small>{plainType(node, roomCount)}</small>}
-            </span>
-        </button>
     );
 }

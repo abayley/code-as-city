@@ -205,10 +205,14 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ### Phase 2 — sidebar
 
-- [ ] Extract the component list: search Input with clear, neighbourhood
+- [x] Extract the component list: search Input with clear, neighbourhood
       sections, rows with index numbers and entry-point badges; keyboard
-      behaviour preserved.
-- [ ] Browser smoke + screenshots.
+      behaviour preserved. `viewer/components/sidebar.tsx` (rail, search,
+      always-open sections) and `viewer/components/component-row.tsx` (row)
+      take a view model built in `MapViewer`; shadcn `input` was added. No
+      globals.css change was needed — the Phase 1 `@layer base` move already
+      covers `button, input`, and nothing else targets bare elements.
+- [x] Browser smoke + screenshots.
 
 ### Phase 3 — inspector, legend, overlays
 
