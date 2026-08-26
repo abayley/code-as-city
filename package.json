@@ -10,9 +10,8 @@
         "lint": "biome check .",
         "format": "biome format --write .",
         "knip": "knip",
-        "test": "vitest run",
+        "test": "vitest run --coverage",
         "check": "bun run typecheck && bun run lint && bun run knip && bun run test",
-        "test:coverage": "vitest run --coverage",
         "prepare": "husky"
     },
     "dependencies": {
