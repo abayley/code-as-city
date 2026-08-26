@@ -74,10 +74,16 @@ body {
 code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-button,
-input {
-    font: inherit;
-    color: inherit;
+/* Layered (not deleted) so Tailwind utilities on migrated chrome win: this
+   rule duplicates Tailwind's preflight, and unlayered rules would otherwise
+   beat every utility class regardless of specificity. Un-migrated chrome
+   still inherits font and colour exactly as before. */
+@layer base {
+    button,
+    input {
+        font: inherit;
+        color: inherit;
+    }
 }
 button:focus-visible,
 input:focus-visible,

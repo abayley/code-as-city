@@ -9,7 +9,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { configureTextBuilder } from "troika-three-text";
-import { ThemeToggle } from "./components/theme-toggle";
+import { Topbar } from "./components/topbar";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
@@ -1652,49 +1652,19 @@ function MapViewer({
 
     return (
         <main className="shell">
-            <header className="topbar">
-                <select
-                    className="map-select"
-                    aria-label="Choose a map"
-                    value={slug ?? ""}
-                    onChange={(event) => {
-                        const next = showcases.find((candidate) => candidate.slug === event.target.value);
-                        if (next) onSelectShowcase(next);
-                    }}
-                >
-                    {!slug && <option value="">(opened file)</option>}
-                    {showcases.map((candidate) => (
-                        <option key={candidate.slug} value={candidate.slug}>
-                            {candidate.map.name}
-                        </option>
-                    ))}
-                </select>
-                <div className="stat">
-                    <span>Repository</span>
-                    <strong>{map.name}</strong>
-                </div>
-                {!slug && map.repository && (
-                    <div className="stat">
-                        <span>Repo path</span>
-                        <strong>{map.repository}</strong>
-                    </div>
-                )}
-                {!slug && jsonPath && (
-                    <button className="stat stat-action" type="button" onClick={onImport} title="Open another map file">
-                        <span>Map file</span>
-                        <strong>{jsonPath}</strong>
-                    </button>
-                )}
-                <div className="header-actions">
-                    <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-                    <button className="secondary-action" type="button" onClick={onMapFolder}>
-                        Map a folder
-                    </button>
-                    <button className="map-action" type="button" onClick={onImport}>
-                        Open map
-                    </button>
-                </div>
-            </header>
+            <Topbar
+                showcases={showcases}
+                selectedSlug={slug}
+                placeholder="(opened file)"
+                onSelectShowcase={onSelectShowcase}
+                repoName={map.name}
+                repoPath={!slug && map.repository ? map.repository : undefined}
+                mapFilePath={!slug && jsonPath ? jsonPath : undefined}
+                onOpenMap={onImport}
+                onMapFolder={onMapFolder}
+                theme={theme}
+                onToggleTheme={onToggleTheme}
+            />
 
             <aside className="rail">
                 <label className="search-box">
@@ -2413,35 +2383,16 @@ function EmptyShell({
 }) {
     return (
         <main className="empty-shell">
-            <header className="topbar">
-                <select
-                    className="map-select"
-                    aria-label="Choose a map"
-                    value=""
-                    onChange={(event) => {
-                        const next = showcases.find((candidate) => candidate.slug === event.target.value);
-                        if (next) onSelectShowcase(next);
-                    }}
-                >
-                    <option value="" disabled>
-                        Choose a map
-                    </option>
-                    {showcases.map((candidate) => (
-                        <option key={candidate.slug} value={candidate.slug}>
-                            {candidate.map.name}
-                        </option>
-                    ))}
-                </select>
-                <div className="header-actions">
-                    <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-                    <button className="secondary-action" type="button" onClick={onMapFolder}>
-                        Map a folder
-                    </button>
-                    <button className="map-action" type="button" onClick={onImport}>
-                        Open map
-                    </button>
-                </div>
-            </header>
+            <Topbar
+                showcases={showcases}
+                selectedSlug={null}
+                placeholder="Choose a map"
+                onSelectShowcase={onSelectShowcase}
+                onOpenMap={onImport}
+                onMapFolder={onMapFolder}
+                theme={theme}
+                onToggleTheme={onToggleTheme}
+            />
             <section className="empty-state">
                 <div className="empty-actions">
                     <button className="map-action empty-open" type="button" onClick={onImport}>

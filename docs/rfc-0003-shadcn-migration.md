@@ -194,9 +194,14 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 
 ### Phase 1 — shell and topbar
 
-- [ ] Extract the shell/topbar to `viewer/components/` on Mira tokens:
+- [x] Extract the shell/topbar to `viewer/components/` on Mira tokens:
       repo badge, breadcrumb, map Select, action Buttons, theme toggle.
-- [ ] Browser smoke + screenshots (both themes).
+      One `Topbar` serves both `MapViewer` and `EmptyShell`; shadcn `select`,
+      `badge`, and `separator` were added. Note: globals.css's
+      `button, input { font: inherit; color: inherit }` had to move into
+      `@layer base` (nothing deleted) — unlayered, it beat every Tailwind
+      utility and left the migrated buttons dark-on-dark.
+- [x] Browser smoke + screenshots (both themes).
 
 ### Phase 2 — sidebar
 
