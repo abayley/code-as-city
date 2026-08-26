@@ -105,6 +105,11 @@ Added 2026-08-26 by the user, and it overrides anything below that conflicts.
 - Light and dark themes, class-strategy toggle, persisted preference.
 - Chrome extracted into `viewer/components/` with typed props; RepoCity.tsx
   keeps only the scene graph, camera, and selection state it owns.
+    - Partially met (recorded by REVIEW-0001): the chrome did move out,
+      but RepoCity.tsx is still ~2090 lines and retains the app shell
+      (`MapViewer`, `EmptyShell`), map loading, and chrome view-model
+      assembly. Only the scene was in scope for this RFC; extracting the
+      shell needs its own.
 - Behaviour parity: selection, hover, search filtering, keyboard shortcuts,
   showcase opening, folder mapping, deep links (`sourceHref`) all work as
   before.
@@ -326,8 +331,15 @@ markup in places (a hand-built sidebar and rows, hand-styled overlays).
 ### Phase 5 — CSS retirement
 
 - [x] Delete the retired globals.css rules; keep only canvas/layout
-      essentials; the specificity-lift hacks and reduced-motion block are
-      replaced by Tailwind equivalents.
+      essentials; the specificity-lift hacks are gone.
+    - Deviation (recorded by REVIEW-0001): the reduced-motion block was
+      NOT replaced by a Tailwind equivalent. Tailwind's animation
+      utilities live in `@layer utilities`, so a layered copy loses to
+      them. The block survives in `globals.css`, deliberately unlayered
+      and last, which beats every layered rule without `!important`. The
+      technique resembles the specificity hacks this RFC set out to
+      remove, but it is one documented rule rather than a scattered
+      pattern.
 - [x] Full behaviour checklist in the browser, both themes, plus a
       `bun run build` production build check.
 

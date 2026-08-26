@@ -122,6 +122,13 @@ Where Effect.ts offers a drop-in fit during this work (typed error handling
 in emit, Schema for the map envelope), use it per the standing project
 preference; anything beyond drop-in stays out of scope.
 
+Outcome (recorded by REVIEW-0001): nothing Effect-related landed. Neither
+candidate turned out to be drop-in — `emitMap` throws rather than carrying
+a typed error channel, and introducing Schema for the envelope would have
+meant a validating constructor on the map's hot path, which the
+byte-identical-output constraint ruled out. Adopting Effect remains open
+and needs its own RFC.
+
 ## Alternatives Considered
 
 - Merge the two pipelines into one parameterised assembly: rejected — the
