@@ -7,7 +7,7 @@
         "build": "vite build",
         "generate": "bun src/generate-map.ts",
         "typecheck": "tsc --noEmit",
-        "lint": "biome check .",
+        "lint": "bun scripts/biome-clean.ts",
         "format": "biome format --write .",
         "knip": "knip",
         "test": "vitest run --coverage",

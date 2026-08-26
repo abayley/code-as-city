@@ -11,11 +11,17 @@ Copied and tweaked the renderer from <https://github.com/nem035/functionary.dev>
 ```bash
 bun run check       # typecheck + lint + knip + tests
 bun run typecheck   # tsc --noEmit (strict)
-bun run lint        # biome check .
+bun run lint        # biome, failing on any diagnostic (see below)
 bun run format      # biome format --write .
 bun run knip        # unused files/exports/dependencies
 bun run test        # vitest (golden-master tests over test/fixtures/mini-repo)
 ```
+
+`bun run lint` goes through `scripts/biome-clean.ts` rather than calling
+`biome check .` directly. Biome exits zero on info-level diagnostics, and
+`--error-on-warnings` only promotes warnings, so neither alone keeps the repo
+biome-clean. The wrapper runs the same check twice — once for Biome's own
+output, once as JSON — and fails if the report carries any diagnostic at all.
 
 The golden-master tests in `test/generate-map.test.ts` run the generator over
 the committed fixture repo `test/fixtures/mini-repo`, validate the output with

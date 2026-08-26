@@ -29,25 +29,37 @@ afterAll(() => {
 const FIXTURE_REPOSITORY = "<fixture>";
 
 /**
+ * The fields the golden tests read by name. Everything else in the map is
+ * still present at runtime and still compared, since the assertions match
+ * whole objects; naming only these keeps the reads type-safe without
+ * restating the schema.
+ */
+type GeneratedMap = {
+    repository: string;
+    generatedAt?: string;
+    nodes: Array<{ sourceRefs?: Array<{ path?: string }> }>;
+};
+
+/**
  * Runs the generator against the fixture repo and returns the map with the
  * timestamp removed and the machine-specific repository path normalised.
  */
-function generateMap(extraArguments: readonly string[]): Record<string, unknown> {
+function generateMap(extraArguments: readonly string[]): GeneratedMap {
     const outDir = mkdtempSync(join(tmpdir(), "code-as-city-test-"));
     tempDirs.push(outDir);
     execFileSync("bun", [generator, fixtureRepo, ...extraArguments, "--out-dir", outDir], { stdio: "pipe" });
     const mapPath = join(outDir, "map.json");
     execFileSync("node", [validator, mapPath], { stdio: "pipe" });
-    const map = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, unknown> & { generatedAt?: string };
+    const map = JSON.parse(readFileSync(mapPath, "utf8")) as GeneratedMap;
     delete map.generatedAt;
-    expect(map["repository"], "the generator must record the repo it mapped").toBe(fixtureRepo);
-    map["repository"] = FIXTURE_REPOSITORY;
+    expect(map.repository, "the generator must record the repo it mapped").toBe(fixtureRepo);
+    map.repository = FIXTURE_REPOSITORY;
     return map;
 }
 
 /** Loads a committed golden map. */
-function loadGolden(name: string): Record<string, unknown> {
-    return JSON.parse(readFileSync(join(repoRoot, "test", "golden", name), "utf8")) as Record<string, unknown>;
+function loadGolden(name: string): GeneratedMap {
+    return JSON.parse(readFileSync(join(repoRoot, "test", "golden", name), "utf8")) as GeneratedMap;
 }
 
 describe("generate-map golden master", () => {
@@ -61,8 +73,7 @@ describe("generate-map golden master", () => {
 
     it("given a file reachable only from QA scripts, when generating the overview map, then it is excluded", () => {
         const map = generateMap(["--overview"]);
-        const nodes = map["nodes"] as Array<{ sourceRefs?: Array<{ path?: string }> }>;
-        const scriptNodes = nodes.filter((node) =>
+        const scriptNodes = map.nodes.filter((node) =>
             (node.sourceRefs ?? []).some((ref) => ref.path?.startsWith("scripts/")),
         );
         expect(scriptNodes).toEqual([]);

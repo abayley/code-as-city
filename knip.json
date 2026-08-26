@@ -1,6 +1,6 @@
 {
     "$schema": "https://unpkg.com/knip@5/schema.json",
-    "entry": ["test/**/*.test.ts"],
-    "project": ["src/**", "viewer/**", "test/**", "!test/fixtures/**"],
+    "entry": ["test/**/*.test.ts", "scripts/*.ts"],
+    "project": ["src/**", "viewer/**", "test/**", "scripts/**", "!test/fixtures/**"],
     "ignore": ["viewer/components/ui/**"]
 }
