@@ -28,11 +28,16 @@
                     "a11y": {
                         "useSemanticElements": "off",
                         "useFocusableInteractive": "off",
-                        "noLabelWithoutControl": "off"
+                        "noLabelWithoutControl": "off",
+                        "useKeyWithClickEvents": "off"
+                    },
+                    "correctness": {
+                        "useExhaustiveDependencies": "off"
                     },
                     "suspicious": {
                         "noDoubleEquals": "off",
-                        "noArrayIndexKey": "off"
+                        "noArrayIndexKey": "off",
+                        "noDocumentCookie": "off"
                     }
                 }
             }

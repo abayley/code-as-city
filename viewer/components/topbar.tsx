@@ -2,8 +2,15 @@
 // Shared by the loaded-map viewer and the empty landing shell.
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Badge } from "@/components/ui/badge";
+import {
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import type { Showcase } from "@/lib/local-showcases";
@@ -92,39 +99,51 @@ export function Topbar({
             {repoName && (
                 <>
                     <Separator orientation="vertical" className="h-5" />
-                    <div className="flex min-w-0 items-center gap-2">
-                        <Badge variant="outline" className="uppercase tracking-wide">
-                            Repository
-                        </Badge>
-                        <span className="truncate text-sm font-medium text-foreground">{repoName}</span>
-                        {repoPath && (
-                            <span className="truncate font-mono text-xs text-muted-foreground">{repoPath}</span>
-                        )}
-                    </div>
+                    <Breadcrumb className="min-w-0">
+                        <BreadcrumbList>
+                            <BreadcrumbItem>Repository</BreadcrumbItem>
+                            <BreadcrumbSeparator />
+                            <BreadcrumbItem className="min-w-0">
+                                <BreadcrumbPage className="truncate">{repoName}</BreadcrumbPage>
+                            </BreadcrumbItem>
+                            {repoPath && (
+                                <>
+                                    <BreadcrumbSeparator />
+                                    <BreadcrumbItem className="min-w-0 font-mono">
+                                        <span className="truncate">{repoPath}</span>
+                                    </BreadcrumbItem>
+                                </>
+                            )}
+                        </BreadcrumbList>
+                    </Breadcrumb>
                 </>
             )}
 
             {mapFilePath && (
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onOpenMap}
-                    title="Open another map file"
-                    className="max-w-64"
-                >
-                    <span className="text-muted-foreground">Map file</span>
-                    <span className="truncate font-mono">{mapFilePath}</span>
-                </Button>
+                <ButtonGroup>
+                    <ButtonGroupText>Map file</ButtonGroupText>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onOpenMap}
+                        title="Open another map file"
+                        className="max-w-64"
+                    >
+                        <span className="truncate font-mono">{mapFilePath}</span>
+                    </Button>
+                </ButtonGroup>
             )}
 
             <div className="ml-auto flex items-center gap-2">
                 <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-                <Button variant="outline" size="sm" onClick={onMapFolder}>
-                    Map a folder
-                </Button>
-                <Button size="sm" onClick={onOpenMap}>
-                    Open map
-                </Button>
+                <ButtonGroup>
+                    <Button variant="outline" size="sm" onClick={onMapFolder}>
+                        Map a folder
+                    </Button>
+                    <Button size="sm" onClick={onOpenMap}>
+                        Open map
+                    </Button>
+                </ButtonGroup>
             </div>
         </header>
     );

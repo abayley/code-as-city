@@ -279,13 +279,49 @@ None beyond new dev dependencies. No external font/CDN fetches at runtime
 Phases 1-3 were written before the stock-only constraint and used bespoke
 markup in places (a hand-built sidebar and rows, hand-styled overlays).
 
-- [ ] Rework the topbar to stock Breadcrumb (and ButtonGroup if it suits).
-- [ ] Rework the sidebar onto the stock Sidebar primitives, Item rows, and
+- [x] Rework the topbar to stock Breadcrumb (and ButtonGroup if it suits).
+      The hand-made "REPOSITORY name path" cluster is now Breadcrumb /
+      BreadcrumbList / BreadcrumbItem / BreadcrumbPage / BreadcrumbSeparator;
+      the map-file button is a ButtonGroup with a ButtonGroupText label, and
+      the two shell actions are a ButtonGroup. The ThemeToggle stays outside
+      that group, since ButtonGroup joins its children into one control and a
+      ghost icon button does not belong in the join.
+- [x] Rework the sidebar onto the stock Sidebar primitives, Item rows, and
       InputGroup search, keeping always-open sections and behaviour.
-- [ ] Rework any remaining hand-styled inspector, legend, or overlay markup
-      onto stock Card / Item / Table / Toggle.
-- [ ] Replace the canvas hover card with a stock HoverCard or Tooltip.
-- [ ] Browser smoke + screenshots (both themes).
+      `sidebar` and `input-group` were added. Decision: the shell is a CSS
+      grid that owns the rail's column, and the stock `Sidebar` shell is a
+      fixed-position offcanvas with its own width variables, so only the
+      inner primitives are used — SidebarHeader / SidebarContent /
+      SidebarGroup / SidebarGroupLabel / SidebarGroupContent / SidebarMenu /
+      SidebarMenuItem / SidebarMenuButton / SidebarMenuSub(Item) — inside the
+      existing `aside`. SidebarMenuButton reads the provider context, so
+      SidebarProvider wraps the aside with `contents`, collapsing its
+      `flex min-h-svh w-full` wrapper out of the grid. Band headings are
+      SidebarGroupLabel; the section header is a SidebarMenuButton with
+      `isActive`; rows are SidebarMenuButton `size="lg"` inside
+      SidebarMenuSub, whose token-coloured left border replaces the old
+      per-district accent stripe. Decision: NEIGHBORHOOD_ACCENTS is dropped
+      (from palette.ts too) — a per-district hex is exactly the bespoke
+      colour the constraint forbids, and no stock component carries it.
+      The search box is InputGroup + InputGroupInput + InputGroupAddon, with
+      the clear button an InputGroupButton, replacing the hand-positioned
+      icon and absolutely-placed clear Button.
+      globals.css: the unlayered `button/input/a:focus-visible` outline and
+      the `a { color: inherit }` rule were wrapped in `@layer base` (nothing
+      deleted) — unlayered they beat every Tailwind utility, and the focus
+      outline painted `var(--ink)` on the dark theme.
+      `biome.json` gained three more `viewer/components/ui/**` exemptions
+      (noDocumentCookie, useKeyWithClickEvents, useExhaustiveDependencies)
+      for the generated sidebar and input-group files.
+- [x] Rework any remaining hand-styled inspector, legend, or overlay markup
+      onto stock Card / Item / Table / Toggle. Nothing was left: the Phase 3
+      and 4 components already carry only stock components plus layout
+      utilities. The two known gaps stand — the legend's line swatches (no
+      stock component draws a coloured rule) and the showcase card's
+      activating button (Card has no render prop).
+- [x] Replace the canvas hover card with a stock HoverCard or Tooltip.
+      Already done in Phase 3 (`hover-details.tsx`).
+- [x] Browser smoke + screenshots (both themes).
 
 ### Phase 5 — CSS retirement
 

@@ -3,6 +3,7 @@
 
 import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
 /** Props accepted by {@link ComponentRow}. */
@@ -26,8 +27,8 @@ export type ComponentRowProps = {
 };
 
 /**
- * Renders a single component row, scrolling itself into view whenever it
- * becomes the active selection.
+ * Renders a single component row as a stock SidebarMenuButton, scrolling
+ * itself into view whenever it becomes the active selection.
  *
  * @param props - See {@link ComponentRowProps}; the row holds no state and
  *   reports activation through `onSelect`.
@@ -49,42 +50,26 @@ export function ComponentRow({
     }, [selected]);
 
     return (
-        <button
-            ref={row}
-            type="button"
+        <SidebarMenuButton
+            size="lg"
+            isActive={selected}
             aria-pressed={selected}
             onClick={onSelect}
-            className={cn(
-                "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors outline-none",
-                "hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/40",
-                selected && "bg-accent text-accent-foreground",
-            )}
+            render={<button type="button" ref={row} />}
         >
-            <span className="mt-px w-5 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-                {String(markerIndex + 1).padStart(2, "0")}
-            </span>
-            <span className="flex min-w-0 flex-col gap-0.5">
-                <span
-                    className={cn(
-                        "truncate text-xs",
-                        landmark ? "font-semibold" : "font-medium",
-                        quieter && !selected && "text-muted-foreground",
-                    )}
-                >
+            <span className="shrink-0 font-mono tabular-nums">{String(markerIndex + 1).padStart(2, "0")}</span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+                <span className={cn("truncate", landmark ? "font-semibold" : "font-medium", quieter && "opacity-70")}>
                     {label}
                 </span>
                 {entryPoint ? (
-                    <Badge variant="outline" className="w-fit text-[9px] uppercase tracking-wide">
+                    <Badge variant="outline" className="w-fit uppercase">
                         Entry point
                     </Badge>
                 ) : (
-                    typeLabel && (
-                        <span className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
-                            {typeLabel}
-                        </span>
-                    )
+                    typeLabel && <span className="truncate uppercase opacity-70">{typeLabel}</span>
                 )}
-            </span>
-        </button>
+            </div>
+        </SidebarMenuButton>
     );
 }

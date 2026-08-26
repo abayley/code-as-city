@@ -33,7 +33,6 @@ const SCENE_PAPER = palette.PAPER;
 const SCENE_PAPER_DARK = palette.PAPER_DARK;
 const SCENE_INK_ON_DARK = palette.INK_ON_DARK;
 const SCENE_PANEL = palette.PANEL;
-const NEIGHBORHOOD_ACCENTS = palette.NEIGHBORHOOD_ACCENTS;
 
 const IMPORTS_OUT_COLOR = palette.IMPORTS_OUT;
 /**
@@ -1645,7 +1644,6 @@ function MapViewer({
             label: neighborhood.label,
             index: neighborhoodIndex,
             bandLabel: showBandHeader ? neighborhood.bandLabel : undefined,
-            accent: NEIGHBORHOOD_ACCENTS[neighborhoodIndex % NEIGHBORHOOD_ACCENTS.length] ?? "transparent",
             active: activeNeighborhoodId === neighborhood.id,
             rows: nodes.map((node) => {
                 const roomCount = map.nodes.filter((candidate) => candidate.parentId === node.id).length;

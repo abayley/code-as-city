@@ -30,6 +30,15 @@ Change lives in geometryFor() in viewer/RepoCity.tsx.
   modules vs M3 residual children); both run through inference.ts
   isEntryPoint, where the arms are explicit options.
 
+## Sidebar/map colour tie-in (dropped by RFC-0003 Phase 4b)
+
+Sidebar sections used to carry a left stripe in their district's colour,
+tying each section to its district on the map. It was an inline per-district
+hex, which the stock-components-only constraint forbids, so it was dropped
+and palette.NEIGHBORHOOD_ACCENTS removed. If the tie-in is wanted back, the
+options are a stock Badge per section carrying the colour as data, or an
+explicit exception to the constraint for data-driven (not decorative) colour.
+
 ## Done since listed
 
 - Viewer rotation around the vertical axis (MapControls enableRotate), with

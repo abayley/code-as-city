@@ -32,9 +32,9 @@ export const COVERAGE_GAP = "#3F93C7"; // uncovered fraction of a building
 export const EDGE_OBSERVED = "#2e6b52"; // runtime evidence (hand-made maps only)
 export const IMPORTS_OUT = "#3F93C7"; // what the selected node imports
 
-// --- Districts and rails -----------------------------------------------------
-// Accents cycle per neighbourhood; plot fills are their pale companions.
-export const NEIGHBORHOOD_ACCENTS = ["#d3935f", "#d4b366", "#5c7280", "#77704f", "#6ea8cf"];
+// --- Districts ---------------------------------------------------------------
+// Plot fills cycle per neighbourhood. The matching rail accents were retired
+// with the sidebar's move to stock shadcn components (RFC-0003 Phase 4b).
 export const NEIGHBORHOOD_PLOT_FILLS = ["#f1dccb", "#f0e5c8", "#d5dde2", "#e2ded0", "#d9e9f4"];
 
 // --- Map furniture -----------------------------------------------------------
