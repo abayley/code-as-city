@@ -18,8 +18,11 @@ import {
     splitEdgeKey,
 } from "./assembly-helpers.ts";
 import type { SpawnedEntry } from "./daemons.ts";
+import { layerByLongestPath } from "./flow.ts";
+import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
 import {
+    classifiedVariantServices,
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferModuleDataFlows,
@@ -28,6 +31,7 @@ import {
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
+import type { Room } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
@@ -611,6 +615,356 @@ export function assembleStaticClassification(
             readPattern: dbReadPattern,
         },
     });
+}
+
+/**
+ * 7a / 7a-ii / 7a-iii: draws the host districts from the deployment shape.
+ * Each compose/topology host becomes a district (flow-layered from the declared
+ * forwarding chain); each of its non-shadowed services becomes a node, with
+ * per-COPY rooms when the image copies two or more source directories, sized
+ * and flow-layered from the local import graph. Then depends_on wiring across
+ * compose variants (carrying variant-only backing services onto the surviving
+ * host), the empty-district cleanup after D1 consolidation, and host-to-host
+ * OTLP forwarding (host-name and service-name matches draw data_flow edges;
+ * exporter endpoints naming nothing internal become external receivers).
+ *
+ * Populates the handoffs the package and classification phases read:
+ * `claimedSegments`/`serviceClaimedDirs` (dirs a service owns), `campusFileSets`
+ * (each service's files, for I/O classification), and `state.fileNodeOwner`.
+ *
+ * @param state - The assembly state (`repo`, `nodes`/`edges`, `fileNodeOwner`,
+ *   `owningPackage`, `isShadowed`, `ensureExternalsDistrict`).
+ * @param options - The deployment-shape inputs (`hosts`, `hostLayer`,
+ *   `candidateHosts`, `serviceDependsOn`, `hostScan`), the room/import context
+ *   (`rooms`, `sourceFiles`, `fileToRoom`, `isUtilityRoom`, `fileEdges`),
+ *   `hostLayerBase` the flow-layer base for hosts, and the mutable handoff
+ *   sets `claimedSegments`/`serviceClaimedDirs`/`campusFileSets`.
+ */
+export function assembleHostDistricts(
+    state: AssemblyState,
+    options: {
+        hosts: readonly Host[];
+        hostLayer: ReadonlyMap<string, number>;
+        candidateHosts: readonly Host[];
+        serviceDependsOn: ReadonlyMap<string, Set<string>>;
+        hostScan: readonly HostScanResult[];
+        rooms: ReadonlyMap<string, Room>;
+        sourceFiles: readonly string[];
+        fileToRoom: ReadonlyMap<string, Room>;
+        isUtilityRoom: (roomId: string) => boolean;
+        fileEdges: readonly FileEdge[];
+        hostLayerBase: number;
+        claimedSegments: Set<string>;
+        serviceClaimedDirs: Set<string>;
+        campusFileSets: { id: string; files: string[]; entryFile?: string | null | undefined }[];
+    },
+): void {
+    const { repo, nodes, edges, fileNodeOwner, owningPackage, isShadowed, ensureExternalsDistrict } = state;
+    const {
+        hosts,
+        hostLayer,
+        candidateHosts,
+        serviceDependsOn,
+        hostScan,
+        rooms,
+        sourceFiles,
+        fileToRoom,
+        isUtilityRoom,
+        fileEdges,
+        hostLayerBase,
+        claimedSegments,
+        serviceClaimedDirs,
+        campusFileSets,
+    } = options;
+    // 7a. Host districts from deployment shape. Hosts carry explicit flow
+    // layers from the declared forwarding chain (gateway before stack before
+    // evaluation), so edge cycles (evaluation <-> bootstrap) cannot scramble
+    // their order.
+    for (const host of hosts) {
+        nodes.push({
+            id: host.id,
+            label: `${titleCase(host.name)} host`,
+            kind: "scope",
+            archetype: "district",
+            description: `Deployment host projected from ${host.file}.`,
+            display: { flowLayer: hostLayerBase + (hostLayer.get(host.name) ?? 0) },
+        });
+        for (const service of host.services) {
+            if (isShadowed(host, service.name)) continue;
+            const serviceId = kebab(`${host.id}-${service.name}`);
+            const allCopiedSegments = service.copies
+                .map((copy) => copy.replace(/\/$/, ""))
+                .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`))
+                // A COPY only attributes source when it names a directory that
+                // actually holds source: immich's layer-cache `COPY
+                // ./server/package.json` names a manifest with no source under
+                // it, and claiming it would flip the whole package to the
+                // residual path and explode it into per-directory districts.
+                // Reachability still counts the raw COPY, so R5 sees the package
+                // as host-deployed.
+                .filter((copy) => sourceFiles.some((f) => f.startsWith(`${copy}/`)));
+            // Coupling filter: drop shared lib-like dirs (high fan-in, low fan-out).
+            /**
+             * Resolves a COPY'd source directory to its room id by sampling a
+             * file inside it.
+             *
+             * @param copy - Source directory named by a Dockerfile COPY.
+             * @returns The room id owning that directory; null when no
+             *   source file lives under it, or undefined when the sampled
+             *   file belongs to no room.
+             */
+            const roomIdForCopy = (copy: string) => {
+                const sample = sourceFiles.find((f) => f.startsWith(`${copy}/`));
+                return sample ? fileToRoom.get(sample)?.id : null;
+            };
+            const copiedSegments = allCopiedSegments.filter((copy) => {
+                if (basename(copy) === "lib") return false; // shared plumbing, not shape
+                const roomId = roomIdForCopy(copy);
+                return !(roomId && isUtilityRoom(roomId));
+            });
+            for (const copy of allCopiedSegments) {
+                claimedSegments.add(copy);
+                serviceClaimedDirs.add(copy);
+            }
+            const serviceSourceFiles: string[] = [];
+            for (const copy of copiedSegments) {
+                for (const f of sourceFiles)
+                    if (f.startsWith(`${copy}/`)) {
+                        fileNodeOwner.set(f, serviceId);
+                        serviceSourceFiles.push(f);
+                    }
+            }
+            campusFileSets.push({ id: serviceId, files: serviceSourceFiles, entryFile: service.entryFile });
+            const isScheduled = Boolean(service.schedule);
+            const roomsForService = copiedSegments.length >= 2;
+            const archetype = roomsForService
+                ? "building"
+                : (service.imageClass ?? (isScheduled ? "worker" : service.hasPorts ? "gateway" : "worker"));
+            const flowLayer =
+                service.imageClass === "database" || service.imageClass === "queue" || service.imageClass === "storage"
+                    ? 2
+                    : service.hasPorts && !service.dockerfile
+                      ? 0
+                      : 1;
+            // A service whose entrypoint is a *-command file is labelled by that
+            // command (Delivery Command, not the compose service name delivery-worker).
+            const entryName = service.entryFile ? fileModuleName(service.entryFile) : null;
+            nodes.push({
+                id: serviceId,
+                label: titleCase(entryName?.endsWith("-command") ? entryName : service.name),
+                kind: service.dockerfile ? "deployable" : "infra",
+                archetype,
+                parentId: host.id,
+                // Prose (TSDoc, prepended in 7f) plus the schedule as its own
+                // paragraph; build/entry provenance moves to labelled attributes
+                // rendered in the Source files section.
+                description: [
+                    service.dockerfile ? null : `Container image ${service.image ?? "unknown"}.`,
+                    service.schedule ? `Scheduled job: ${service.schedule}` : null,
+                ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                attributes: {
+                    ...(service.dockerfile ? { "service-source": service.dockerfile } : {}),
+                    ...(service.entryFile ? { "entry-point": service.entryFile } : {}),
+                },
+                sourceRefs: [{ path: service.dockerfile ?? host.file }],
+                ...(serviceSourceFiles.length ? { metrics: { loc: linesOf(repo, serviceSourceFiles) } } : {}),
+                tags: [isScheduled ? "cron" : null, service.hasPorts ? "listens" : null].filter(
+                    (tag): tag is string => tag !== null,
+                ),
+                display: { flowLayer },
+            });
+            // Rooms: one per source directory the image copies in.
+            if (roomsForService) {
+                const roomIds: string[] = [];
+                const localEdges = new Map<string, boolean>();
+                for (const copy of copiedSegments) {
+                    const roomId = kebab(`${serviceId}-${copy}`);
+                    roomIds.push(roomId);
+                    const loc = sourceFiles.filter((f) => f.startsWith(`${copy}/`)).length;
+                    nodes.push({
+                        id: roomId,
+                        label: titleCase(basename(copy)),
+                        kind: "module",
+                        archetype: "room",
+                        parentId: serviceId,
+                        description: `Source copied from ${copy}/ into the ${service.name} image.`,
+                        sourceRefs: [{ path: copy }],
+                        metrics: { loc },
+                    });
+                }
+                // Local flow: entry dir first, then longest path over dir-level imports.
+                for (const { from, to } of fileEdges) {
+                    const a = copiedSegments.find((c) => from.startsWith(`${c}/`));
+                    const b = copiedSegments.find((c) => to.startsWith(`${c}/`));
+                    if (a && b && a !== b)
+                        localEdges.set(`${kebab(`${serviceId}-${a}`)}->${kebab(`${serviceId}-${b}`)}`, true);
+                }
+                const serviceEntryFile = service.entryFile;
+                const entryDir = serviceEntryFile
+                    ? copiedSegments.find((c) => serviceEntryFile.startsWith(`${c}/`))
+                    : null;
+                const layers = layerByLongestPath(
+                    roomIds,
+                    localEdges,
+                    entryDir ? [kebab(`${serviceId}-${entryDir}`)] : [],
+                );
+                for (const roomId of roomIds) {
+                    const roomNode = nodes.find((n) => n.id === roomId);
+                    if (!roomNode) throw new Error(`Service room node missing: ${roomId}`);
+                    roomNode.display = { flowLayer: layers.get(roomId) ?? 0 };
+                }
+                for (const key of localEdges.keys()) {
+                    const [from, to] = splitEdgeKey(key);
+                    addEdge(edges, { id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
+                }
+            }
+        }
+    }
+
+    // 7a-ii. Service wiring from depends_on (harvested across compose variants).
+    // A dependency that only exists in a deduped variant (e.g. the development
+    // compose runs the database locally) is carried onto the surviving host as
+    // infra when its image classifies as one.
+    const variantServices = new Map<string, Host["services"][number]>();
+    for (const { service } of classifiedVariantServices(candidateHosts)) {
+        if (!variantServices.has(service.name)) variantServices.set(service.name, service);
+    }
+    for (const host of hosts) {
+        for (const service of host.services) {
+            const deps = serviceDependsOn.get(service.name);
+            if (!deps) continue;
+            const fromId = kebab(`${host.id}-${service.name}`);
+            if (!nodes.some((n) => n.id === fromId)) continue;
+            for (const dep of deps) {
+                // D1: a dependency owned by another topology's canonical file is
+                // not re-materialised here — it lives as the owner's single node.
+                if (isShadowed(host, dep)) continue;
+                const toId = kebab(`${host.id}-${dep}`);
+                if (!nodes.some((n) => n.id === toId)) {
+                    const variant = variantServices.get(dep);
+                    if (!variant) continue;
+                    const variantArchetype = variant.imageClass;
+                    if (variantArchetype === undefined) throw new Error(`Variant without imageClass: ${dep}`);
+                    nodes.push({
+                        id: toId,
+                        label: titleCase(dep),
+                        kind: "infra",
+                        archetype: variantArchetype,
+                        parentId: host.id,
+                        description: `Backing service${variant.image !== undefined ? ` (image ${variant.image})` : ""} declared in a compose variant; the deployed host provides it via configuration.`,
+                        sourceRefs: [{ path: host.file }],
+                        display: { flowLayer: 2 },
+                    });
+                }
+                addEdge(edges, {
+                    id: `${fromId}--${toId}`,
+                    from: fromId,
+                    to: toId,
+                    kind: "depends_on",
+                    evidence: "declared",
+                    label: "compose depends_on",
+                });
+            }
+        }
+    }
+
+    // D1: a host whose every service was folded into another topology's owner
+    // (e.g. a pg15-only override) has no node of its own left — drop the empty
+    // district so consolidation does not leave a bare host box.
+    for (const host of hosts) {
+        if (!nodes.some((n) => n.parentId === host.id)) {
+            const index = nodes.findIndex((n) => n.id === host.id);
+            if (index !== -1) nodes.splice(index, 1);
+        }
+    }
+
+    // 7a-iii. Host forwarding: a host's own config file declaring an exporter
+    // endpoint that names another host (e.g. the collector gateway's
+    // STACK_OTLP_ENDPOINT) links the two hosts' primary services with data_flow.
+    /**
+     * Picks the service node that represents a host in host-to-host wiring:
+     * the collector/gateway/ingest-named service when one exists, else the
+     * first service.
+     *
+     * @param host - Deployment host whose representative service is wanted.
+     * @returns The primary service's node id, or null for a host with no
+     *   services.
+     */
+    function primaryServiceId(host: Host): string | null {
+        const preferred = host.services.find((s) => /collector|gateway|ingest/.test(s.name)) ?? host.services[0];
+        return preferred ? kebab(`${host.id}-${preferred.name}`) : null;
+    }
+    for (const scan of hostScan) {
+        const host = scan.host;
+        const from = primaryServiceId(host);
+        if (!from || !nodes.some((n) => n.id === from)) continue;
+        for (const config of scan.configs) {
+            for (const other of hosts) {
+                if (other === host) continue;
+                // Host-name match (the gateway's STACK_OTLP_ENDPOINT names the stack).
+                if (scan.hostTargetMatches.some((m) => m.otherHost === other.name && m.config === config)) {
+                    const to = primaryServiceId(other);
+                    if (to && nodes.some((n) => n.id === to)) {
+                        addEdge(edges, {
+                            id: `${from}--${to}`,
+                            from,
+                            to,
+                            kind: "data_flow",
+                            evidence: "declared",
+                            label: "OTLP forward",
+                            sourceRefs: [{ path: config }],
+                        });
+                    }
+                }
+                // Service-name match (the stack's SPAN_INGEST_BEARER_TOKEN names the
+                // span-ingest service on the evaluation host).
+                for (const target of scan.serviceTargets) {
+                    if (target.otherHost !== other.name || target.config !== config) continue;
+                    const to = kebab(`${other.id}-${target.service.name}`);
+                    if (nodes.some((n) => n.id === to)) {
+                        addEdge(edges, {
+                            id: `${from}--${to}`,
+                            from,
+                            to,
+                            kind: "data_flow",
+                            evidence: "declared",
+                            label: "OTLP forward",
+                            sourceRefs: [{ path: config }],
+                        });
+                    }
+                }
+            }
+            // Exporter endpoints whose env token names nothing internal are external
+            // systems: LANGFUSE_OTLP_ENDPOINT -> a Langfuse external node.
+            for (const external of scan.externals) {
+                if (external.config !== config) continue;
+                const externalId = kebab(external.candidate);
+                if (!nodes.some((n) => n.id === externalId)) {
+                    nodes.push({
+                        id: externalId,
+                        label: titleCase(external.candidate),
+                        kind: "external",
+                        archetype: "cloud",
+                        parentId: ensureExternalsDistrict(),
+                        description: `External receiver declared by the ${host.name} host's exporter configuration (${external.envToken}).`,
+                        sourceRefs: [{ path: config }],
+                        display: { flowLayer: 4 },
+                    });
+                }
+                addEdge(edges, {
+                    id: `${from}--${externalId}`,
+                    from,
+                    to: externalId,
+                    kind: "data_flow",
+                    evidence: "declared",
+                    label: "OTLP export",
+                    sourceRefs: [{ path: config }],
+                });
+            }
+        }
+    }
 }
 
 /**
