@@ -156,6 +156,24 @@ describe("generate-map golden master", () => {
         expect(deployableAt("packages/web/src")).toMatchObject({ archetype: "gateway", tags: ["app"] });
     });
 
+    it("given barrel files, when generating the overview, then they are labelled by the directory they index, not 'Index' (HC-004)", () => {
+        const map = generateMap(["--overview"]);
+        // packages/toolkit/src/index.ts should read as its directory, not "Index".
+        expect(map.nodes.some((node) => node.label === "Index")).toBe(false);
+        const barrel = map.nodes.find((node) =>
+            (node.sourceRefs ?? []).some((ref) => ref.path === "packages/toolkit/src/index.ts"),
+        );
+        expect(barrel?.label).toBe("Src");
+    });
+
+    it("given src-dominant packages, when generating, then room labels drop the redundant 'Src /' prefix (HC-003)", () => {
+        const deployment = generateMap([]);
+        const hasSrcPrefix = (map: GeneratedMap) => map.nodes.some((node) => node.label?.startsWith("Src / "));
+        // packages/api's src/routes, src/jobs, src/migrations read as Routes/Jobs/Migrations.
+        expect(hasSrcPrefix(deployment)).toBe(false);
+        expect(deployment.nodes.some((node) => node.label === "Routes")).toBe(true);
+    });
+
     it("given the fixture repo, when generating twice, then the maps are equal bar the timestamp", () => {
         expect(generateMap([])).toEqual(generateMap([]));
     });

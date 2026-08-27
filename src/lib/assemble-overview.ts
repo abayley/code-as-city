@@ -5,10 +5,10 @@
  * shared map envelope. Rule IDs (O2, O5, O7, O11, C1, D3) refer to
  * HEURISTICS.md.
  */
-import { basename, dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
-    fileModuleName,
+    barrelAwareName,
     footprintFor,
     linesOf,
     mermaidId,
@@ -148,9 +148,10 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     const OVERVIEW_APP_COLOR = "#C77740";
     const OVERVIEW_SHARED_COLOR = "#C79F40";
     const OVERVIEW_INFRA_COLOR = "#283B47";
-    // .tsx (UI component) modules stand out from plain .ts. Shares the
-    // shared-code gold by decision.
-    const OVERVIEW_TSX_COLOR = "#C79F40";
+    // .tsx (UI component) modules stand out from plain .ts with their own
+    // darker terracotta — distinct from the app terracotta and the shared gold
+    // it used to collide with (HC-016).
+    const OVERVIEW_TSX_COLOR = "#A15A34";
     /**
      * Reads a source file's text for pattern scans and inference passes.
      *
@@ -319,7 +320,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
             const local = relative(roomDir(room), file).replace(/\.[a-z]+$/, "");
             return {
                 id: kebab(`${room.id}-${local}`),
-                label: titleCase(basename(local)),
+                label: titleCase(barrelAwareName(file)),
                 sublabel: local.includes(sep) ? dirname(local) : null,
                 files: [file],
                 path: file,
@@ -477,7 +478,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
                     const fileLoc = linesOf(repo, [file]);
                     overviewNodes.push({
                         id: kebab(`${m.id}-${relative(m.path, file).replace(/\.[a-z]+$/, "")}`),
-                        label: titleCase(fileModuleName(file)),
+                        label: titleCase(barrelAwareName(file)),
                         kind: "module",
                         archetype: "room",
                         parentId: m.id,

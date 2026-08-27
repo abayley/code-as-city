@@ -24,5 +24,15 @@ export function kebab(text: string): string {
  * @returns The space-separated text with each word capitalised.
  */
 export function titleCase(text: string): string {
-    return text.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    return (
+        text
+            // Emoji leak into labels from names the generator does not control —
+            // notably CI workflow names ("Release 🚀"). Strip pictographs, variation
+            // selectors, and ZWJ joiners, then tidy the whitespace they leave (HC-006).
+            .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, "")
+            .replace(/[-_]/g, " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase())
+            .replace(/\s+/g, " ")
+            .trim()
+    );
 }

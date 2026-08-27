@@ -2,7 +2,7 @@
 // label shaping, and the reference patterns the inference passes match (the
 // shared vocabulary noted in HEURISTICS.md alongside map-types.ts).
 
-import { basename, join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import type { MapEdge } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { titleCase } from "./text.ts";
@@ -50,7 +50,13 @@ export function linesOf(repo: string, files: readonly string[]): number {
  * @returns The display label for the room.
  */
 export function roomLabel(segment: string): string {
-    return segment === "(root)" ? "Top-level files" : titleCase(segment.split(sep).join(" / "));
+    if (segment === "(root)") return "Top-level files";
+    // The universal `src` root conveys nothing when it prefixes a real segment
+    // (`src/core` reads better as "Core"); drop it, but keep a bare `src` room
+    // (its own loose files) labelled "Src" (HC-003).
+    const parts = segment.split(sep);
+    const shown = parts.length > 1 && parts[0] === "src" ? parts.slice(1) : parts;
+    return titleCase(shown.join(" / "));
 }
 
 /**
@@ -63,6 +69,24 @@ export function roomLabel(segment: string): string {
  */
 export function fileModuleName(file: string): string {
     return basename(file).replace(/\.[a-z]+$/, "");
+}
+
+/**
+ * Display name for a module file: its module name, except a barrel file
+ * (`index`/`mod`) is named for the directory it indexes rather than the
+ * uninformative "Index" that collides across a whole repo (HC-004). Used for
+ * labels only; ids and matching keep {@link fileModuleName}.
+ *
+ * @param file - Repo-relative path of the source file.
+ * @returns The directory name for a barrel, else the module name.
+ */
+export function barrelAwareName(file: string): string {
+    const name = fileModuleName(file);
+    if (/^(index|mod)$/i.test(name)) {
+        const dir = basename(dirname(file));
+        if (dir && dir !== ".") return dir;
+    }
+    return name;
 }
 
 /**

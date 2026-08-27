@@ -23,4 +23,10 @@ describe("titleCase", () => {
     it("given already-capitalised text, when title-cased, then leaves inner letters alone", () => {
         expect(titleCase("aria-evals")).toBe("Aria Evals");
     });
+
+    it("given emoji in the name, when title-cased, then strips them and tidies the whitespace (HC-006)", () => {
+        expect(titleCase("Release 🚀")).toBe("Release");
+        expect(titleCase("Generate Weekly Community Report 📊")).toBe("Generate Weekly Community Report");
+        expect(titleCase("Gemini Scheduled PR Triage 🚀")).toBe("Gemini Scheduled PR Triage");
+    });
 });

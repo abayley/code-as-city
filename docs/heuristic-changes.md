@@ -22,8 +22,9 @@ with the evidence for why.
 
 The "deployed model" cluster — HC-001, HC-005, HC-007, HC-008, HC-009,
 HC-010, HC-012 — is drawn together into `docs/rfcs/rfc-0004-deployment-mental-model.md`.
-The legibility and scale cluster — HC-002, HC-003, HC-004, HC-006, HC-011 —
-is not yet in an RFC.
+The legibility and scale cluster — only HC-011 remains open (HC-003, HC-004,
+HC-006 done; HC-002 rejected as based on incorrect evidence) — is being worked
+directly, without an RFC.
 
 ## Status Key
 
@@ -37,11 +38,11 @@ is not yet in an RFC.
 | ID     | Title                                                       | Rules       | Status   |
 | ------ | ----------------------------------------------------------- | ----------- | -------- |
 | HC-001 | No deployment category for a published package              | new; D, M   | Done     |
-| HC-002 | O4 shared-district colouring never fires                    | O4          | Proposed |
-| HC-003 | Collapse a redundant sole `src/` level                      | S2, M3      | Proposed |
-| HC-004 | Disambiguate colliding module labels across packages        | O2, M3, S4  | Proposed |
+| HC-002 | O4 shared-district colouring never fires                    | O4          | Rejected |
+| HC-003 | Collapse a redundant sole `src/` level                      | S2, M3      | Done     |
+| HC-004 | Disambiguate colliding module labels across packages        | O2, M3, S4  | Done     |
 | HC-005 | CI maintenance workflows surface as deployables             | D9, D10, M3 | Done     |
-| HC-006 | Emoji leak from workflow names into node labels             | D9          | Proposed |
+| HC-006 | Emoji leak from workflow names into node labels             | D9          | Done     |
 | HC-007 | Dev and test packages rank as peer districts                | S1, M3, R   | Done     |
 | HC-008 | Monorepo root and generic hosts make empty districts        | S1, D2, M3  | Done     |
 | HC-009 | Same service across compose files duplicates infra          | D1          | Done     |
@@ -49,6 +50,9 @@ is not yet in an RFC.
 | HC-011 | Overview emits one node per file; unrenderable at scale     | O2; viewer  | Proposed |
 | HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Done     |
 | HC-013 | No deployment category for an app you run directly          | new; D16, R5| Done     |
+| HC-014 | External systems (IMAP, LLM APIs) from client SDKs go unseen | new; M6/M10 | Proposed |
+| HC-015 | Same-named packages merge silently at the room level        | S, rooms    | Proposed |
+| HC-016 | Overview gold means both shared-district and .tsx module    | O4; viewer  | Done     |
 
 ## HC-001: No Deployment Category for a Published Package
 
@@ -121,6 +125,17 @@ directory granularity (its original intent), or drop the feature. Needs a pass
 over more repos to see what threshold would separate shared-code districts
 from function-area ones without false positives.
 
+**Rejected — the premise is wrong.** O4 *does* fire. aria-evals (the repo its
+thresholds were tuned on) colours its `Lib` district gold — `src/lib` is >=60%
+utility modules, so O4 marks it as shared code, correctly. The "zero across
+every repo" evidence above was measured on a set that missed this (or counted
+only multi-package districts); it is inaccurate. O4 fires selectively — on a
+district that is genuinely concentrated shared/utility code — and abstains
+elsewhere (supabase's "Shared Data" at 0.18, aria's SDK at 0.21 are not utility
+by the fan-in/instability measure), which is the intended behaviour, not a
+no-op. No change is wanted. The real issue in this area is a colour *collision*,
+tracked separately as HC-016.
+
 ## HC-003: Collapse a Redundant Sole `src/` Level
 
 **Rules:** S2 (dominant-segment expansion), M3 (district assembly).
@@ -136,6 +151,23 @@ building.
 promote its expanded rooms directly into the district and drop the `Src`
 wrapper. Check this does not regress packages where `src/` sits alongside
 other top-level code that legitimately needs the grouping.
+
+**Resolution (Done, label part).** `roomLabel` now drops a leading `src`
+segment, so `src/core` reads as "Core" and `src/utils` as "Utils" rather than
+"Src / Core" / "Src / Utils" — the redundant `src/` prefix that recurred on
+every expanded room across every package is gone (verified: 0 "Src / ..."
+labels in aria-tools, paperclip, supabase, aria-evals; all still valid). Ids and
+matching keep the full segment; only the label changes. Fixture: packages/api's
+`src/routes`/`src/jobs`/`src/migrations` read as Routes/Jobs/Migrations; a
+`generate-map` assertion pins the absence of any "Src / " prefix.
+
+*Deferred residual.* The bare `Src` *building* (a package's loose `src`-root
+files) still sits between the district and its entry rooms — and it is now the
+D14 deployable node. Fully collapsing it (promoting those files to the district
+and moving the deployable marking to the entry room, e.g. "Cli") would improve
+the shape further, but it needs the dominant-segment signal threaded into
+assembly and a decision on where the deployable node lands, so it is left as a
+follow-up rather than folded in here.
 
 ## HC-004: Disambiguate Colliding Module Labels Across Packages
 
@@ -157,6 +189,21 @@ file (`index.ts`, `index.tsx`, `mod.ts`) by the directory it indexes, not
 cross-package collisions, package-qualify the label or extend O2's
 within-district disambiguation across districts. Part (a) is clearly worth
 doing; part (b) is a judgement call given viewer grouping.
+
+**Resolution (Done).** Part (a) is implemented via a `barrelAwareName` helper:
+an `index`/`mod` file is labelled by the directory it indexes rather than
+"Index" (`src/cli/index.ts` -> "Cli", `src/server/index.ts` -> "Server"). It is
+applied in the OVERVIEW only, where modules are flat and the 94-way collision
+bites; the deployment view keeps "Index" because a barrel there sits *under* its
+directory-named building (`Cli -> index.ts`), so labelling it by the directory
+would just duplicate the parent. Ids and matching keep `fileModuleName`, so only
+the visible label changes. Verified: paperclip's overview "Index" count went 94
+-> 0 (now Src 36, Ui 16, Server 13, Cli 13, ...), supabase 79 -> 0, aria 14 -> 0;
+all overviews stay schema-valid. Fixture: `packages/toolkit/src/index.ts` now
+reads as "Src"; a `generate-map` assertion pins that no overview node is labelled
+"Index". Part (b) (cross-package qualification) is left to viewer grouping for
+now, as the note anticipated. Note the residual: a sole-`src` barrel still reads
+as "Src" — that is HC-003's redundant-`src`-level concern, not this one.
 
 ## HC-005: CI Maintenance Workflows Surface as Deployables
 
@@ -198,6 +245,15 @@ PR Triage" each keep a trailing emoji. Map output should be plain text.
 **Direction (to decide).** Strip emoji (and other non-label punctuation) when
 deriving a node label from an external name. Small, self-contained; mostly
 moot if HC-005 removes CI jobs from the map anyway.
+
+**Resolution (Done).** As predicted, D9 (HC-005) removed the offending CI jobs,
+so no sampled repo still shows an emoji label. To cover the residual case — a
+*deploying* CI workflow, which D9 keeps, whose name carries an emoji — the label
+helper `titleCase` now strips Extended_Pictographic characters, variation
+selectors, and ZWJ joiners and tidies the whitespace they leave. Because
+`titleCase` builds every label (ids use `kebab`), this cleans any label from an
+uncontrolled name, not just workflows. No golden changed (a no-op for clean
+labels); a `text.ts` unit test pins "Release 🚀" -> "Release".
 
 ## HC-007: Dev and Test Packages Rank as Peer Districts
 
@@ -436,6 +492,88 @@ app returns (excalidraw-app no longer R5-excluded), and aria is unchanged at
 ~100 nodes; aria-evals stays 53 and every sampled repo is deterministic and
 schema-valid. Fixture: `packages/service` (a `start`-script server) and a
 web-role `@mini/web`; a `generate-map` assertion pins both tags.
+
+## HC-014: External Systems From Client SDKs Go Unseen
+
+**Rules:** a new external-detection rule alongside the M6/M10/D11/D12 family.
+
+**Evidence.** The generator detects an external system only from an OTLP
+exporter endpoint (M6), an env-prefixed SDK reference (M10 `delivers`), an S3
+or R2 command (D11), or an https URL in a package-root `config.yaml` (D12). It
+has no rule for the most common way an app names an external: a *client SDK
+dependency*. aria-mail is a Bun server that talks to an IMAP mail server (via an
+`imapflow`/`node-imap`-style client) and to an LLM API (an `openai`/
+`@anthropic-ai/sdk`-style client), both central to its purpose; the deployment
+map shows neither, so the app reads as a lone server with no outside world. The
+same blind spot hides an SMTP relay, a Stripe/Twilio API, a Redis/Postgres
+client that is not declared in compose, and so on.
+
+**Direction (to decide).** Recognise an external system from a known
+client-SDK dependency in `package.json` — mail (`imapflow`, `nodemailer`), LLM
+providers (`openai`, `@anthropic-ai/sdk`, `@google/generative-ai`, `ollama`),
+and other well-known service clients — drawing one external cloud node per
+distinct service with an inferred `delivers`/`data_flow` edge from the module
+that imports it (as M10 already does for env-prefixed SDKs). Needs a curated,
+vendor-biased table like D5's, and a decision on whether a bare dependency (not
+yet imported by deployed code) should draw a node.
+
+## HC-015: Same-Named Packages Merge Silently at the Room Level
+
+**Rules:** the S/structure group (`rooms.ts`), room id construction.
+
+**Evidence.** A room's id is `${pkg.id}-${kebab(segment)}`, and `pkg.id` is the
+kebab-cased package name. When two packages in different directories share a
+name — a repo's root and a workspace package both named `@scope/pkg`, as in
+ollama-code (root and `packages/core` are both `@tcsenpai/ollama-code`) — their
+same-segment rooms collide on that id, and `buildRooms`' map keeps the first and
+pushes the second package's files into it. The second package's code is then
+silently attributed to the first package's district. This surfaced while
+reproducing the overview district-id clash (now fixed): two `@mini/toolkit`
+packages each with a `src/` segment merged into one district's modules; they
+avoided the merge in the committed fixture only because their segments differ.
+The district-id clash was the visible symptom; this room-level merge is the
+quieter cousin, and it mis-attributes source in both map modes whenever the
+segments do coincide.
+
+**Direction (to decide).** Key room ids by the package *directory* (unique)
+rather than the package *name*, or uniquify colliding room ids the way the
+overview now uniquifies district ids. A directory-based key is the cleaner fix
+but touches every id downstream, so it needs regenerated goldens and a check
+that nothing keys off the current `pkg.id`-based room id.
+
+## HC-016: Overview Gold Means Both Shared-District and .tsx Module
+
+**Rules:** O4 (shared-district colour), the overview module-colour rule, viewer.
+
+**Evidence.** The overview uses one gold, `#C79F40`, for two unrelated things.
+O4 colours a whole *district* gold when it is >=60% shared/utility modules
+(aria-evals' `Lib`). Separately, a *module* whose files are all `.tsx` is
+coloured gold too — and `OVERVIEW_TSX_COLOR` is defined as the identical hex to
+`OVERVIEW_SHARED_COLOR`. So on aria-evals' overview, 26 gold nodes are shared-lib
+`.ts` files (inheriting the gold `Lib` district) and 11 more are `.tsx` React
+components in the *terracotta* `Dashboard` district, gold for the unrelated
+"this is UI" reason. A reader cannot tell a shared-code node from a UI node, and
+neither meaning is in the legend, which documents only edges. This is what makes
+a gold node in an otherwise-terracotta district unexplainable at a glance.
+
+**Direction (to decide).** Give the `.tsx`/UI signal its own distinct colour (a
+fourth swatch) so gold means shared code only, or drop the `.tsx` colouring
+entirely and let UI modules inherit their district colour. Either way, add the
+overview's node/district colours to the legend, which currently explains only
+the edge swatches. Viewer-side and small; the choice is whether "this is UI" is
+a signal worth its own colour.
+
+**Resolution (Done).** The `.tsx`/UI signal is kept but given its own darker
+terracotta `#A15A34`, distinct from the app terracotta `#C77740` and the shared
+gold `#C79F40` it used to collide with. Gold now means shared code only —
+verified on aria-evals: of the formerly-gold nodes, the 26 shared-lib `.ts`
+files stay gold and the 11 `src/dashboard/client/*.tsx` components move to the
+new colour (0 `.tsx` left gold). The legend gained a structures section that
+lists each overview structure colour — function area, shared code, UI component,
+infrastructure — keyed off the colours actually present in the loaded map, so it
+shows in the overview (which sets node colours) and not the deployment map
+(which leaves colour to the archetype). Verified in the browser. The overview
+golden updated (the fixture's `@mini/web` `app.tsx` now `#A15A34`).
 
 ## Repositories Examined
 

@@ -59,7 +59,12 @@ describe("roomLabel", () => {
     });
 
     it("given a nested segment, when labelled, then title-cases the path parts", () => {
-        expect(roomLabel("src/lib")).toBe("Src / Lib");
+        expect(roomLabel("app/routes")).toBe("App / Routes");
+    });
+
+    it("given a segment prefixed by the universal src root, when labelled, then drops it (HC-003)", () => {
+        expect(roomLabel("src/lib")).toBe("Lib");
+        expect(roomLabel("src")).toBe("Src");
     });
 });
 

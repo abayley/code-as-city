@@ -767,7 +767,7 @@
     },
     {
       "id": "mini-toolkit-src-index",
-      "label": "Index",
+      "label": "Src",
       "kind": "module",
       "archetype": "worker",
       "parentId": "mini-toolkit-district-2",
@@ -836,7 +836,7 @@
           0.6,
           0.935
         ],
-        "color": "#C79F40",
+        "color": "#A15A34",
         "flowLayer": 0,
         "flowOrder": 0
       }

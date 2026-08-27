@@ -1926,7 +1926,15 @@ function MapViewer({
                         <strong>No mapped structures.</strong>
                     </div>
                 )}
-                <Legend />
+                <Legend
+                    structureColors={
+                        new Set(
+                            map.nodes
+                                .map((node) => node.display?.color)
+                                .filter((color): color is string => Boolean(color)),
+                        )
+                    }
+                />
                 <HoverDetails
                     at={hoverCard ? { x: hoverCard.x + 18, y: hoverCard.y - 12 } : null}
                     title={hoverCard?.node.label ?? ""}
