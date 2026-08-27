@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { Package } from "../../src/lib/packages";
-import { createDocScanner, findEmbeddedDatabases, scanCoverage } from "../../src/lib/scans";
+import { createDocScanner, findEmbeddedDatabases, findExternalServiceDeps, scanCoverage } from "../../src/lib/scans";
 
 const repo = mkdtempSync(join(tmpdir(), "code-as-city-scans-"));
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
@@ -71,5 +71,31 @@ describe("findEmbeddedDatabases", () => {
             ["infra-better-sqlite3", "SQLite database", "package.json"],
             ["infra-lancedb-lancedb", "LanceDB vector database", "packages/a/package.json"],
         ]);
+    });
+});
+
+describe("findExternalServiceDeps", () => {
+    const pkg = (dir: string, deps: Record<string, string>): Package => ({
+        dir,
+        name: dir,
+        deps,
+        role: "package",
+        id: dir.replace(/\//g, "-"),
+        artefact: null,
+    });
+
+    it("given client SDK deps, when found, then one external per service with its dep names (D17)", () => {
+        const result = findExternalServiceDeps([
+            pkg(".", { "node-imap": "1", "@anthropic-ai/sdk": "2", "@anthropic-ai/claude-agent-sdk": "3" }),
+        ]);
+        expect(result.map((s) => [s.id, s.label, s.depNames])).toEqual([
+            ["external-imap-mail-server", "IMAP mail server", ["node-imap"]],
+            ["external-anthropic-api", "Anthropic API", ["@anthropic-ai/sdk", "@anthropic-ai/claude-agent-sdk"]],
+        ]);
+    });
+
+    it("given offline libraries that look service-adjacent, when found, then they are not matched (D17)", () => {
+        const result = findExternalServiceDeps([pkg(".", { mailparser: "1", "@anthropic-ai/tokenizer": "2" })]);
+        expect(result).toEqual([]);
     });
 });

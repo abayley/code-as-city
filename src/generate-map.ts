@@ -27,7 +27,7 @@ import { analyseReachability, stripDevTooling } from "./lib/reachability.ts";
 import { readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
 import { findRunnableApps } from "./lib/runnable.ts";
-import { createDocScanner, findEmbeddedDatabases, scanCoverage } from "./lib/scans.ts";
+import { createDocScanner, findEmbeddedDatabases, findExternalServiceDeps, scanCoverage } from "./lib/scans.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
 import { findEdgeHost } from "./lib/wrangler.ts";
 
@@ -105,6 +105,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
     const edgeHost = findEdgeHost(repo, allFiles);
     const drizzleConfig = allFiles.find((f) => /(^|\/)drizzle\.config\.(ts|js|mjs)$/.test(f));
     const embeddedDatabases = findEmbeddedDatabases(packages);
+    const externalServiceDeps = findExternalServiceDeps(packages);
     const ciWorkflows = scanCiWorkflows(repo, allFiles);
     const hostScan = scanHostConfigs(repo, allFiles, hosts);
     const hostLayer = layerHosts(hostScan, hosts);
@@ -150,6 +151,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
             edgeHost,
             drizzleConfig,
             embeddedDatabases,
+            externalServiceDeps,
             fileEdges,
             fileCoupling,
             fileComplexity,
@@ -192,6 +194,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         edgeHost,
         drizzleConfig,
         embeddedDatabases,
+        externalServiceDeps,
         ciWorkflows,
         coverageForFiles,
         fileDocSummary,

@@ -41,6 +41,7 @@ type GeneratedMap = {
         id?: string;
         kind?: string;
         label?: string;
+        parentId?: string;
         tags?: string[];
         sourceRefs?: Array<{ path?: string }>;
     }>;
@@ -139,6 +140,18 @@ describe("generate-map golden master", () => {
         expect(new Set(ids).size).toBe(ids.length);
     });
 
+    it("given two packages sharing a name and a src segment, when generating, then their rooms do not merge (HC-015)", () => {
+        const map = generateMap(["--overview"]);
+        const idOf = (path: string) => map.nodes.find((n) => (n.sourceRefs ?? []).some((r) => r.path === path))?.id;
+        const parentOf = (path: string) =>
+            map.nodes.find((n) => (n.sourceRefs ?? []).some((r) => r.path === path))?.parentId;
+        // The two @mini/toolkit packages' files must be distinct nodes in distinct
+        // districts, not silently absorbed into one shared room.
+        expect(idOf("packages/toolkit/src/clamp.ts")).toBeDefined();
+        expect(idOf("packages/toolkit-fork/src/extra.ts")).toBeDefined();
+        expect(parentOf("packages/toolkit/src/clamp.ts")).not.toBe(parentOf("packages/toolkit-fork/src/extra.ts"));
+    });
+
     it("given runnable apps, when generating the deployment map, then a server and a web app are gateway deployables (D16)", () => {
         const map = generateMap([]) as GeneratedMap & {
             nodes: Array<{ kind?: string; archetype?: string; tags?: string[]; sourceRefs?: Array<{ path?: string }> }>;
@@ -172,6 +185,17 @@ describe("generate-map golden master", () => {
         // packages/api's src/routes, src/jobs, src/migrations read as Routes/Jobs/Migrations.
         expect(hasSrcPrefix(deployment)).toBe(false);
         expect(deployment.nodes.some((node) => node.label === "Routes")).toBe(true);
+    });
+
+    it("given a client SDK dependency that is imported, when generating, then it draws an external with a uses edge (D17)", () => {
+        const map = generateMap([]) as GeneratedMap & {
+            nodes: Array<{ id?: string; kind?: string; label?: string }>;
+            edges: Array<{ from?: string; to?: string; label?: string }>;
+        };
+        // packages/api depends on and imports `openai` (src/ai.ts).
+        const external = map.nodes.find((node) => node.kind === "external" && node.label === "OpenAI API");
+        expect(external).toBeDefined();
+        expect(map.edges.some((edge) => edge.label === "uses" && edge.to === external?.id)).toBe(true);
     });
 
     it("given the fixture repo, when generating twice, then the maps are equal bar the timestamp", () => {

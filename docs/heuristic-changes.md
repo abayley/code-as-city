@@ -50,8 +50,8 @@ directly, without an RFC.
 | HC-011 | Overview emits one node per file; unrenderable at scale     | O2; viewer  | Proposed |
 | HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Done     |
 | HC-013 | No deployment category for an app you run directly          | new; D16, R5| Done     |
-| HC-014 | External systems (IMAP, LLM APIs) from client SDKs go unseen | new; M6/M10 | Proposed |
-| HC-015 | Same-named packages merge silently at the room level        | S, rooms    | Proposed |
+| HC-014 | External systems (IMAP, LLM APIs) from client SDKs go unseen | new; D17     | Done     |
+| HC-015 | Same-named packages merge silently at the room level        | S, rooms    | Done     |
 | HC-016 | Overview gold means both shared-district and .tsx module    | O4; viewer  | Done     |
 
 ## HC-001: No Deployment Category for a Published Package
@@ -517,6 +517,24 @@ that imports it (as M10 already does for env-prefixed SDKs). Needs a curated,
 vendor-biased table like D5's, and a decision on whether a bare dependency (not
 yet imported by deployed code) should draw a node.
 
+**Resolution (Done).** D17 (`scans.ts`, mirroring D13/O11) matches a curated,
+vendor-biased table of service client SDKs — IMAP/SMTP mail
+(`imapflow`/`node-imap`/`nodemailer`), LLM providers (`openai`,
+`@anthropic-ai/sdk`, `@google/generative-ai`, `ollama`, `cohere-ai`, Mistral,
+Groq), and a few common APIs (Stripe, Twilio). One external cloud node per
+distinct service, several SDKs folding to one, in BOTH map modes, with an
+inferred `data_flow` "uses" edge from every module whose source imports the SDK.
+On the bare-dependency question: the node is drawn only when a deployed module
+actually imports the SDK, so an unused dependency conjures nothing. The table is
+deliberately precise — offline siblings (`@anthropic-ai/tokenizer`, `mailparser`)
+are libraries, not clients, and are excluded. Verified across the sample:
+aria-mail gains "Anthropic API" and "IMAP mail server" (completing the shape its
+D16 server started); aria surfaces three LLM providers, immich an SMTP server,
+supabase/ollama-code/aria-tools their LLM APIs; aria-evals/mermaid/paperclip/
+excalidraw gain nothing (no such SDKs). Fixture: `packages/api` imports `openai`
+(`src/ai.ts`); unit tests pin the scan (including the offline-library exclusion)
+and a `generate-map` assertion pins the external node and its `uses` edge.
+
 ## HC-015: Same-Named Packages Merge Silently at the Room Level
 
 **Rules:** the S/structure group (`rooms.ts`), room id construction.
@@ -540,6 +558,20 @@ rather than the package *name*, or uniquify colliding room ids the way the
 overview now uniquifies district ids. A directory-based key is the cleaner fix
 but touches every id downstream, so it needs regenerated goldens and a check
 that nothing keys off the current `pkg.id`-based room id.
+
+**Resolution (Done).** Fixed at the source: `discoverPackages` now makes each
+`pkg.id` unique, suffixing a later collision (`x-tool`, then `x-tool-2`) in the
+stable package-discovery order. Because room ids, district ids (both views), and
+everything else derive from `pkg.id`, one fix removes the room merge and any
+district clash at once — no separate room/district uniquify pass, and the
+directory-based rekey (which would churn every id) is avoided. Only same-named
+packages are affected. Verified: ollama-code's root and `packages/core` now take
+distinct ids (`tcsenpai-ollama-code`, `-2`); a fixture with two `@mini/toolkit`
+packages sharing a `src/` segment keeps their files in separate districts (a
+`generate-map` assertion pins that they do not share a parent), where before the
+second package's files were absorbed into the first's room. The overview's
+district-id uniquify pass stays as a cheap guard against kebab flattening two
+distinct ids together, which this fix does not cover.
 
 ## HC-016: Overview Gold Means Both Shared-District and .tsx Module
 

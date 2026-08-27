@@ -144,18 +144,28 @@ export function packageDirsOf(allFiles: readonly string[]): string[] {
  *   or repo basename), merged dependencies, role, and kebab-cased id.
  */
 export function discoverPackages(repo: string, packageDirs: readonly string[]): Package[] {
+    // Two packages can share a name (a repo root and a workspace package both
+    // named @scope/pkg, as in ollama-code), which would give them the same id
+    // and collide their room and district ids — silently merging their code.
+    // Suffix later collisions so every package id is unique (HC-015). Iterating
+    // the stable packageDirs order keeps the assignment deterministic.
+    const usedIds = new Set<string>();
     return packageDirs.map((dir) => {
         const json = (readJson(join(repo, dir === "." ? "" : dir, "package.json")) ?? {}) as PackageManifest;
         const deps = { ...json.dependencies, ...json.devDependencies };
         const binCount = typeof json.bin === "string" ? 1 : Object.keys(json.bin ?? {}).length;
         const hasBin = binCount > 0;
         const isWebApp = ["react", "next", "vinext", "vue", "svelte"].some((d) => deps[d]);
+        const baseId = kebab(json.name ?? basename(dir === "." ? repo : dir));
+        let id = baseId;
+        for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}-${suffix}`;
+        usedIds.add(id);
         return {
             dir,
             name: json.name ?? (dir === "." ? basename(repo) : basename(dir)),
             deps,
             role: hasBin ? ("cli" as const) : isWebApp ? ("web" as const) : ("package" as const),
-            id: kebab(json.name ?? basename(dir === "." ? repo : dir)),
+            id,
             artefact: classifyArtefact(json),
         };
     });

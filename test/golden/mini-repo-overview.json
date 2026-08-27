@@ -10,13 +10,47 @@
       "label": "@Mini/Api",
       "kind": "scope",
       "archetype": "district",
-      "description": "Function area: packages/api/ — 7 modules.",
+      "description": "Function area: packages/api/ — 8 modules.",
       "tags": [
         "band:Shared & support"
       ],
       "display": {
         "color": "#C77740",
         "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-api-src-ai",
+      "label": "Ai",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-api-district",
+      "description": "Talks to the OpenAI API to summarise a message.",
+      "attributes": {
+        "entry-point": "packages/api/src/ai.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/ai.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 10,
+        "complexity": 2,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.2035533905932738,
+          0.6,
+          1.0230203820042827
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
       }
     },
     {
@@ -47,7 +81,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 0
+        "flowOrder": 1
       }
     },
     {
@@ -82,7 +116,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 0,
-        "flowOrder": 5
+        "flowOrder": 6
       }
     },
     {
@@ -113,7 +147,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 6
+        "flowOrder": 7
       }
     },
     {
@@ -144,7 +178,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 1
+        "flowOrder": 2
       }
     },
     {
@@ -175,7 +209,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 2
+        "flowOrder": 3
       }
     },
     {
@@ -206,7 +240,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 3
+        "flowOrder": 4
       }
     },
     {
@@ -237,7 +271,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 4
+        "flowOrder": 5
       }
     },
     {
@@ -676,52 +710,7 @@
       }
     },
     {
-      "id": "mini-toolkit-district",
-      "label": "@Mini/Toolkit",
-      "kind": "scope",
-      "archetype": "district",
-      "description": "Function area: packages/toolkit-fork/ — 1 module.",
-      "tags": [
-        "band:Shared & support"
-      ],
-      "display": {
-        "color": "#C77740",
-        "flowLayer": 0
-      }
-    },
-    {
-      "id": "mini-toolkit-runtime-extra",
-      "label": "Extra",
-      "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-toolkit-district",
-      "description": "A second package deliberately sharing @mini/toolkit's name (mirroring ollama-code's root and packages/core both named @tcsenpai/ollama-code) but with its own segment, so its district id collides with the other toolkit.",
-      "sourceRefs": [
-        {
-          "path": "packages/toolkit-fork/runtime/extra.ts"
-        }
-      ],
-      "metrics": {
-        "loc": 5,
-        "complexity": 1,
-        "files": 1
-      },
-      "tags": [
-        "composer"
-      ],
-      "display": {
-        "size": [
-          1.1,
-          0.6,
-          0.935
-        ],
-        "color": "#C77740",
-        "flowLayer": 0,
-        "flowOrder": 0
-      }
-    },
-    {
-      "id": "mini-toolkit-district-2",
+      "id": "mini-toolkit-2-district",
       "label": "@Mini/Toolkit",
       "kind": "scope",
       "archetype": "district",
@@ -735,11 +724,11 @@
       }
     },
     {
-      "id": "mini-toolkit-src-clamp",
+      "id": "mini-toolkit-2-src-clamp",
       "label": "Clamp",
       "kind": "module",
       "archetype": "worker",
-      "parentId": "mini-toolkit-district-2",
+      "parentId": "mini-toolkit-2-district",
       "description": "Clamps a value to the inclusive range [low, high].",
       "sourceRefs": [
         {
@@ -766,11 +755,11 @@
       }
     },
     {
-      "id": "mini-toolkit-src-index",
+      "id": "mini-toolkit-2-src-index",
       "label": "Src",
       "kind": "module",
       "archetype": "worker",
-      "parentId": "mini-toolkit-district-2",
+      "parentId": "mini-toolkit-2-district",
       "description": "Public entry of the toolkit library.",
       "sourceRefs": [
         {
@@ -794,6 +783,51 @@
         "color": "#C77740",
         "flowLayer": 0,
         "flowOrder": 1
+      }
+    },
+    {
+      "id": "mini-toolkit-district",
+      "label": "@Mini/Toolkit",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/toolkit-fork/ — 1 module.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-toolkit-src-extra",
+      "label": "Extra",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-toolkit-district",
+      "description": "A second package deliberately sharing @mini/toolkit's name AND its `src` segment (as ollama-code's root and packages/core share a name). Its rooms must not merge into the other toolkit's (HC-015).",
+      "sourceRefs": [
+        {
+          "path": "packages/toolkit-fork/src/extra.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
       }
     },
     {
@@ -1104,9 +1138,53 @@
       "display": {
         "color": "#283B47"
       }
+    },
+    {
+      "id": "external-systems",
+      "label": "External systems",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "External systems: 1 node.",
+      "tags": [
+        "band:External systems"
+      ],
+      "display": {
+        "color": "#283B47",
+        "flowLayer": 3
+      }
+    },
+    {
+      "id": "external-openai-api",
+      "label": "OpenAI API",
+      "kind": "external",
+      "archetype": "cloud",
+      "parentId": "external-systems",
+      "description": "External service (OpenAI API) addressed via a client SDK declared in packages/api/package.json.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ],
+      "display": {
+        "color": "#283B47"
+      }
     }
   ],
   "edges": [
+    {
+      "id": "mini-api-src-ai--external-openai-api-u",
+      "from": "mini-api-src-ai",
+      "to": "external-openai-api",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "uses",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ]
+    },
     {
       "id": "mini-api-src-store--infra-better-sqlite3-u",
       "from": "mini-api-src-store",
@@ -1210,9 +1288,9 @@
       "label": "1 import"
     },
     {
-      "id": "mini-toolkit-src-index--mini-toolkit-src-clamp-i",
-      "from": "mini-toolkit-src-index",
-      "to": "mini-toolkit-src-clamp",
+      "id": "mini-toolkit-2-src-index--mini-toolkit-2-src-clamp-i",
+      "from": "mini-toolkit-2-src-index",
+      "to": "mini-toolkit-2-src-clamp",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"

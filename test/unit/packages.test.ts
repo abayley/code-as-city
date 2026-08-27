@@ -19,6 +19,7 @@ describe("packages", () => {
     writeManifest("packages/pub-lib", { name: "@x/pub-lib", main: "dist/index.js" });
     writeManifest("packages/private-cli", { name: "@x/private-cli", private: true, bin: { pc: "cli.js" } });
     writeManifest("packages/ext", { name: "@x/ext", engines: { vscode: "^1.80.0" }, main: "dist/extension.js" });
+    writeManifest("packages/tool-fork", { name: "@x/tool" });
     const allFiles = [
         "package.json",
         "packages/tool/package.json",
@@ -26,6 +27,7 @@ describe("packages", () => {
         "packages/pub-lib/package.json",
         "packages/private-cli/package.json",
         "packages/ext/package.json",
+        "packages/tool-fork/package.json",
         "src/a.ts",
     ];
     const dirs = packageDirsOf(allFiles);
@@ -39,6 +41,7 @@ describe("packages", () => {
             "packages/pub-lib",
             "packages/private-cli",
             "packages/ext",
+            "packages/tool-fork",
         ]);
     });
 
@@ -79,5 +82,12 @@ describe("packages", () => {
 
     it("given a nameless empty package, when classified, then it is not a published artefact (D14)", () => {
         expect(byName("lib")?.artefact).toBeNull();
+    });
+
+    it("given two packages sharing a name, when discovered, then their ids are unique (HC-015)", () => {
+        const tools = packages.filter((p) => p.name === "@x/tool");
+        expect(tools).toHaveLength(2);
+        expect(tools[0]?.id).toBe("x-tool");
+        expect(tools[1]?.id).toBe("x-tool-2");
     });
 });

@@ -15,6 +15,7 @@ import {
     footprintFor,
     linesOf,
     roomLabel,
+    sdkImporterIds,
     splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
@@ -37,7 +38,7 @@ import type { PathReassignment } from "./path-references.ts";
 import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
-import { type EmbeddedDatabase, OTLP_PATTERN } from "./scans.ts";
+import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
 import type { EdgeHost } from "./wrangler.ts";
@@ -69,6 +70,7 @@ export type DeploymentContext = {
     edgeHost: EdgeHost | null;
     drizzleConfig: string | undefined;
     embeddedDatabases: readonly EmbeddedDatabase[];
+    externalServiceDeps: readonly ExternalServiceDep[];
     ciWorkflows: readonly CiWorkflow[];
     coverageForFiles: (files: readonly string[]) => number | null;
     fileDocSummary: (file: string) => string | null;
@@ -145,6 +147,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         edgeHost,
         drizzleConfig,
         embeddedDatabases,
+        externalServiceDeps,
         ciWorkflows,
         coverageForFiles,
         fileDocSummary,
@@ -1020,6 +1023,38 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             });
         },
     });
+
+    // 7e-i-b. D17: external services a package talks to via a client SDK (an IMAP
+    // mail server, an LLM API). One external node in the externals district, with
+    // an inferred data_flow "uses" edge from each module whose source imports the
+    // SDK. Drawn only when a deployed module actually imports it, so a bare
+    // dependency does not conjure a phantom external.
+    for (const service of externalServiceDeps) {
+        const importerIds = sdkImporterIds(service.depNames, ownedFileEntries, fileText);
+        if (importerIds.length === 0) continue;
+        nodes.push({
+            id: service.id,
+            label: service.label,
+            kind: "external",
+            archetype: "cloud",
+            parentId: ensureExternalsDistrict(),
+            description: service.description,
+            sourceRefs: [{ path: service.path }],
+            display: { flowLayer: 2 },
+        });
+        for (const importer of importerIds) {
+            addEdge(edges, {
+                id: `${importer}--${service.id}`,
+                from: importer,
+                to: service.id,
+                kind: "data_flow",
+                evidence: "inferred",
+                confidence: 0.7,
+                label: "uses",
+                sourceRefs: [{ path: service.path }],
+            });
+        }
+    }
 
     // 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
     // a workflow_run chain, or a run step invoking repo code becomes a CI job

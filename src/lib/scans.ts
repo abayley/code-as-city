@@ -202,3 +202,67 @@ export function findEmbeddedDatabases(packages: readonly Package[]): EmbeddedDat
     }
     return embeddedDatabases;
 }
+
+/** An external service a package talks to, declared by a client-SDK dependency (D17). */
+export type ExternalServiceDep = {
+    id: string;
+    label: string;
+    /** The SDK dependency names that map to this service, for import detection. */
+    depNames: string[];
+    path: string;
+    description: string;
+};
+
+// Client SDKs whose presence in a package's dependencies names an external
+// system it talks to (D17). Deliberately precise: `@anthropic-ai/tokenizer` and
+// `mailparser` are offline libraries, not clients, so they are not matched.
+// Vendor-biased like D5's tables; one node per service, several SDKs folding to
+// the same one.
+const EXTERNAL_SERVICE_DEPS: readonly (readonly [RegExp, string])[] = [
+    [/^(imapflow|node-imap|imap|emailjs-imap-client)$/, "IMAP mail server"],
+    [/^nodemailer$/, "SMTP mail server"],
+    [/^@anthropic-ai\/(sdk|claude-agent-sdk|claude-code)$/, "Anthropic API"],
+    [/^openai$/, "OpenAI API"],
+    [/^(@google\/generative-ai|@google\/genai)$/, "Google Gemini API"],
+    [/^ollama$/, "Ollama"],
+    [/^cohere-ai$/, "Cohere API"],
+    [/^@mistralai\//, "Mistral API"],
+    [/^groq-sdk$/, "Groq API"],
+    [/^stripe$/, "Stripe API"],
+    [/^twilio$/, "Twilio API"],
+];
+
+/**
+ * D17: finds the external services a repo talks to, from client-SDK
+ * dependencies in package manifests. One entry per distinct service repo-wide;
+ * several SDKs (or manifests) naming the same service fold to one, collecting
+ * their dependency names for later import detection.
+ *
+ * @param packages - The discovered packages, whose merged dependencies are
+ *   matched against the known client-SDK table.
+ * @returns One entry per external service, in first-encounter order.
+ */
+export function findExternalServiceDeps(packages: readonly Package[]): ExternalServiceDep[] {
+    const byLabel = new Map<string, ExternalServiceDep>();
+    for (const pkg of packages) {
+        const pkgManifest = pkg.dir === "." ? "package.json" : `${pkg.dir}/package.json`;
+        for (const dep of Object.keys(pkg.deps ?? {})) {
+            const match = EXTERNAL_SERVICE_DEPS.find(([pattern]) => pattern.test(dep));
+            if (!match) continue;
+            const label = match[1];
+            let entry = byLabel.get(label);
+            if (entry === undefined) {
+                entry = {
+                    id: kebab(`external-${label}`),
+                    label,
+                    depNames: [],
+                    path: pkgManifest,
+                    description: `External service (${label}) addressed via a client SDK declared in ${pkgManifest}.`,
+                };
+                byLabel.set(label, entry);
+            }
+            if (!entry.depNames.includes(dep)) entry.depNames.push(dep);
+        }
+    }
+    return [...byLabel.values()];
+}

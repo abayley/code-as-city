@@ -13,6 +13,7 @@ import {
     linesOf,
     mermaidId,
     roomLabel,
+    sdkImporterIds,
     splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
@@ -30,7 +31,7 @@ import {
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
-import type { EmbeddedDatabase } from "./scans.ts";
+import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
 import { OTLP_PATTERN } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { EdgeHost } from "./wrangler.ts";
@@ -86,6 +87,7 @@ export type OverviewContext = {
     edgeHost: EdgeHost | null;
     drizzleConfig: string | undefined;
     embeddedDatabases: readonly EmbeddedDatabase[];
+    externalServiceDeps: readonly ExternalServiceDep[];
     fileEdges: readonly FileEdge[];
     fileCoupling: Map<string, Coupling>;
     fileComplexity: (file: string) => number;
@@ -131,6 +133,7 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         edgeHost,
         drizzleConfig,
         embeddedDatabases,
+        externalServiceDeps,
         fileEdges,
         fileCoupling,
         fileComplexity,
@@ -637,6 +640,34 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }),
     );
     infraMembers.push(...embeddedDbMembers);
+    // D17: external services imported by a module become external cloud nodes
+    // with an inferred "uses" edge, as in the deployment map — one per service,
+    // drawn only when a module actually imports the client SDK.
+    for (const service of externalServiceDeps) {
+        const importerIds = sdkImporterIds(service.depNames, allModules, fileText);
+        if (importerIds.length === 0) continue;
+        infraMembers.push({
+            id: service.id,
+            label: service.label,
+            archetype: "cloud",
+            kind: "external",
+            external: true,
+            description: service.description,
+            path: service.path,
+        });
+        for (const importer of importerIds) {
+            addEdge(overviewEdges, {
+                id: `${importer}--${service.id}-u`,
+                from: importer,
+                to: service.id,
+                kind: "data_flow",
+                evidence: "inferred",
+                confidence: 0.7,
+                label: "uses",
+                sourceRefs: [{ path: service.path }],
+            });
+        }
+    }
     const seenInfra = new Set<string>();
     const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
     const infraDistricts = new Map<string, InfraDistrict>();

@@ -78,8 +78,8 @@
         }
       ],
       "metrics": {
-        "loc": 62,
-        "complexity": 1,
+        "loc": 72,
+        "complexity": 2,
         "coverage": 62.5
       },
       "tags": [
@@ -89,9 +89,9 @@
       "display": {
         "flowLayer": 1,
         "size": [
-          1.1,
-          0.8142617464694991,
-          0.935
+          1.2035533905932738,
+          0.8439836583115881,
+          1.0230203820042827
         ]
       }
     },
@@ -108,7 +108,7 @@
         }
       ],
       "metrics": {
-        "loc": 8
+        "loc": 9
       },
       "display": {
         "flowLayer": 0
@@ -248,6 +248,30 @@
       "kind": "scope",
       "archetype": "district",
       "description": "Standalone area: src/."
+    },
+    {
+      "id": "mini-api-src-ai",
+      "label": "Ai",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-src-district",
+      "description": "Talks to the OpenAI API to summarise a message.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/ai.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 10,
+        "complexity": 2
+      },
+      "display": {
+        "size": [
+          1.2035533905932738,
+          0.6387141303402689,
+          1.0230203820042827
+        ]
+      }
     },
     {
       "id": "mini-api-src-server",
@@ -635,18 +659,18 @@
       }
     },
     {
-      "id": "mini-toolkit-area",
+      "id": "mini-toolkit-2-area",
       "label": "@Mini/Toolkit",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/toolkit, rooted at packages/toolkit/."
     },
     {
-      "id": "mini-toolkit-src",
+      "id": "mini-toolkit-2-src",
       "label": "Src",
       "kind": "deployable",
       "archetype": "building",
-      "parentId": "mini-toolkit-area",
+      "parentId": "mini-toolkit-2-area",
       "description": "Clamps a value to the inclusive range [low, high].\n\n2 source files under src/.",
       "sourceRefs": [
         {
@@ -670,11 +694,11 @@
       ]
     },
     {
-      "id": "mini-toolkit-src-files",
+      "id": "mini-toolkit-2-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-toolkit-src",
+      "parentId": "mini-toolkit-2-src",
       "description": "1 source file.",
       "sourceRefs": [
         {
@@ -683,11 +707,11 @@
       ]
     },
     {
-      "id": "mini-toolkit-src-index",
+      "id": "mini-toolkit-2-src-index",
       "label": "Index",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-toolkit-src",
+      "parentId": "mini-toolkit-2-src",
       "description": "1 source file.",
       "sourceRefs": [
         {
@@ -737,6 +761,32 @@
       "archetype": "database",
       "parentId": "host-mini-repo",
       "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "external-systems",
+      "label": "External systems",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Externally hosted systems this deployment exchanges data with.",
+      "display": {
+        "flowLayer": 1500
+      }
+    },
+    {
+      "id": "external-openai-api",
+      "label": "OpenAI API",
+      "kind": "external",
+      "archetype": "cloud",
+      "parentId": "external-systems",
+      "description": "External service (OpenAI API) addressed via a client SDK declared in packages/api/package.json.",
       "sourceRefs": [
         {
           "path": "packages/api/package.json"
@@ -873,6 +923,20 @@
       ]
     },
     {
+      "id": "mini-api-src-ai--external-openai-api",
+      "from": "mini-api-src-ai",
+      "to": "external-openai-api",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "uses",
+      "sourceRefs": [
+        {
+          "path": "packages/api/package.json"
+        }
+      ]
+    },
+    {
       "id": "ci-deploy-job--mini-api-src-server",
       "from": "ci-deploy-job",
       "to": "mini-api-src-server",
@@ -906,6 +970,6 @@
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: src/lib.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
     "Dev-only package excluded from the deployment view (reached by no host deploy root): @mini/e2e (1 area).",
-    "Orphan area excluded (unreferenced, undeployed): runtime (1 files)."
+    "Orphan area excluded (unreferenced, undeployed): src (1 files)."
   ]
 }

@@ -148,6 +148,30 @@ export function sdkImportPattern(depName: string): RegExp {
 }
 
 /**
+ * The ids of the entries whose source imports any of the given SDK dependency
+ * names (D17), in entry order, each id once. Shared by the deployment and
+ * overview external-service passes.
+ *
+ * @param depNames - The client-SDK dependency names to detect imports of.
+ * @param entries - `{ id, files }` records to scan.
+ * @param fileText - Reads a repo-relative file's text.
+ * @returns The importing entry ids, de-duplicated, in first-match order.
+ */
+export function sdkImporterIds(
+    depNames: readonly string[],
+    entries: readonly { id: string; files: readonly string[] }[],
+    fileText: (file: string) => string,
+): string[] {
+    const patterns = depNames.map((dep) => sdkImportPattern(dep));
+    const importerIds: string[] = [];
+    for (const entry of entries) {
+        if (!entry.files.some((file) => patterns.some((pattern) => pattern.test(fileText(file))))) continue;
+        if (!importerIds.includes(entry.id)) importerIds.push(entry.id);
+    }
+    return importerIds;
+}
+
+/**
  * Pattern matching a reference to an external system by SDK import or env-var prefix
  * (the M10/O8 "delivers" signal).
  *
