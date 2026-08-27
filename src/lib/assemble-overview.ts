@@ -7,6 +7,14 @@
  */
 import { dirname, join, relative, sep } from "node:path";
 import {
+    addOverviewImportEdges,
+    type InfraDistrict,
+    type InfraMember,
+    inferOverviewDataFlows,
+    type OverviewDistrict,
+    type OverviewModule,
+} from "./assemble-overview-phases.ts";
+import {
     addEdge,
     barrelAwareName,
     footprintFor,
@@ -14,20 +22,13 @@ import {
     mermaidId,
     roomLabel,
     sdkImporterIds,
-    splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
 import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
 import { type Host, isServiceShadowed } from "./hosts.ts";
-import {
-    classifiedVariantServices,
-    inferEmbeddedDatabaseUse,
-    inferExternalDelivers,
-    inferModuleDataFlows,
-    isEntryPoint,
-} from "./inference.ts";
+import { classifiedVariantServices, isEntryPoint } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
@@ -39,41 +40,6 @@ import type { EdgeHost } from "./wrangler.ts";
 // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
 // migrations directory; only overview mode groups them.
 const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
-
-// A module: { id, label, files, path, support, collapsed }
-type OverviewModule = {
-    id: string;
-    label: string;
-    sublabel?: string | null | undefined;
-    files: string[];
-    path: string;
-    support: boolean;
-    collapsed?: boolean | undefined;
-};
-
-type OverviewDistrict = {
-    id: string;
-    label: string;
-    path: string;
-    modules: OverviewModule[];
-    // Assigned by the banding pass before any read.
-    hosts: string[];
-    band: number;
-};
-
-type InfraMember = {
-    id: string;
-    label: string;
-    archetype: string;
-    kind: string;
-    description: string;
-    path: string;
-    hostName?: string | undefined;
-    external?: boolean | undefined;
-    depName?: string | undefined;
-};
-
-type InfraDistrict = { id: string; label: string; band: number; members: InfraMember[] };
 
 export type OverviewContext = {
     repo: string;
@@ -718,71 +684,20 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         }
     }
 
-    // Remaining data-flow edges: OTLP producers into the gateway collector, and
-    // database reads/writes.
-    const otlpTarget =
-        uniqueInfra.find((m) => /collector/.test(m.id) && /gateway/.test(m.id)) ??
-        uniqueInfra.find((m) => /collector/.test(m.id));
-    // The shared pass prefers a district-local database and falls back to the
-    // first. That preference is inert here by construction, not by oversight:
-    // overview modules sit in directory districts while infra members sit in
-    // host districts, so the two district spaces never intersect and the
-    // overview always targets one database. See BACKLOG "Mode differences by
-    // design".
-    const databaseTarget = uniqueInfra.find((m) => m.archetype === "database");
-    inferModuleDataFlows({
-        entries: allModules,
-        edges: overviewEdges,
+    // Remaining data-flow edges: OTLP producers, database reads/writes,
+    // embedded-database use, and delivers to referenced externals.
+    inferOverviewDataFlows({
+        allModules,
+        uniqueInfra,
+        overviewEdges,
+        embeddedDatabases,
         fileText,
-        ...(otlpTarget ? { otlpTargetId: otlpTarget.id } : {}),
-        ...(databaseTarget
-            ? {
-                  database: {
-                      databases: [{ id: databaseTarget.id }],
-                      writePattern: dbWritePattern,
-                      readPattern: dbReadPattern,
-                  },
-              }
-            : {}),
-    });
-    // Modules importing an embedded database's SDK read/write that database.
-    inferEmbeddedDatabaseUse({
-        databases: embeddedDatabases,
-        entries: allModules,
-        edges: overviewEdges,
-        fileText,
-        edgeSuffix: "-u",
-    });
-    // Modules that reference an external by SDK import or env-var prefix
-    // deliver data to it (src/delivery pushing scores into Langfuse/Latitude).
-    inferExternalDelivers({
-        externals: uniqueInfra.filter((m) => m.external),
-        entries: allModules,
-        edges: overviewEdges,
-        fileText,
+        dbWritePattern,
+        dbReadPattern,
     });
 
-    // Import edges, aggregated per module pair. The viewer never draws these
-    // at rest — they appear only when a node is selected — so they cost map
-    // size, not visual noise.
-    const importCounts = new Map<string, number>();
-    for (const { from, to } of fileEdges) {
-        const a = fileToModule.get(from);
-        const b = fileToModule.get(to);
-        if (!a || !b || a === b) continue;
-        importCounts.set(`${a}->${b}`, (importCounts.get(`${a}->${b}`) ?? 0) + 1);
-    }
-    for (const [key, count] of importCounts) {
-        const [from, to] = splitEdgeKey(key);
-        addEdge(overviewEdges, {
-            id: `${from}--${to}-i`,
-            from,
-            to,
-            kind: "depends_on",
-            evidence: "declared",
-            label: `${count} import${count === 1 ? "" : "s"}`,
-        });
-    }
+    // Import edges, aggregated per module pair (drawn only on selection).
+    addOverviewImportEdges({ overviewEdges, fileEdges, fileToModule });
 
     await emitMap({
         repo,
