@@ -326,6 +326,18 @@ Two findings were **not** actioned, deliberately:
   branches (visible in the coverage report) are untouched. The dedicated
   per-module tests belong in their own follow-up.
 
+  Both assembly modules have since been decomposed (2026-08-28). Their two
+  large functions — `assembleDeployment` (1468 lines) and `runOverview`
+  (834) — are now orchestrators of ~400 and ~360 lines that build a state
+  object (`AssemblyState` / `OverviewState`, bundling the node/edge
+  accumulators and the shared helper closures) and call ordered phase
+  functions extracted into companion modules (`assemble-deployment-phases.ts`,
+  `assemble-overview-phases.ts`). Each phase moved as its own commit, verified
+  byte-identical against the fixture goldens and, for the overview, against a
+  live repo (aria-evals, 281 nodes / 769 edges, identical before and after).
+  This addresses the internal-factoring concern; the per-module unit tests are
+  now easier to write against the extracted phase functions but remain open.
+
   Note recorded while fixturing `delivers`: `inferExternalDelivers` normalises
   the external's *label* to lower-case alphanumeric, so a multi-word label such
   as "OpenAI API" becomes `openaiapi`, which the reference pattern can match
