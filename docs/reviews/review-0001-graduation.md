@@ -272,8 +272,6 @@ dropped sidebar stripe is sound.
   failing check genuinely aborts the commit rather than passing through the
   last command's exit status.
 - `bun run check` is green at HEAD: typecheck, lint, knip and 134 tests.
-</content>
-</invoke>
 
 ## Resolution
 
@@ -310,6 +308,33 @@ Two findings were **not** actioned, deliberately:
 - Direct unit tests for `assemble-deployment.ts` and `assemble-overview.ts`,
   and fixture coverage for the unexercised rules, remain open. Both are
   larger pieces of work than this review; they belong in their own RFC.
+
+  Partly addressed since (2026-08-27): the golden test now drives the generator
+  in-process through `runGenerator` rather than shelling out with
+  `execFileSync`, so v8 instruments the assembly modules the review reported at
+  zero coverage. `assemble-deployment.ts` reaches 71% and
+  `assemble-overview.ts` 87% (with `generate-map.ts`, `emit.ts` and the rest of
+  the pipeline likewise now measured), and the overall statement coverage rose
+  from about 37% to 66%. The fixture was also grown to exercise the rules the
+  review named as unfixtured: an external node (the `openai` D17 client SDK),
+  a `deploys` edge (a package-local `wrangler.toml` with a `src/api` entry-dir
+  room), an OTLP producer edge (a `@opentelemetry` bootstrap module feeding an
+  `otel-collector` compose service), and a `delivers` edge (the `ollama`
+  single-word external referenced by `@mini/service`). Each has a focused
+  golden assertion. This is still coverage through the fixture, not direct unit
+  tests: the two modules have no test of their own, and the remaining uncovered
+  branches (visible in the coverage report) are untouched. The dedicated
+  per-module tests belong in their own follow-up.
+
+  Note recorded while fixturing `delivers`: `inferExternalDelivers` normalises
+  the external's *label* to lower-case alphanumeric, so a multi-word label such
+  as "OpenAI API" becomes `openaiapi`, which the reference pattern can match
+  neither in an import specifier nor as an `OPENAIAPI_` env prefix (real code
+  writes `OPENAI_API_KEY`, i.e. `OPENAI_API`). Of the current SDK labels only
+  the single-word "Ollama" can ever match; every other label ends in " API" or
+  "server" and is unreachable. This looks like a latent defect in the signal,
+  not just a fixture gap, and is left for a separate behaviour change rather
+  than folded into this test work.
 
 ### Verification of the fixes
 

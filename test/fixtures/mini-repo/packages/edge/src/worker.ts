@@ -1,6 +1,8 @@
+import { routes } from "./api/routes.ts";
+
 /** Edge worker serving the mini application. */
 export default {
-    fetch(): Response {
-        return new Response("mini-edge");
+    fetch(request: Request): Response {
+        return new Response(routes(new URL(request.url).pathname));
     },
 };

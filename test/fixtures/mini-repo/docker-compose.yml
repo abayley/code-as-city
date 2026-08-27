@@ -13,3 +13,5 @@ services:
     image: postgrest/postgrest:latest
   meta:
     image: supabase/postgres-meta:v0.80.0
+  otel-collector:
+    image: otel/opentelemetry-collector:latest

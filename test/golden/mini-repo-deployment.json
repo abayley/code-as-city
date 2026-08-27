@@ -78,7 +78,7 @@
         }
       ],
       "metrics": {
-        "loc": 72,
+        "loc": 81,
         "complexity": 2,
         "coverage": 62.5
       },
@@ -90,7 +90,7 @@
         "flowLayer": 1,
         "size": [
           1.2035533905932738,
-          0.8439836583115881,
+          0.8698135717454107,
           1.0230203820042827
         ]
       }
@@ -108,7 +108,7 @@
         }
       ],
       "metrics": {
-        "loc": 9
+        "loc": 10
       },
       "display": {
         "flowLayer": 0
@@ -188,6 +188,24 @@
       }
     },
     {
+      "id": "host-mini-repo-otel-collector",
+      "label": "Otel Collector",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini-repo",
+      "description": "Container image otel/opentelemetry-collector:latest.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
       "id": "host-mini-repo-cache",
       "label": "Cache",
       "kind": "infra",
@@ -224,7 +242,7 @@
       "label": "Cloudflare edge",
       "kind": "scope",
       "archetype": "district",
-      "description": "Edge deployment declared in wrangler.toml."
+      "description": "Edge deployment declared in packages/edge/wrangler.toml."
     },
     {
       "id": "edge-worker",
@@ -294,6 +312,30 @@
         "size": [
           1.1,
           0.6610672218138092,
+          0.935
+        ]
+      }
+    },
+    {
+      "id": "mini-api-src-telemetry",
+      "label": "Telemetry",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-api-src-district",
+      "description": "Starts OpenTelemetry export to the OTEL_EXPORTER_OTLP_ENDPOINT collector.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/telemetry.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 9,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6349266182683868,
           0.935
         ]
       }
@@ -409,6 +451,31 @@
       "description": "Package @mini/edge, rooted at packages/edge/."
     },
     {
+      "id": "mini-edge-src-api",
+      "label": "Api",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-edge-area",
+      "description": "Edge API routes handling requests at the worker (an entry-dir room).\n\n1 source file under src/api/.",
+      "sourceRefs": [
+        {
+          "path": "packages/edge/src/api"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
+    },
+    {
       "id": "mini-edge-src",
       "label": "Src",
       "kind": "module",
@@ -421,14 +488,14 @@
         }
       ],
       "metrics": {
-        "loc": 7,
+        "loc": 9,
         "complexity": 1
       },
       "display": {
         "flowLayer": 0,
         "size": [
           1.1,
-          0.6272969222485302,
+          0.6349266182683868,
           0.935
         ]
       },
@@ -591,14 +658,14 @@
         }
       ],
       "metrics": {
-        "loc": 13,
+        "loc": 19,
         "complexity": 1
       },
       "display": {
         "flowLayer": 0,
         "size": [
           1.1,
-          0.6499693867481124,
+          0.6720119784045467,
           0.935
         ]
       },
@@ -797,6 +864,22 @@
       }
     },
     {
+      "id": "external-ollama",
+      "label": "Ollama",
+      "kind": "external",
+      "archetype": "cloud",
+      "parentId": "external-systems",
+      "description": "External service (Ollama) addressed via a client SDK declared in packages/service/package.json.",
+      "sourceRefs": [
+        {
+          "path": "packages/service/package.json"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
       "id": "ci-deploy",
       "label": "CI: deploy",
       "kind": "scope",
@@ -869,6 +952,36 @@
       "label": "compose depends_on"
     },
     {
+      "id": "mini-edge-src-api--edge-worker",
+      "from": "mini-edge-src-api",
+      "to": "edge-worker",
+      "kind": "deploys",
+      "evidence": "declared",
+      "label": "wrangler deploy",
+      "sourceRefs": [
+        {
+          "path": "packages/edge/wrangler.toml"
+        }
+      ]
+    },
+    {
+      "id": "mini-api-src-telemetry--host-mini-repo-otel-collector",
+      "from": "mini-api-src-telemetry",
+      "to": "host-mini-repo-otel-collector",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "OTLP export"
+    },
+    {
+      "id": "mini-edge-src--mini-edge-src-api",
+      "from": "mini-edge-src",
+      "to": "mini-edge-src-api",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
       "id": "mini-api-src-jobs--host-mini-repo-api",
       "from": "mini-api-src-jobs",
       "to": "host-mini-repo-api",
@@ -937,6 +1050,20 @@
       ]
     },
     {
+      "id": "mini-service-src--external-ollama",
+      "from": "mini-service-src",
+      "to": "external-ollama",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.7,
+      "label": "uses",
+      "sourceRefs": [
+        {
+          "path": "packages/service/package.json"
+        }
+      ]
+    },
+    {
       "id": "ci-deploy-job--mini-api-src-server",
       "from": "ci-deploy-job",
       "to": "mini-api-src-server",
@@ -962,6 +1089,15 @@
           "path": "packages/greeter/src/cli.ts"
         }
       ]
+    },
+    {
+      "id": "mini-service-src--external-ollama-d",
+      "from": "mini-service-src",
+      "to": "external-ollama",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.6,
+      "label": "delivers"
     }
   ],
   "warnings": [
