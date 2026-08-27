@@ -5,31 +5,27 @@
  * shared map envelope. Rule IDs (O2, O5, O7, O11, C1, D3) refer to
  * HEURISTICS.md.
  */
-import { dirname, join, relative, sep } from "node:path";
+import { join } from "node:path";
 import {
     addOverviewImportEdges,
     assembleInfraDistricts,
+    bandOverviewDistricts,
+    buildOverviewDistricts,
+    emitOverviewModuleNodes,
     inferOverviewDataFlows,
-    type OverviewDistrict,
-    type OverviewModule,
+    type OverviewState,
 } from "./assemble-overview-phases.ts";
-import { barrelAwareName, footprintFor, linesOf, mermaidId, roomLabel, uniqueId } from "./assembly-helpers.ts";
+import { linesOf, mermaidId } from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
 import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
 import type { Host } from "./hosts.ts";
-import { isEntryPoint } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
-import { OTLP_PATTERN } from "./scans.ts";
-import { kebab, titleCase } from "./text.ts";
+import { titleCase } from "./text.ts";
 import type { EdgeHost } from "./wrangler.ts";
-
-// Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
-// migrations directory; only overview mode groups them.
-const MIGRATION_FILE_PATTERN = /\/migrations\/\d+[-_.][^/]*$/;
 
 export type OverviewContext = {
     repo: string;
@@ -241,215 +237,40 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         const fanOut = externalFanOut(files);
         return fanIn >= 2 && fanOut / (fanIn + fanOut) <= 0.33;
     };
-    /**
-     * Splits a room into overview modules: migration scripts collapse to one
-     * leaf per migrations directory; every other file is its own module,
-     * wherever it sits in the tree, with duplicate labels within the room
-     * disambiguated by their subdirectory.
-     *
-     * @param room - Directory-backed room to convert.
-     * @returns The room's overview modules (collapsed migrations first).
-     */
-    const modulesForRoom = (room: Room): OverviewModule[] => {
-        const entries: OverviewModule[] = [];
-        // Migration scripts (**/migrations/0001_xxx.ts) collapse to one leaf per
-        // migrations directory, wherever they sit in the tree.
-        const migrationFiles = room.files.filter((f) => MIGRATION_FILE_PATTERN.test(f));
-        const migrationDirs = new Map<string, string[]>();
-        for (const file of migrationFiles) {
-            const dir = dirname(file);
-            migrationDirs.set(dir, [...(migrationDirs.get(dir) ?? []), file]);
-        }
-        for (const [dir, files] of migrationDirs) {
-            entries.push({
-                id: kebab(`${room.id}-${relative(roomDir(room), dir)}`),
-                label: `Migrations (${files.length})`,
-                files,
-                path: dir,
-                support: true,
-                collapsed: true,
-            });
-        }
-        // Every remaining file is a module, wherever it sits in the tree —
-        // subdirectories (src/lib/configuration, plugins/codex-otlp-traces) are
-        // shown as their files, not as buildings. Duplicate names within a
-        // district are disambiguated by their subdirectory.
-        const rest = room.files.filter((f) => !MIGRATION_FILE_PATTERN.test(f));
-        const fileEntries = rest.map((file): OverviewModule => {
-            const local = relative(roomDir(room), file).replace(/\.[a-z]+$/, "");
-            return {
-                id: kebab(`${room.id}-${local}`),
-                label: titleCase(barrelAwareName(file)),
-                sublabel: local.includes(sep) ? dirname(local) : null,
-                files: [file],
-                path: file,
-                support: (fileCoupling.get(file)?.in ?? 0) > 0,
-            };
-        });
-        const labelCounts = new Map<string, number>();
-        for (const entry of fileEntries) labelCounts.set(entry.label, (labelCounts.get(entry.label) ?? 0) + 1);
-        for (const entry of fileEntries) {
-            if ((labelCounts.get(entry.label) ?? 0) > 1 && entry.sublabel)
-                entry.label = `${entry.label} (${entry.sublabel})`;
-        }
-        return [...entries, ...fileEntries];
-    };
 
-    const districts: OverviewDistrict[] = multiPkg
-        ? pkgsWithRooms.map((pkg) => ({
-              id: kebab(`${pkg.id}-district`),
-              label: titleCase(pkg.name),
-              path: pkg.dir,
-              modules: activeRooms.filter((r) => r.pkg === pkg).flatMap((room) => modulesForRoom(room)),
-              hosts: [],
-              band: 0,
-          }))
-        : activeRooms.map((room) => ({
-              id: kebab(`${room.id}-district`),
-              label: roomLabel(room.segment),
-              path: roomDir(room),
-              modules: modulesForRoom(room),
-              hosts: [],
-              band: 0,
-          }));
-
-    // Two packages can share a name (a repo's root and a workspace package both
-    // named @scope/pkg, as in ollama-code), which collides their district ids;
-    // suffix later collisions so the map stays valid. Done before module ids so
-    // the modules' parentId picks up the deduped district id.
-    const usedDistrictIds = new Set<string>();
-    for (const district of districts) {
-        district.id = uniqueId(district.id, (id) => usedDistrictIds.has(id));
-        usedDistrictIds.add(district.id);
-    }
-
-    // Kebab-casing can flatten distinct paths onto one id (src/local/config vs
-    // src-local/config); suffix later collisions rather than emit invalid maps.
-    const usedModuleIds = new Set<string>();
-    for (const district of districts) {
-        for (const m of district.modules) {
-            m.id = uniqueId(m.id, (id) => usedModuleIds.has(id));
-            usedModuleIds.add(m.id);
-        }
-    }
+    const districts = buildOverviewDistricts({ multiPkg, pkgsWithRooms, activeRooms, fileCoupling });
 
     const overviewNodes: MapNode[] = [];
     const overviewEdges: MapEdge[] = [];
     const allModules: { id: string; files: string[] }[] = []; // for flow-edge classification
     const fileToModule = new Map<string, string>(); // source file -> module node id (for flow edges)
 
-    // Band per district: single-host code sits in its host's band, OTLP
-    // producers in the front band, everything shared or unplaced in the strip.
-    for (const district of districts) {
-        const hostSet = filesHosts(district.modules.flatMap((m) => m.files));
-        const producesOtlp = district.modules.some((m) =>
-            m.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f)))),
-        );
-        district.hosts = [...hostSet];
-        const soleHost = district.hosts[0];
-        district.band =
-            hostSet.size === 1 && soleHost !== undefined
-                ? hostBand(soleHost)
-                : hostSet.size === 0 && producesOtlp
-                  ? PRODUCERS_BAND
-                  : SHARED_BAND;
-    }
-    districts.sort((a, b) => a.band - b.band || a.id.localeCompare(b.id));
+    // The mutable substrate the banding and module-emit phases share.
+    const state: OverviewState = {
+        overviewNodes,
+        allModules,
+        fileToModule,
+        linesOfFiles: (files) => linesOf(repo, files),
+        fileText,
+        filesHosts,
+        hostBand,
+        bandLabel,
+        moduleIsUtility,
+    };
 
-    for (const district of districts) {
-        if (!district.modules.length) continue;
-        const utilityShare = district.modules.filter((m) => moduleIsUtility(m.files)).length / district.modules.length;
-        const shared = utilityShare >= 0.6;
-        const color = shared ? OVERVIEW_SHARED_COLOR : OVERVIEW_APP_COLOR;
-        overviewNodes.push({
-            id: district.id,
-            label: district.label,
-            kind: "scope",
-            archetype: "district",
-            description: `${shared ? "Shared code" : "Function area"}: ${district.path === "." ? "repository root" : `${district.path}/`} — ${district.modules.length} module${district.modules.length === 1 ? "" : "s"}${district.hosts.length ? ` — deploys to ${district.hosts.join(", ")}` : ""}.`,
-            tags: [`band:${bandLabel(district.band)}`],
-            display: { color, flowLayer: district.band },
-        });
-        // Files in the same directory sit adjacent on the map: placement order is
-        // the path, carried to the viewer as display.flowOrder.
-        const placementOrder = new Map(
-            [...district.modules].sort((a, b) => a.path.localeCompare(b.path)).map((m, index) => [m.id, index]),
-        );
-        for (const m of district.modules) {
-            const moduleHostTags = [...filesHosts(m.files)].map((name) => `host:${name}`);
-            const loc = linesOf(repo, m.files);
-            // Complexity is the worst single function in the module: a big module
-            // of simple functions should not outscore one gnarly function.
-            const complexity = Math.max(...m.files.map((f) => fileMaxFunctionComplexity(f)));
-            const height = Math.max(0.6, 0.55 + Math.min(loc, 1500) / 320);
-            // Floor area is complexity alone: equal complexity reads as equal
-            // footprint whether the module is a composer or support (the ziggurat
-            // shape and height already distinguish them).
-            // Ceiling 2.5: at the viewer's 80% render scale that equals the 2.0
-            // layout step, so even max-complexity buildings cannot overlap.
-            const footprint = footprintFor(complexity);
-            const asBuilding = m.files.length >= 2 && !m.collapsed;
-            // Same classification as the deployment map: entry modules are gateways
-            // (entry points), everything else a worker. At file granularity the
-            // entry name may be the file itself — exactly cli/cmd/main, or the
-            // *-cli / *-command suffix convention (redeploy-cli.ts,
-            // delivery-command.ts). Bare api.ts stays a worker: usually a
-            // client/types module, not an entry.
-            // A file referenced from a package.json script is a DECLARED entry,
-            // whatever its name. Name-based entries (entry dirs, *-cli/*-command
-            // suffixes) only qualify as composers: an imported *-command file (a
-            // shared configured-command helper) is plumbing, not an entry.
-            const isEntryModule = isEntryPoint({
-                files: m.files,
-                scriptReferencedFiles,
-                nameArm: { granularity: "module", path: m.path, support: m.support, entryDirNames },
-            });
-            const doc = docForFiles(m.files);
-            const coverage = coverageForFiles(m.files);
-            overviewNodes.push({
-                id: m.id,
-                label: m.label,
-                kind: "module",
-                archetype: asBuilding ? "building" : isEntryModule ? "gateway" : "worker",
-                parentId: district.id,
-                // TSDoc prose only — the stats live in metrics and render in the
-                // panel's Stats section.
-                ...(doc ? { description: doc } : {}),
-                ...(isEntryModule ? { attributes: { "entry-point": m.path } } : {}),
-                sourceRefs: [{ path: m.path }],
-                metrics: {
-                    loc,
-                    complexity,
-                    files: m.files.length,
-                    ...(coverage !== null ? { coverage } : {}),
-                },
-                tags: [m.support ? "support" : "composer", ...moduleHostTags],
-                display: {
-                    size: [footprint, height * (m.support ? 0.85 : 1), footprint * 0.85],
-                    color: m.files.every((f) => f.endsWith(".tsx")) ? OVERVIEW_TSX_COLOR : color,
-                    flowLayer: m.support ? 1 : 0,
-                    flowOrder: placementOrder.get(m.id),
-                },
-            });
-            for (const file of m.files) fileToModule.set(file, m.id);
-            allModules.push({ id: m.id, files: m.files });
-            if (asBuilding) {
-                for (const file of m.files) {
-                    const fileLoc = linesOf(repo, [file]);
-                    overviewNodes.push({
-                        id: kebab(`${m.id}-${relative(m.path, file).replace(/\.[a-z]+$/, "")}`),
-                        label: titleCase(barrelAwareName(file)),
-                        kind: "module",
-                        archetype: "room",
-                        parentId: m.id,
-                        description: `Source file ${file}: ${fileLoc} lines, complexity ${fileComplexity(file)}.`,
-                        sourceRefs: [{ path: file }],
-                        metrics: { loc: fileLoc, complexity: fileComplexity(file) },
-                    });
-                }
-            }
-        }
-    }
+    // Band each district, then emit its district and module nodes.
+    bandOverviewDistricts(districts, state, { producersBand: PRODUCERS_BAND, sharedBand: SHARED_BAND });
+    emitOverviewModuleNodes(districts, state, {
+        appColor: OVERVIEW_APP_COLOR,
+        sharedColor: OVERVIEW_SHARED_COLOR,
+        tsxColor: OVERVIEW_TSX_COLOR,
+        fileMaxFunctionComplexity,
+        fileComplexity,
+        docForFiles,
+        coverageForFiles,
+        scriptReferencedFiles,
+        entryDirNames,
+    });
 
     // Infrastructure & external systems: image-only services, config-declared
     // receivers, wrangler/drizzle/embedded databases, and client-SDK externals.
