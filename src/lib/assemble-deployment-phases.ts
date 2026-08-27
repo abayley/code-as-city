@@ -10,6 +10,7 @@
 import { basename, join } from "node:path";
 import { addEdge, fileModuleName, linesOf, sdkImporterIds } from "./assembly-helpers.ts";
 import type { SpawnedEntry } from "./daemons.ts";
+import type { Host } from "./hosts.ts";
 import type { NodeIndexEntry } from "./inference.ts";
 import type { MapEdge, MapNode } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
@@ -17,6 +18,44 @@ import { readJson, readText } from "./read.ts";
 import type { RunnableApp } from "./runnable.ts";
 import type { ExternalServiceDep } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
+
+/**
+ * The mutable substrate a deployment-assembly phase works against: the map
+ * accumulators, the central file-to-node index, and the shared helper closures
+ * the orchestrator builds once. A phase reads the slice it needs and appends to
+ * `nodes`/`edges`/`warnings` in place; the intermediate handoff values that flow
+ * from one phase to the next (claimed dirs, promoted nodes, campus file sets)
+ * are passed explicitly rather than carried here, so the pipeline's data flow
+ * stays visible.
+ */
+export type AssemblyState = {
+    /** Absolute path of the repository being mapped. */
+    repo: string;
+    /** The map nodes accumulated so far; phases append to and reclassify these. */
+    nodes: MapNode[];
+    /** The map edges accumulated so far. */
+    edges: MapEdge[];
+    /** The map warnings accumulated so far. */
+    warnings: string[];
+    /** Source file -> emitted campus node id, populated as nodes are drawn. */
+    fileNodeOwner: Map<string, string>;
+    /** Whether a repo-relative path is in the scanned inventory. */
+    fileExists: (p: string) => boolean;
+    /** Reads a repo-relative file's text. */
+    fileText: (file: string) => string;
+    /** The package owning a file or directory, or null. */
+    owningPackage: (file: string) => Package | null;
+    /** Allocates a node id free in both the node set and the room-id namespace. */
+    uniqueNodeId: (base: string) => string;
+    /** Emits one room node per source file inside a building (--modules-as-buildings). */
+    pushFileRooms: (parentId: string, files: readonly string[]) => void;
+    /** Creates the shared externals district on first use and returns its id. */
+    ensureExternalsDistrict: () => string;
+    /** The emitted node owning a source file (direct mapping, else longest sourceRef). */
+    nodeOwningFile: (file: string) => string | null;
+    /** Whether a service name is shadowed by its canonical topology owner (D1). */
+    isShadowed: (host: Host, serviceName: string) => boolean;
+};
 
 /**
  * 7c-iv / D14: reclassifies each published-artefact package's room into a
@@ -28,18 +67,16 @@ import { kebab, titleCase } from "./text.ts";
  * takes precedence, so its package is skipped here. Mutates matched nodes in
  * place.
  *
- * @param options - `packages` to scan; `runnableByDir` to yield D16 precedence;
- *   `nodes` the emitted nodes to reclassify; `fileExists` to resolve the
- *   artefact entry; `nodeOwningFile` to find the entry's node.
+ * @param state - The assembly state (`nodes` reclassified in place, plus
+ *   `fileExists`/`nodeOwningFile`).
+ * @param options - `packages` to scan; `runnableByDir` to yield D16 precedence.
  */
-export function reclassifyPublishedArtefacts(options: {
-    packages: readonly Package[];
-    runnableByDir: ReadonlyMap<string, RunnableApp>;
-    nodes: MapNode[];
-    fileExists: (p: string) => boolean;
-    nodeOwningFile: (file: string) => string | null;
-}): void {
-    const { packages, runnableByDir, nodes, fileExists, nodeOwningFile } = options;
+export function reclassifyPublishedArtefacts(
+    state: AssemblyState,
+    options: { packages: readonly Package[]; runnableByDir: ReadonlyMap<string, RunnableApp> },
+): void {
+    const { nodes, fileExists, nodeOwningFile } = state;
+    const { packages, runnableByDir } = options;
     for (const pkg of packages) {
         const artefact = pkg.artefact;
         // A runnable app (D16) is shown as the app it runs, not as a published
@@ -67,15 +104,13 @@ export function reclassifyPublishedArtefacts(options: {
  * app run directly (no compose, wrangler, or publish) enters the deployment
  * view. Mutates matched nodes in place.
  *
- * @param options - `runnableApps` the detected apps; `nodes` to reclassify;
- *   `nodeOwningFile` to find each app entry's node.
+ * @param state - The assembly state (`nodes` reclassified in place, plus
+ *   `nodeOwningFile`).
+ * @param options - `runnableApps` the detected apps.
  */
-export function reclassifyRunnableApps(options: {
-    runnableApps: readonly RunnableApp[];
-    nodes: MapNode[];
-    nodeOwningFile: (file: string) => string | null;
-}): void {
-    const { runnableApps, nodes, nodeOwningFile } = options;
+export function reclassifyRunnableApps(state: AssemblyState, options: { runnableApps: readonly RunnableApp[] }): void {
+    const { nodes, nodeOwningFile } = state;
+    const { runnableApps } = options;
     for (const app of runnableApps) {
         const nodeId = nodeOwningFile(app.entry);
         const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
@@ -93,20 +128,17 @@ export function reclassifyRunnableApps(options: {
  * whose source imports the SDK. Drawn only when a deployed module actually
  * imports it, so a bare dependency does not conjure a phantom external.
  *
+ * @param state - The assembly state (`nodes`/`edges` accumulators, `fileText`,
+ *   `ensureExternalsDistrict`).
  * @param options - `externalServiceDeps` the detected client-SDK services;
- *   `ownedFileEntries` the file-to-node index the importers are matched
- *   against; `fileText` to read source for SDK imports; `nodes`/`edges` the
- *   accumulators; `ensureExternalsDistrict` to parent new external nodes.
+ *   `ownedFileEntries` the file-to-node index the importers are matched against.
  */
-export function assembleExternalServiceSdks(options: {
-    externalServiceDeps: readonly ExternalServiceDep[];
-    ownedFileEntries: readonly NodeIndexEntry[];
-    fileText: (file: string) => string;
-    nodes: MapNode[];
-    edges: MapEdge[];
-    ensureExternalsDistrict: () => string;
-}): void {
-    const { externalServiceDeps, ownedFileEntries, fileText, nodes, edges, ensureExternalsDistrict } = options;
+export function assembleExternalServiceSdks(
+    state: AssemblyState,
+    options: { externalServiceDeps: readonly ExternalServiceDep[]; ownedFileEntries: readonly NodeIndexEntry[] },
+): void {
+    const { nodes, edges, fileText, ensureExternalsDistrict } = state;
+    const { externalServiceDeps, ownedFileEntries } = options;
     for (const service of externalServiceDeps) {
         const importerIds = sdkImporterIds(service.depNames, ownedFileEntries, fileText);
         if (importerIds.length === 0) continue;
@@ -140,21 +172,13 @@ export function assembleExternalServiceSdks(options: {
  * An https URL assigned as a value there names an external system the package's
  * CLI entry fetches from; localhost, loopback, and R2 storage hosts are skipped.
  *
- * @param options - `repo`/`packages` to locate each config and its bin entry;
- *   `nodes`/`edges` the accumulators; `fileExists` to probe config and entry
- *   files; `nodeOwningFile` to attribute the CLI entry to its node;
- *   `ensureExternalsDistrict` to parent new external nodes.
+ * @param state - The assembly state (`repo`, `nodes`/`edges`, `fileExists`,
+ *   `nodeOwningFile`, `ensureExternalsDistrict`).
+ * @param options - `packages` to locate each config and its bin entry.
  */
-export function assembleConfigExternals(options: {
-    repo: string;
-    packages: readonly Package[];
-    nodes: MapNode[];
-    edges: MapEdge[];
-    fileExists: (p: string) => boolean;
-    nodeOwningFile: (file: string) => string | null;
-    ensureExternalsDistrict: () => string;
-}): void {
-    const { repo, packages, nodes, edges, fileExists, nodeOwningFile, ensureExternalsDistrict } = options;
+export function assembleConfigExternals(state: AssemblyState, options: { packages: readonly Package[] }): void {
+    const { repo, nodes, edges, fileExists, nodeOwningFile, ensureExternalsDistrict } = state;
+    const { packages } = options;
     for (const pkg of packages) {
         const configFile = ["config.yaml", "config.yml"]
             .map((candidate) => (pkg.dir === "." ? candidate : `${pkg.dir}/${candidate}`))
@@ -222,18 +246,12 @@ export function assembleConfigExternals(options: {
  * an orphan), so its process appears; a spawn on a variable or an external
  * command resolved to nothing and is absent from `spawnedEntries` already.
  *
- * @param options - `repo` for line counts; `spawnedEntries` the caller/target
- *   spawn pairs; `nodes`/`edges` the accumulators to append to; `nodeOwningFile`
- *   to attribute a spawning file to its emitted supervisor node.
+ * @param state - The assembly state (`repo`, `nodes`/`edges`, `nodeOwningFile`).
+ * @param options - `spawnedEntries` the caller/target spawn pairs.
  */
-export function assembleDaemons(options: {
-    repo: string;
-    spawnedEntries: readonly SpawnedEntry[];
-    nodes: MapNode[];
-    edges: MapEdge[];
-    nodeOwningFile: (file: string) => string | null;
-}): void {
-    const { repo, spawnedEntries, nodes, edges, nodeOwningFile } = options;
+export function assembleDaemons(state: AssemblyState, options: { spawnedEntries: readonly SpawnedEntry[] }): void {
+    const { repo, nodes, edges, nodeOwningFile } = state;
+    const { spawnedEntries } = options;
     for (const { caller, target } of spawnedEntries) {
         const supervisorId = nodeOwningFile(caller);
         const supervisor = supervisorId ? nodes.find((n) => n.id === supervisorId) : undefined;

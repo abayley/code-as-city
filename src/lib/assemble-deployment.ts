@@ -9,6 +9,7 @@
  */
 import { basename, join, relative, sep } from "node:path";
 import {
+    type AssemblyState,
     assembleConfigExternals,
     assembleDaemons,
     assembleExternalServiceSdks,
@@ -303,6 +304,24 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
             }
         }
         return best?.id ?? null;
+    };
+
+    // The mutable substrate every extracted phase works against: the map
+    // accumulators, the file-to-node index, and the shared helper closures.
+    const state: AssemblyState = {
+        repo,
+        nodes,
+        edges,
+        warnings,
+        fileNodeOwner,
+        fileExists,
+        fileText,
+        owningPackage,
+        uniqueNodeId,
+        pushFileRooms,
+        ensureExternalsDistrict,
+        nodeOwningFile,
+        isShadowed,
     };
 
     // 7a. Host districts from deployment shape. Hosts carry explicit flow
@@ -1058,14 +1077,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     });
 
     // 7e-i-b. D17: external services a package talks to via a client SDK.
-    assembleExternalServiceSdks({
-        externalServiceDeps,
-        ownedFileEntries,
-        fileText,
-        nodes,
-        edges,
-        ensureExternalsDistrict,
-    });
+    assembleExternalServiceSdks(state, { externalServiceDeps, ownedFileEntries });
 
     // 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
     // a workflow_run chain, or a run step invoking repo code becomes a CI job
@@ -1235,14 +1247,14 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
 
     // 7c-iv / 7c-iv-b. D14 published artefacts and D16 runnable apps: reclassify
     // the owning package room into a tagged deployable (D14 yields to D16).
-    reclassifyPublishedArtefacts({ packages, runnableByDir, nodes, fileExists, nodeOwningFile });
-    reclassifyRunnableApps({ runnableApps, nodes, nodeOwningFile });
+    reclassifyPublishedArtefacts(state, { packages, runnableByDir });
+    reclassifyRunnableApps(state, { runnableApps });
 
     // 7c-v. D15: runtime-supervised processes spawned from deploy-reachable code.
-    assembleDaemons({ repo, spawnedEntries, nodes, edges, nodeOwningFile });
+    assembleDaemons(state, { spawnedEntries });
 
     // 7e-iii. Config-declared external services (D12).
-    assembleConfigExternals({ repo, packages, nodes, edges, fileExists, nodeOwningFile, ensureExternalsDistrict });
+    assembleConfigExternals(state, { packages });
 
     // 7f. Static I/O classification (data flow from code, no runtime evidence).
     // Declared boundary roles become tags: a module that starts a server listens;
