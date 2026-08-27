@@ -14,6 +14,7 @@ import {
     assembleConfigExternals,
     assembleDaemons,
     assembleDatabases,
+    assembleEdgeDistrict,
     assembleExternalServiceSdks,
     assembleImportEdges,
     assembleStaticClassification,
@@ -598,52 +599,8 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         }
     }
 
-    // 7b. Cloudflare edge district.
-    if (edgeHost) {
-        const districtId = "edge-delivery";
-        nodes.push({
-            id: districtId,
-            label: "Cloudflare edge",
-            kind: "scope",
-            archetype: "district",
-            description: `Edge deployment declared in ${edgeHost.file}.`,
-        });
-        nodes.push({
-            id: "edge-worker",
-            label: titleCase(edgeHost.name),
-            kind: "deployable",
-            archetype: "worker",
-            parentId: districtId,
-            description: `Cloudflare Worker${edgeHost.main ? ` with entry point ${edgeHost.main}` : ""}.`,
-            sourceRefs: [{ path: edgeHost.main ?? edgeHost.file }],
-            display: { flowLayer: 0 },
-        });
-        if (edgeHost.main) {
-            const mainRoot = edgeHost.main.split("/")[0];
-            if (mainRoot === undefined) throw new Error(`Empty worker entry path: ${edgeHost.main}`);
-            claimedSegments.add(mainRoot);
-        }
-        for (const binding of edgeHost.d1) {
-            const d1Binding = binding as { database_name?: string | undefined; binding: string };
-            const id = kebab(`d1-${d1Binding.database_name ?? d1Binding.binding}`);
-            nodes.push({
-                id,
-                label: d1Binding.database_name ?? d1Binding.binding,
-                kind: "infra",
-                archetype: "database",
-                parentId: districtId,
-                sourceRefs: [{ path: edgeHost.file }],
-                display: { flowLayer: 1 },
-            });
-            addEdge(edges, {
-                id: `edge-worker--${id}`,
-                from: "edge-worker",
-                to: id,
-                kind: "depends_on",
-                evidence: "declared",
-            });
-        }
-    }
+    // 7b. Cloudflare edge district (worker + D1 bindings).
+    assembleEdgeDistrict(state, { edgeHost, claimedSegments });
 
     // 7c. Package districts for code not claimed by a deployed service.
     // A real runnable package (CLI, web app) keeps its building. A generic

@@ -614,6 +614,68 @@ export function assembleStaticClassification(
 }
 
 /**
+ * 7b: draws the Cloudflare edge district. When a wrangler edge host is present,
+ * adds the edge-delivery district, the edge-worker deployable, and one database
+ * node per D1 binding (with a depends_on edge from the worker). The worker
+ * entry's top segment is claimed so the package phase does not redraw it.
+ *
+ * @param state - The assembly state (`nodes`/`edges`).
+ * @param options - `edgeHost` the wrangler edge host (or null for a no-op);
+ *   `claimedSegments` the claimed-dir set, mutated with the worker entry root.
+ */
+export function assembleEdgeDistrict(
+    state: AssemblyState,
+    options: { edgeHost: EdgeHost | null; claimedSegments: Set<string> },
+): void {
+    const { nodes, edges } = state;
+    const { edgeHost, claimedSegments } = options;
+    if (!edgeHost) return;
+    const districtId = "edge-delivery";
+    nodes.push({
+        id: districtId,
+        label: "Cloudflare edge",
+        kind: "scope",
+        archetype: "district",
+        description: `Edge deployment declared in ${edgeHost.file}.`,
+    });
+    nodes.push({
+        id: "edge-worker",
+        label: titleCase(edgeHost.name),
+        kind: "deployable",
+        archetype: "worker",
+        parentId: districtId,
+        description: `Cloudflare Worker${edgeHost.main ? ` with entry point ${edgeHost.main}` : ""}.`,
+        sourceRefs: [{ path: edgeHost.main ?? edgeHost.file }],
+        display: { flowLayer: 0 },
+    });
+    if (edgeHost.main) {
+        const mainRoot = edgeHost.main.split("/")[0];
+        if (mainRoot === undefined) throw new Error(`Empty worker entry path: ${edgeHost.main}`);
+        claimedSegments.add(mainRoot);
+    }
+    for (const binding of edgeHost.d1) {
+        const d1Binding = binding as { database_name?: string | undefined; binding: string };
+        const id = kebab(`d1-${d1Binding.database_name ?? d1Binding.binding}`);
+        nodes.push({
+            id,
+            label: d1Binding.database_name ?? d1Binding.binding,
+            kind: "infra",
+            archetype: "database",
+            parentId: districtId,
+            sourceRefs: [{ path: edgeHost.file }],
+            display: { flowLayer: 1 },
+        });
+        addEdge(edges, {
+            id: `edge-worker--${id}`,
+            from: "edge-worker",
+            to: id,
+            kind: "depends_on",
+            evidence: "declared",
+        });
+    }
+}
+
+/**
  * 7d / 7d-ii: draws the import edges between emitted nodes. The room-level and
  * package-level passes turn the room/package edge counts into depends_on edges
  * (only between nodes that exist); the owner-level pass aggregates file imports
