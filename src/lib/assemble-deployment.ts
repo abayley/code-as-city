@@ -10,6 +10,7 @@
 import { basename, join, relative, sep } from "node:path";
 import {
     type AssemblyState,
+    assembleCiWorkflows,
     assembleConfigExternals,
     assembleDaemons,
     assembleExternalServiceSdks,
@@ -18,7 +19,6 @@ import {
 } from "./assemble-deployment-phases.ts";
 import {
     addEdge,
-    escapeRegex,
     fileModuleName,
     footprintFor,
     linesOf,
@@ -1079,171 +1079,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // 7e-i-b. D17: external services a package talks to via a client SDK.
     assembleExternalServiceSdks(state, { externalServiceDeps, ownedFileEntries });
 
-    // 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
-    // a workflow_run chain, or a run step invoking repo code becomes a CI job
-    // district. Object-storage traffic becomes an external store with directional
-    // data flow; an invoked entry's Commander subcommand resolves to its handler
-    // module for a `runs` edge.
-    /**
-     * Resolves a Commander subcommand to the module that implements it: the
-     * handler is the first braced named import used inside the
-     * `.command('<sub>')` chunk of the entry file, resolved back through the
-     * import graph. Default and namespace imports are not scanned.
-     *
-     * @param entryFile - CLI entry file that registers the subcommand.
-     * @param sub - Subcommand name as invoked by the CI workflow.
-     * @returns The handler module's repository-relative path, or null when
-     *   the subcommand or its handler cannot be resolved.
-     */
-    const subcommandHandlerFile = (entryFile: string, sub: string): string | null => {
-        const text = readText(join(repo, entryFile));
-        const importedNames = new Map<string, string>(); // identifier -> specifier
-        for (const match of text.matchAll(/import\s*{([^}]+)}\s*from\s*['"]([^'"]+)['"]/g)) {
-            const names = match[1];
-            const specifier = match[2];
-            if (names === undefined || specifier === undefined) continue;
-            for (const raw of names.split(",")) {
-                const identifier = raw
-                    .trim()
-                    .split(/\s+as\s+/)
-                    .pop();
-                if (identifier) importedNames.set(identifier, specifier);
-            }
-        }
-        const chunkMatch = new RegExp(
-            `\\.command\\(['"]${escapeRegex(sub)}(?:\\s[^'"]*)?['"]\\)([\\s\\S]*?)(?=\\.command\\(|$)`,
-        ).exec(text);
-        if (!chunkMatch) return null;
-        const chunk = chunkMatch[1];
-        if (chunk === undefined) throw new Error(`Subcommand chunk missing for ${sub} in ${entryFile}`);
-        let first: { at: number; specifier: string } | null = null;
-        for (const [identifier, specifier] of importedNames) {
-            const at = chunk.indexOf(identifier);
-            if (at >= 0 && (!first || at < first.at)) first = { at, specifier };
-        }
-        if (!first) return null;
-        const resolved = resolveImport(entryFile, first.specifier);
-        return resolved !== null && "file" in resolved ? resolved.file : null;
-    };
-    const ciJobId = new Map(ciWorkflows.map((w) => [w.name, kebab(`ci-${w.name}-job`)]));
-    for (const workflow of ciWorkflows) {
-        // D9 (revised): CI is development infrastructure, not part of the running
-        // system, unless the workflow IS the deployment mechanism — a run step
-        // invoking source that itself deploys. The proxy is a run-step invocation
-        // of deploy-reachable source; lint/release/bot workflows invoke tooling,
-        // tests, or nothing, and leave the deployment view. The overview never
-        // shows CI, so this is deployment-view-only.
-        const deploysSource = workflow.invocations.some((inv) => deployReachable.has(inv.file));
-        if (!deploysSource) continue;
-        const districtId = kebab(`ci-${workflow.name}`);
-        const jobId = ciJobId.get(workflow.name);
-        if (jobId === undefined) throw new Error(`CI job id missing for workflow ${workflow.name}`);
-        nodes.push({
-            id: districtId,
-            label: `CI: ${workflow.name}`,
-            kind: "scope",
-            archetype: "district",
-            description: `GitHub Actions workflow declared in ${workflow.file}.`,
-        });
-        nodes.push({
-            id: jobId,
-            label: titleCase(workflow.name),
-            kind: "deployable",
-            archetype: "worker",
-            parentId: districtId,
-            description: [
-                `CI job from ${workflow.file}.`,
-                workflow.cron ? `Scheduled (${workflow.cron}).` : null,
-                workflow.triggeredBy.length ? `Runs after: ${workflow.triggeredBy.join(", ")}.` : null,
-                ...workflow.invocations.map((inv) => `Runs ${inv.file}${inv.sub ? ` ${inv.sub}` : ""}.`),
-            ]
-                .filter(Boolean)
-                .join(" "),
-            sourceRefs: [{ path: workflow.file }],
-            tags: workflow.cron ? ["cron"] : [],
-            display: { flowLayer: 1 },
-        });
-        if (workflow.storage) {
-            const storeId = kebab(`external-${workflow.storage.label}`);
-            if (!nodes.some((n) => n.id === storeId)) {
-                nodes.push({
-                    id: storeId,
-                    label: workflow.storage.label,
-                    kind: "external",
-                    archetype: "storage",
-                    parentId: ensureExternalsDistrict(),
-                    description: `Object store addressed from CI workflows.`,
-                    sourceRefs: [{ path: workflow.file }],
-                    display: { flowLayer: 2 },
-                });
-            }
-            if (workflow.storage.downloads) {
-                addEdge(edges, {
-                    id: `${storeId}--${jobId}`,
-                    from: storeId,
-                    to: jobId,
-                    kind: "data_flow",
-                    evidence: "declared",
-                    label: "downloads",
-                    sourceRefs: [{ path: workflow.file }],
-                });
-            }
-            if (workflow.storage.uploads) {
-                addEdge(edges, {
-                    id: `${jobId}--${storeId}`,
-                    from: jobId,
-                    to: storeId,
-                    kind: "data_flow",
-                    evidence: "declared",
-                    label: "uploads",
-                    sourceRefs: [{ path: workflow.file }],
-                });
-            }
-        }
-        for (const upstream of workflow.triggeredBy) {
-            const upstreamId = ciJobId.get(upstream);
-            if (upstreamId) {
-                addEdge(edges, {
-                    id: `${upstreamId}--${jobId}`,
-                    from: upstreamId,
-                    to: jobId,
-                    kind: "calls",
-                    evidence: "declared",
-                    label: "triggers on completion",
-                    sourceRefs: [{ path: workflow.file }],
-                });
-            }
-        }
-        for (const invocation of workflow.invocations) {
-            const entryOwner = nodeOwningFile(invocation.file);
-            if (entryOwner) {
-                addEdge(edges, {
-                    id: `${jobId}--${entryOwner}`,
-                    from: jobId,
-                    to: entryOwner,
-                    kind: "calls",
-                    evidence: "declared",
-                    label: `runs ${basename(invocation.file)}${invocation.sub ? ` ${invocation.sub}` : ""}`,
-                    sourceRefs: [{ path: workflow.file }],
-                });
-            }
-            if (invocation.sub) {
-                const handlerFile = subcommandHandlerFile(invocation.file, invocation.sub);
-                const handlerOwner = handlerFile ? nodeOwningFile(handlerFile) : null;
-                if (handlerOwner && handlerOwner !== entryOwner && handlerFile) {
-                    addEdge(edges, {
-                        id: `${jobId}--${handlerOwner}-h`,
-                        from: jobId,
-                        to: handlerOwner,
-                        kind: "calls",
-                        evidence: "declared",
-                        label: `${invocation.sub} handler`,
-                        sourceRefs: [{ path: handlerFile }],
-                    });
-                }
-            }
-        }
-    }
+    // 7e-ii. CI workflow jobs (D9-D12): a scheduled, chained, or deploying
+    // workflow becomes a CI job district with storage, trigger, and runs edges.
+    assembleCiWorkflows(state, { ciWorkflows, deployReachable, resolveImport });
 
     // 7c-iv / 7c-iv-b. D14 published artefacts and D16 runnable apps: reclassify
     // the owning package room into a tagged deployable (D14 yields to D16).
