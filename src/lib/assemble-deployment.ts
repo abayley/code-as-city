@@ -13,7 +13,9 @@ import {
     assembleCiWorkflows,
     assembleConfigExternals,
     assembleDaemons,
+    assembleDatabases,
     assembleExternalServiceSdks,
+    assembleImportEdges,
     assembleStaticClassification,
     reclassifyPublishedArtefacts,
     reclassifyRunnableApps,
@@ -24,13 +26,7 @@ import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
 import { type Host, isServiceShadowed } from "./hosts.ts";
-import {
-    classifiedVariantServices,
-    inferEmbeddedDatabaseUse,
-    inferModuleDataFlows,
-    isEntryPoint,
-    type NodeIndexEntry,
-} from "./inference.ts";
+import { classifiedVariantServices, inferModuleDataFlows, isEntryPoint } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
@@ -957,111 +953,16 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // repeated across every district without adding information; C2 elimination
     // now simply removes shared code from the deployment map.
 
-    // 7d. Room-level and package-level import edges (only between nodes that exist).
-    const nodeIds = new Set(nodes.map((n) => n.id));
-    for (const [key, count] of roomEdges) {
-        const [from, to] = splitEdgeKey(key);
-        if (!nodeIds.has(from) || !nodeIds.has(to)) continue;
-        addEdge(edges, {
-            id: `${from}--${to}`,
-            from,
-            to,
-            kind: "depends_on",
-            evidence: "declared",
-            label: `${count} import${count === 1 ? "" : "s"}`,
-        });
-    }
-    for (const key of packageEdges.keys()) {
-        const [from, to] = splitEdgeKey(key);
-        if (nodeIds.has(from) && nodeIds.has(to)) {
-            addEdge(edges, { id: `${from}--${to}`, from, to, kind: "depends_on", evidence: "declared" });
-        }
-    }
+    // 7d / 7d-ii. Import edges between emitted nodes; returns the id snapshot.
+    const nodeIds = assembleImportEdges(state, { roomEdges, packageEdges, fileEdges });
 
-    // 7d-ii. Owner-level import edges: aggregate file imports by emitted campus
-    // node. Covers flattened district children, which the room-level pass above
-    // cannot see; addEdge's id dedup keeps existing pairs untouched.
-    const ownerEdgeCounts = new Map<string, number>();
-    for (const { from, to } of fileEdges) {
-        const a = fileNodeOwner.get(from);
-        const b = fileNodeOwner.get(to);
-        if (!a || !b || a === b || !nodeIds.has(a) || !nodeIds.has(b)) continue;
-        const key = `${a}->${b}`;
-        ownerEdgeCounts.set(key, (ownerEdgeCounts.get(key) ?? 0) + 1);
-    }
-    for (const [key, count] of ownerEdgeCounts) {
-        const [from, to] = splitEdgeKey(key);
-        addEdge(edges, {
-            id: `${from}--${to}`,
-            from,
-            to,
-            kind: "depends_on",
-            evidence: "declared",
-            label: `${count} import${count === 1 ? "" : "s"}`,
-        });
-    }
-
-    // 7e. Drizzle database when no D1 binding declared it already.
-    if (drizzleConfig && ![...nodeIds].some((id) => id.startsWith("d1-"))) {
-        const dialect = /dialect:\s*["'](\w+)["']/.exec(readText(join(repo, drizzleConfig)))?.[1];
-        const owner = owningPackage(drizzleConfig);
-        const parent = edgeHost ? "edge-delivery" : owner ? `${owner.id}-area` : undefined;
-        if (parent && nodeIds.has(parent)) {
-            nodes.push({
-                id: "drizzle-database",
-                label: `Database (${dialect ?? "sql"})`,
-                kind: "infra",
-                archetype: "database",
-                parentId: parent,
-                description: `Drizzle ORM schema declared in ${drizzleConfig}.`,
-                sourceRefs: [{ path: drizzleConfig }],
-                display: { flowLayer: 1 },
-            });
-            const from = edgeHost ? "edge-worker" : owner?.id;
-            // nodeIds is a snapshot taken before this section; nodes.some also
-            // covers anything pushed since, so it subsumes the snapshot check.
-            if (from !== undefined && nodes.some((n) => n.id === from)) {
-                addEdge(edges, {
-                    id: `${from}--drizzle-database`,
-                    from,
-                    to: "drizzle-database",
-                    kind: "depends_on",
-                    evidence: "declared",
-                });
-            }
-        }
-    }
-
-    // 7e-i. Embedded databases (same dependency scan as overview mode's O11):
-    // the node lives in the district of the first module importing the SDK, and
-    // importers get inferred reads/writes data flow. One index entry per owned
-    // source file, so importer order replays the sourceFiles order.
-    const ownedFileEntries: NodeIndexEntry[] = [];
-    for (const file of sourceFiles) {
-        const owner = fileNodeOwner.get(file);
-        if (owner && nodes.some((n) => n.id === owner)) ownedFileEntries.push({ id: owner, files: [file] });
-    }
-    inferEmbeddedDatabaseUse({
-        databases: embeddedDatabases,
-        entries: ownedFileEntries,
-        edges,
-        fileText,
-        edgeSuffix: "",
-        onImporters: (database, importerOwners) => {
-            const parentDistrict = importerOwners
-                .map((owner) => nodes.find((n) => n.id === owner)?.parentId)
-                .find((parent) => parent && nodes.some((n) => n.id === parent && n.kind === "scope"));
-            nodes.push({
-                id: database.id,
-                label: database.label,
-                kind: "infra",
-                archetype: "database",
-                ...(parentDistrict ? { parentId: parentDistrict } : {}),
-                description: database.description,
-                sourceRefs: [{ path: database.path }],
-                display: { flowLayer: 2 },
-            });
-        },
+    // 7e / 7e-i. Database nodes (drizzle + embedded); returns the owned-file index.
+    const ownedFileEntries = assembleDatabases(state, {
+        drizzleConfig,
+        edgeHost,
+        sourceFiles,
+        embeddedDatabases,
+        nodeIds,
     });
 
     // 7e-i-b. D17: external services a package talks to via a client SDK.
