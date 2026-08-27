@@ -36,6 +36,7 @@ import { artefactEntryCandidates, owningPackage as owningPackageOf, type Package
 import type { PathReassignment } from "./path-references.ts";
 import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
+import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, OTLP_PATTERN } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
@@ -78,6 +79,7 @@ export type DeploymentContext = {
     hasHostDeployShape: boolean;
     scriptReachable: ReadonlySet<string>;
     spawnedEntries: readonly SpawnedEntry[];
+    runnableApps: readonly RunnableApp[];
     scriptReferencedFiles: ReadonlySet<string>;
     devToolingWarnings: readonly string[];
     pathReassignments: Map<string, PathReassignment>;
@@ -154,6 +156,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         scriptReachable,
         scriptReferencedFiles,
         spawnedEntries,
+        runnableApps,
         devToolingWarnings,
         pathReassignments,
         entryDirNames,
@@ -183,6 +186,10 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
      * @returns The owning package, or null when no package claims the path.
      */
     const owningPackage = (file: string): Package | null => owningPackageOf(packages, file);
+
+    // D16: the directories of packages run directly, for the R5 spare and the
+    // D14 precedence check.
+    const runnableByDir = new Map(runnableApps.map((app) => [app.pkgDir, app]));
 
     const nodes: MapNode[] = [];
     const edges: MapEdge[] = [];
@@ -716,9 +723,17 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         // these packages, so this is deployment-view-only.
         const packageDeployed = pkgRooms.some((room) => room.files.some((f) => hostDeployReachable.has(f)));
         const pathReferenced = pkgRooms.some((room) => pathReassignments.has(room.id));
-        // A published artefact (D14) is deployed by publication, not by a host,
-        // so R5 must not strip it even though no host root reaches it.
-        if (hasHostDeployShape && !residual && !pathReferenced && !packageDeployed && pkg.artefact === null) {
+        // A published artefact (D14) or a runnable app (D16) is deployed by
+        // publication or by being run, not by a host, so R5 must not strip it
+        // even though no host root reaches it.
+        if (
+            hasHostDeployShape &&
+            !residual &&
+            !pathReferenced &&
+            !packageDeployed &&
+            pkg.artefact === null &&
+            !runnableByDir.has(pkg.dir)
+        ) {
             warnings.push(
                 `Dev-only package excluded from the deployment view (reached by no host deploy root): ${pkg.name} (${pkgRooms.length} area${pkgRooms.length === 1 ? "" : "s"}).`,
             );
@@ -1205,7 +1220,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // per published package.
     for (const pkg of packages) {
         const artefact = pkg.artefact;
-        if (artefact === null) continue;
+        // A runnable app (D16) is shown as the app it runs, not as a published
+        // library, so D14 yields precedence to D16 for it.
+        if (artefact === null || runnableByDir.has(pkg.dir)) continue;
         const entrySource = artefactEntryCandidates(pkg).find(fileExists);
         const nodeId = entrySource ? nodeOwningFile(entrySource) : null;
         const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
@@ -1218,6 +1235,19 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         const childCount = nodes.filter((n) => n.parentId === node.id).length;
         node.archetype = artefact.kind === "library" && childCount >= 2 ? "building" : "gateway";
         node.tags = [...new Set([...(node.tags ?? []), artefact.tag])];
+    }
+
+    // 7c-iv-b. D16: a runnable app's entry node becomes a gateway deployable,
+    // tagged by how it runs — `server` for a start/serve script that starts a
+    // server, `app` for a web SPA rooted at its package. This is how an app you
+    // run directly (no compose, wrangler, or publish) enters the deployment view.
+    for (const app of runnableApps) {
+        const nodeId = nodeOwningFile(app.entry);
+        const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
+        if (node === undefined || node.kind !== "module" || (node.parentId ?? "").startsWith("host-")) continue;
+        node.kind = "deployable";
+        node.archetype = "gateway";
+        node.tags = [...new Set([...(node.tags ?? []), app.tag])];
     }
 
     // 7c-v. D15: runtime-supervised processes. A deploy-reachable source file

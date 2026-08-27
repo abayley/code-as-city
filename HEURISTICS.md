@@ -8,8 +8,8 @@ Each group lives in a module under `src/lib/`, orchestrated by
 `src/generate-map.ts`: I in `inventory.ts`; S in `packages.ts`, `rooms.ts`,
 and `imports.ts`; C in `coupling.ts`; D in `compose.ts`, `dockerfile.ts`,
 `crontab.ts`, `wrangler.ts`, `workflows.ts`, `hosts.ts`, `daemons.ts` (D15),
-and `host-config.ts` (with D14's published-artefact classification in
-`packages.ts`);
+`runnable.ts` (D16), and `host-config.ts` (with D14's published-artefact
+classification in `packages.ts`);
 R in `reachability.ts` and `path-references.ts`; M in
 `assemble-deployment.ts`; O in `assemble-overview.ts` (with `complexity.ts`
 for O6); the coverage/TSDoc/embedded-database scans in `scans.ts`; output in
@@ -67,6 +67,7 @@ threshold is untuned beyond the test repos.
 | D13 | A package.json dependency naming an embedded database SDK (`@lancedb/*`, `chromadb`, `better-sqlite3`/`sqlite3`, `duckdb`) | One database node per dependency repo-wide, applied in BOTH map modes: in the deployment map it sits in the district of the first module importing the SDK; importers get inferred `reads/writes` data flow (confidence 0.7). Overview mode's O11 shares this scan |
 | D14 | A non-private `package.json` declaring `bin` (CLI), `engines.vscode`/`contributes` (VS Code extension), or a `main`/`module`/`exports` entry with a name (published library) | A published deployment artefact: one deployable per package. The artefact's source entry (the `bin` target or library/extension entry, resolved via the dist->src and `.m/cjs`->`.ts` conventions, falling back to `src/index.ts`/`index.ts`/`src/main.ts`) becomes a deploy root (so a bundled library is not swept as an R3 orphan) and its owning node becomes the deployable — a CLI or extension reads as a `gateway`, a library as a `building` (a `gateway` when it has fewer than two rooms) — tagged `cli`/`published`/`extension`. R5 never strips a published artefact |
 | D15 | A `spawn`/`spawnSync`/`fork`/`execFile[Sync]`/`Bun.spawn` or `new Worker(...)` call in deploy-reachable (non-test) source whose first path argument is a literal (bare, or inside a `new URL('<path>', import.meta.url)`) resolving to an inventoried entry (with the dist->src / `.m/cjs`->`.ts` conventions) | The target is a daemon the caller starts: a `deployable`/`worker` process node tagged `daemon`, with a `calls` edge labelled "starts" (evidence inferred, confidence 0.7) from the supervisor's node. A spawn on a variable or an external command resolves to nothing and draws no edge. Deliberately conservative — it never invents an edge it cannot ground in a real file, so it stays silent on repos that spawn through variables |
+| D16 | An app run directly, with no compose/wrangler/published-package declaration: a web-role package with a root SPA entry (`index.tsx`/`main.tsx`/`App.tsx`, at the package root or under `src/`), or a package whose `start`/`serve` script targets source that starts a server (`Bun.serve`/`.listen`/`createServer`/fastify/express) | A runnable-app deployable: the entry's owning node becomes a `gateway`, tagged `app` (web SPA) or `server`. The entry seeds a deploy root (so R3 does not orphan it) but is NOT a host deploy root — independent runnable apps are separate deployments, so one must not make the repo host-shaped and strip the others; R5 spares runnable packages directly. Takes precedence over D14's library classification (a runnable app that also declares `main` shows as the app, not a library) |
 
 Failure modes: D1's rank list and 50% threshold are conventions; D14's
 private-vs-published signal is `private: true` alone (publishConfig unused;

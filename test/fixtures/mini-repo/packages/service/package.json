@@ -1,0 +1,6 @@
+{
+    "name": "@mini/service",
+    "scripts": {
+        "start": "bun run src/main.ts"
+    }
+}

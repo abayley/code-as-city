@@ -26,6 +26,7 @@ import { findPathReassignments } from "./lib/path-references.ts";
 import { analyseReachability, stripDevTooling } from "./lib/reachability.ts";
 import { readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
+import { findRunnableApps } from "./lib/runnable.ts";
 import { createDocScanner, findEmbeddedDatabases, scanCoverage } from "./lib/scans.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
 import { findEdgeHost } from "./lib/wrangler.ts";
@@ -110,8 +111,22 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
     const { coverageForFiles } = scanCoverage(repo, packageDirs);
     const { fileDocSummary, docForFiles } = createDocScanner(repo);
 
+    // D16: apps run directly (a server started from a start/serve script, or a
+    // web SPA rooted at its package) — recognised before reachability so their
+    // entries seed deploy roots.
+    const runnableApps = findRunnableApps(repo, packages, sourceFiles);
+
     // 6. Dev-tooling detection by reachability
-    const reachability = analyseReachability(repo, packages, hosts, edgeHost, sourceFiles, fileEdges, fileToRoom);
+    const reachability = analyseReachability(
+        repo,
+        packages,
+        hosts,
+        edgeHost,
+        sourceFiles,
+        fileEdges,
+        fileToRoom,
+        runnableApps,
+    );
     const { deployReachable, hostDeployReachable, hasHostDeployShape, scriptReachable, scriptReferencedFiles } =
         reachability;
     const devToolingWarnings = stripDevTooling(repo, rooms, reachability, fileEdges);
@@ -188,6 +203,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         scriptReachable,
         scriptReferencedFiles,
         spawnedEntries,
+        runnableApps,
         devToolingWarnings,
         pathReassignments,
         entryDirNames: ENTRY_DIR_NAMES,

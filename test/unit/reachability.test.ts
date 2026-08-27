@@ -32,7 +32,7 @@ describe("analyseReachability", () => {
     const sourceFiles = ["scripts/qa.ts", "scripts/backfill.ts", "scripts/helper.ts", "src/app.ts"];
     const fileToRoom = new Map(sourceFiles.map((f) => [f, makeRoom("r", [])]));
     const fileEdges = [{ from: "scripts/qa.ts", to: "scripts/helper.ts" }];
-    const reachability = analyseReachability(repo, [pkg], [], null, sourceFiles, fileEdges, fileToRoom);
+    const reachability = analyseReachability(repo, [pkg], [], null, sourceFiles, fileEdges, fileToRoom, []);
 
     it("given QA-named and operational scripts, when analysed, then only the QA-only chain is dev tooling", () => {
         expect(reachability.isDevToolingFile("scripts/qa.ts")).toBe(true);
@@ -55,7 +55,7 @@ describe("stripDevTooling", () => {
         const rooms = new Map([[room.id, room]]);
         const fileToRoom = new Map(sourceFiles.map((f) => [f, room]));
         const fileEdges = [{ from: "scripts2/qa.ts", to: "scripts2/residue.ts" }];
-        const reachability = analyseReachability(repo, [pkg], [], null, sourceFiles, fileEdges, fileToRoom);
+        const reachability = analyseReachability(repo, [pkg], [], null, sourceFiles, fileEdges, fileToRoom, []);
         const warnings = stripDevTooling(repo, rooms, reachability, fileEdges);
         expect(room.files).toEqual([]);
         expect(warnings).toEqual([

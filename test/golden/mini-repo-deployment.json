@@ -548,6 +548,68 @@
       ]
     },
     {
+      "id": "mini-service-area",
+      "label": "@Mini/Service",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/service, rooted at packages/service/."
+    },
+    {
+      "id": "mini-service-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-service-area",
+      "description": "A standalone service: run directly via `bun start`, it serves HTTP.\n\n2 source files under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/service/src"
+        }
+      ],
+      "metrics": {
+        "loc": 13,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6499693867481124,
+          0.935
+        ]
+      },
+      "tags": [
+        "server",
+        "listens"
+      ]
+    },
+    {
+      "id": "mini-service-src-files",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-service-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/service/src/handler.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-service-src-main",
+      "label": "Main",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-service-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/service/src/main.ts"
+        }
+      ]
+    },
+    {
       "id": "mini-shared-src",
       "label": "Src",
       "kind": "module",
@@ -631,6 +693,41 @@
         {
           "path": "packages/toolkit/src/index.ts"
         }
+      ]
+    },
+    {
+      "id": "mini-web-area",
+      "label": "@Mini/Web",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/web, rooted at packages/web/."
+    },
+    {
+      "id": "mini-web-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-web-area",
+      "description": "Renders the application root.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/web/src"
+        }
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6272969222485302,
+          0.935
+        ]
+      },
+      "tags": [
+        "app"
       ]
     },
     {
@@ -809,6 +906,6 @@
     "Shared utility modules (fan-in >= 3, instability <= 0.25) are eliminated: src/lib.",
     "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
     "Dev-only package excluded from the deployment view (reached by no host deploy root): @mini/e2e (1 area).",
-    "Orphan area excluded (unreferenced, undeployed): src (1 files)."
+    "Orphan area excluded (unreferenced, undeployed): runtime (1 files)."
   ]
 }

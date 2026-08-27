@@ -131,6 +131,31 @@ describe("generate-map golden master", () => {
         expect(startsEdge?.from).toBe("mini-greeter-src");
     });
 
+    it("given two packages sharing a name, when generating the overview, then district ids stay unique", () => {
+        const map = generateMap(["--overview"]);
+        const ids = map.nodes.map((node) => node.id).filter((id): id is string => id !== undefined);
+        // @mini/toolkit and packages/toolkit-fork share a name (as ollama-code's
+        // root and packages/core do); their districts must not collide.
+        expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("given runnable apps, when generating the deployment map, then a server and a web app are gateway deployables (D16)", () => {
+        const map = generateMap([]) as GeneratedMap & {
+            nodes: Array<{ kind?: string; archetype?: string; tags?: string[]; sourceRefs?: Array<{ path?: string }> }>;
+        };
+        const deployableAt = (path: string) =>
+            map.nodes.find(
+                (node) => node.kind === "deployable" && (node.sourceRefs ?? []).some((ref) => ref.path === path),
+            );
+        // @mini/service starts a server via its `start` script; @mini/web is a
+        // web-role package rooted at src/app.tsx.
+        expect(deployableAt("packages/service/src")).toMatchObject({
+            archetype: "gateway",
+            tags: ["server", "listens"],
+        });
+        expect(deployableAt("packages/web/src")).toMatchObject({ archetype: "gateway", tags: ["app"] });
+    });
+
     it("given the fixture repo, when generating twice, then the maps are equal bar the timestamp", () => {
         expect(generateMap([])).toEqual(generateMap([]));
     });

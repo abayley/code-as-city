@@ -353,6 +353,16 @@ export async function runOverview(context: OverviewContext): Promise<void> {
               band: 0,
           }));
 
+    // Two packages can share a name (a repo's root and a workspace package both
+    // named @scope/pkg, as in ollama-code), which collides their district ids;
+    // suffix later collisions so the map stays valid. Done before module ids so
+    // the modules' parentId picks up the deduped district id.
+    const usedDistrictIds = new Set<string>();
+    for (const district of districts) {
+        district.id = uniqueId(district.id, (id) => usedDistrictIds.has(id));
+        usedDistrictIds.add(district.id);
+    }
+
     // Kebab-casing can flatten distinct paths onto one id (src/local/config vs
     // src-local/config); suffix later collisions rather than emit invalid maps.
     const usedModuleIds = new Set<string>();

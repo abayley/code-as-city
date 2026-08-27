@@ -48,6 +48,7 @@ is not yet in an RFC.
 | HC-010 | D5 name classification mislabels API layers as databases    | D5          | Done     |
 | HC-011 | Overview emits one node per file; unrenderable at scale     | O2; viewer  | Proposed |
 | HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Done     |
+| HC-013 | No deployment category for an app you run directly          | new; D16, R5| Done     |
 
 ## HC-001: No Deployment Category for a Published Package
 
@@ -401,6 +402,40 @@ Two decisions worth recording:
   `packages/greeter` spawns `./worker.ts` (a daemon), plus a variable spawn and
   a spawn in `cli.test.ts` that both draw nothing; a `generate-map` assertion
   pins all three outcomes.
+
+## HC-013: No Deployment Category for an App You Run Directly
+
+**Rules:** a new detection rule (D16); interacts with R5.
+
+**Evidence.** RFC-0004 gave the deployment view a category for every *declared*
+deployable — a compose host, a wrangler edge, a published package (D14). It
+still had none for an app you simply *run*, of which two turned up immediately.
+aria-mail (`emailoauth`) is a single Bun process: `src/server/server.ts` calls
+`startBackgroundServices` (the IMAP/email sync) and then `Bun.serve`, all
+in-process; `src/runtime/api/email-api.ts` is not a second entry point but an
+internal `EmailAPI` module. The generator showed one bare "Emailoauth" district,
+no deployable, no externals. excalidraw is a Vite SPA whose entry is
+`excalidraw-app/App.tsx`/`index.tsx` at the *package root*, not under
+`app`/`pages`/`src/app`; because that entry was in no recognised web-entry dir,
+R5 (new in RFC-0004) wrongly excluded the whole web app as dev-only — the actual
+product vanished from its own deployment map.
+
+**Resolution (Done).** D16 recognises a runnable app: a web-role package with a
+root SPA entry, or a package whose `start`/`serve` script targets source that
+starts a server (`Bun.serve`/`.listen`/`createServer`/fastify/express). Its
+entry becomes a `gateway` deployable tagged `app` or `server`, and seeds a
+deploy root so R3 does not orphan it. Critically, a runnable entry is NOT a host
+deploy root: independent runnable apps are separate deployments, so making one a
+host root would (and briefly did) make the repo look host-shaped and let R5
+strip everything the app does not import — aria's whole agent was dropped by a
+trivial `apps/fonts` sub-app until this was corrected. Instead R5 spares runnable
+packages directly, as it spares published artefacts. D16 also takes precedence
+over D14 (a runnable app that declares `main` shows as the app, not a library).
+Verified: aria-mail gains a `server` gateway from `src/server`, excalidraw's web
+app returns (excalidraw-app no longer R5-excluded), and aria is unchanged at
+~100 nodes; aria-evals stays 53 and every sampled repo is deterministic and
+schema-valid. Fixture: `packages/service` (a `start`-script server) and a
+web-role `@mini/web`; a `generate-map` assertion pins both tags.
 
 ## Repositories Examined
 

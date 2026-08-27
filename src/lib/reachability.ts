@@ -6,6 +6,7 @@ import type { Host } from "./hosts.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
 import type { Room } from "./rooms.ts";
+import type { RunnableApp } from "./runnable.ts";
 import { OTLP_PATTERN } from "./scans.ts";
 import type { EdgeHost } from "./wrangler.ts";
 
@@ -104,6 +105,7 @@ export function analyseReachability(
     sourceFiles: readonly string[],
     fileEdges: readonly FileEdge[],
     fileToRoom: ReadonlyMap<string, Room>,
+    runnableApps: readonly RunnableApp[],
 ): Reachability {
     /**
      * Resolves a manifest token (a bin/main value or a script-command word)
@@ -175,6 +177,14 @@ export function analyseReachability(
                 if (!qa) operationalRoots.add(resolved);
             }
         }
+    }
+    // D16: a runnable app's entry is a deploy root, so its code survives the R3
+    // orphan sweep. It is NOT a host deploy root: independent runnable apps
+    // (a web SPA, a service) are separate deployments, so one must not make the
+    // repo "host-shaped" and force R5 to strip the others. R5 spares runnable
+    // packages directly instead.
+    for (const app of runnableApps) {
+        if (fileToRoom.has(app.entry)) deployRoots.add(app.entry);
     }
 
     const deployReachable = reachableFrom(deployRoots, fileEdges);

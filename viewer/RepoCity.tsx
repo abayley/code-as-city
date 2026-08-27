@@ -596,9 +596,10 @@ function Structure({
     const group = useRef<THREE.Group>(null);
     const material = useRef<THREE.MeshStandardMaterial>(null);
     const declaredSize = node.display?.size ?? [1.65, 1.2, 1.4];
-    // Local change: campus structures render at 80% so tightly packed rows do
-    // not obscure the nameplates in front of the row behind.
-    const structureScale = interior ? 1 : 0.8;
+    // Local change: structures render below full size so tightly packed rows do
+    // not obscure the nameplates in front of the row behind — campus structures
+    // most of all, since they stack deepest.
+    const structureScale = interior ? 0.85 : 0.68;
     const requestedSize = declaredSize.map((d) => d * structureScale) as [number, number, number];
     const size: [number, number, number] =
         node.archetype === "building" && !hasInterior
