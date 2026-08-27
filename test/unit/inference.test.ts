@@ -135,6 +135,25 @@ describe("inferExternalDelivers", () => {
         });
         expect(edges).toEqual([]);
     });
+
+    it("given a multi-word external label referenced by SDK import or env prefix, when inferring, then it still delivers", () => {
+        const wordy = textsOf({
+            "src/imports.ts": 'import OpenAI from "openai";',
+            "src/env.ts": "const key = process.env.OPENAI_API_KEY;",
+            "src/none.ts": "export const x = 1;",
+        });
+        // "OpenAI API" must match by its identifying word (openai), not the
+        // whole label concatenated to "openaiapi", which matches nothing real.
+        const externals = [{ id: "external-openai-api", label: "OpenAI API" }];
+        const deliversFrom = (file: string) => {
+            const edges: MapEdge[] = [];
+            inferExternalDelivers({ externals, entries: [{ id: "svc", files: [file] }], edges, fileText: wordy });
+            return edges.map((e) => e.to);
+        };
+        expect(deliversFrom("src/imports.ts")).toEqual(["external-openai-api"]);
+        expect(deliversFrom("src/env.ts")).toEqual(["external-openai-api"]);
+        expect(deliversFrom("src/none.ts")).toEqual([]);
+    });
 });
 
 describe("inferModuleDataFlows", () => {

@@ -1323,6 +1323,15 @@
       ]
     },
     {
+      "id": "mini-api-src-ai--external-openai-api-d",
+      "from": "mini-api-src-ai",
+      "to": "external-openai-api",
+      "kind": "data_flow",
+      "evidence": "inferred",
+      "confidence": 0.6,
+      "label": "delivers"
+    },
+    {
       "id": "mini-service-src-handler--external-ollama-d",
       "from": "mini-service-src-handler",
       "to": "external-ollama",

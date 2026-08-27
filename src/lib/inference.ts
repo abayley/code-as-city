@@ -77,8 +77,8 @@ export function inferEmbeddedDatabaseUse(options: {
  * no files are skipped in both modes.
  *
  * @param options - The pass inputs: `externals` — the external-system nodes
- *   (M6/D11/D12) with display labels to match by; `entries` — the
- *   node-shaped records to test; `edges` — the accumulating edge list,
+ *   (M6/D11/D12), matched by their label's identifying first word; `entries` —
+ *   the node-shaped records to test; `edges` — the accumulating edge list,
  *   mutated in place; `fileText` — reads a repo-relative file's text.
  */
 export function inferExternalDelivers(options: {
@@ -88,7 +88,11 @@ export function inferExternalDelivers(options: {
     fileText: (file: string) => string;
 }): void {
     for (const external of options.externals) {
-        const name = external.label.toLowerCase().replace(/[^a-z0-9]/g, "");
+        // Match on the label's identifying FIRST word, not the whole label
+        // concatenated: "OpenAI API" -> "openai" (matching `from "openai"` and
+        // the OPENAI_ env prefix), not "openaiapi", which matches nothing real.
+        // "IMAP mail server" -> "imap", "Langfuse" -> "langfuse".
+        const name = (external.label.split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
         if (name.length < 4) continue;
         const referencePattern = externalReferencePattern(name);
         for (const entry of options.entries) {
