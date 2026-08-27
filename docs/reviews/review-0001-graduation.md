@@ -338,15 +338,19 @@ Two findings were **not** actioned, deliberately:
   This addresses the internal-factoring concern; the per-module unit tests are
   now easier to write against the extracted phase functions but remain open.
 
-  Note recorded while fixturing `delivers`: `inferExternalDelivers` normalises
-  the external's *label* to lower-case alphanumeric, so a multi-word label such
-  as "OpenAI API" becomes `openaiapi`, which the reference pattern can match
-  neither in an import specifier nor as an `OPENAIAPI_` env prefix (real code
-  writes `OPENAI_API_KEY`, i.e. `OPENAI_API`). Of the current SDK labels only
-  the single-word "Ollama" can ever match; every other label ends in " API" or
-  "server" and is unreachable. This looks like a latent defect in the signal,
-  not just a fixture gap, and is left for a separate behaviour change rather
-  than folded into this test work.
+  Defect found and fixed while fixturing `delivers` (2026-08-28):
+  `inferExternalDelivers` normalised the external's *label* to lower-case
+  alphanumeric, so a multi-word label such as "OpenAI API" became `openaiapi`,
+  which the reference pattern could match neither in an import specifier nor as
+  an `OPENAIAPI_` env prefix (real code writes `OPENAI_API_KEY`, i.e.
+  `OPENAI_API`). Of the SDK labels only the single-word "Ollama" ever matched;
+  every other label (" API", "mail server", ...) was unreachable and drew no
+  delivers edge. Fixed by matching on the label's identifying first word
+  ("OpenAI API" -> `openai`, "IMAP mail server" -> `imap`), which is what the
+  M10 rule always documented. Verified test-first, confined to delivers edges:
+  ollama-code went 0 -> 15 delivers edges (its OpenAI and Google Gemini
+  externals, previously missing) with everything else byte-identical and
+  deterministic; aria-evals (single-word externals) unchanged.
 
 ### Verification of the fixes
 
