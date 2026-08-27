@@ -7,16 +7,18 @@
  * them in order. The 7x markers are that file's own section headings; D12-D17
  * are HEURISTICS.md rule IDs.
  */
-import { basename, join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import {
     addEdge,
     escapeRegex,
     fileModuleName,
     footprintFor,
     linesOf,
+    roomLabel,
     sdkImporterIds,
     splitEdgeKey,
 } from "./assembly-helpers.ts";
+import type { Coupling } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
@@ -26,14 +28,16 @@ import {
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferModuleDataFlows,
+    isEntryPoint,
     type NodeIndexEntry,
 } from "./inference.ts";
-import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
+import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
+import type { PathReassignment } from "./path-references.ts";
 import { readJson, readText } from "./read.ts";
-import type { Room } from "./rooms.ts";
+import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
-import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
+import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
 import type { EdgeHost } from "./wrangler.ts";
@@ -1027,6 +1031,383 @@ export function assembleEdgeDistrict(
             evidence: "declared",
         });
     }
+}
+
+/**
+ * 7c / 7c-i / 7c-ii: draws the package districts for code no deployed service
+ * claimed. A real runnable package keeps its building; a generic package is
+ * flattened, its rooms promoted to campus-level structures (each expandable
+ * into a building when its directory has interior structure). Orphan and
+ * dev-only (R5) areas are excluded with a warning; path-reassigned rooms move
+ * to the referencing package's district. Then 7c-i draws the wrangler web
+ * entry's deploys edge to the edge worker, and 7c-ii draws OTLP producers'
+ * data_flow edges into the collector.
+ *
+ * Populates `state.fileNodeOwner` and returns the promoted nodes for the
+ * classification phase.
+ *
+ * @param state - The assembly state (`repo`, `nodes`/`edges`/`warnings`,
+ *   `fileNodeOwner`, `owningPackage`, `uniqueNodeId`, `pushFileRooms`,
+ *   `fileText`).
+ * @param options - The package/room context and reachability/coupling inputs,
+ *   the `claimedSegments`/`serviceClaimedDirs` handoffs from the host and edge
+ *   phases, and `edgeHost` for the deploys edge.
+ * @returns The promoted (district-less / own-district) nodes with their files,
+ *   for the static-classification phase.
+ */
+export function assemblePackageDistricts(
+    state: AssemblyState,
+    options: {
+        packages: readonly Package[];
+        rooms: ReadonlyMap<string, Room>;
+        claimedSegments: ReadonlySet<string>;
+        serviceClaimedDirs: ReadonlySet<string>;
+        isUtilityRoom: (roomId: string) => boolean;
+        pathReassignments: ReadonlyMap<string, PathReassignment>;
+        roomCoupling: ReadonlyMap<string, Coupling>;
+        fileCoupling: ReadonlyMap<string, Coupling>;
+        entryDirNames: ReadonlySet<string>;
+        deployReachable: ReadonlySet<string>;
+        scriptReachable: ReadonlySet<string>;
+        hostDeployReachable: ReadonlySet<string>;
+        hasHostDeployShape: boolean;
+        runnableByDir: ReadonlyMap<string, RunnableApp>;
+        roomEdges: ReadonlyMap<string, number>;
+        fileToRoom: ReadonlyMap<string, Room>;
+        scriptReferencedFiles: ReadonlySet<string>;
+        modulesAsBuildings: boolean;
+        edgeHost: EdgeHost | null;
+    },
+): { id: string; files: string[] }[] {
+    const { repo, nodes, edges, warnings, fileNodeOwner, owningPackage, uniqueNodeId, pushFileRooms, fileText } = state;
+    const {
+        packages,
+        rooms,
+        claimedSegments,
+        serviceClaimedDirs,
+        isUtilityRoom,
+        pathReassignments,
+        roomCoupling,
+        fileCoupling,
+        entryDirNames,
+        deployReachable,
+        scriptReachable,
+        hostDeployReachable,
+        hasHostDeployShape,
+        runnableByDir,
+        roomEdges,
+        fileToRoom,
+        scriptReferencedFiles,
+        modulesAsBuildings,
+        edgeHost,
+    } = options;
+    // A real runnable package (CLI, web app) keeps its building. A generic
+    // package (role "package") would produce one synthetic building holding
+    // everything, so it is flattened: its rooms are promoted to campus-level
+    // structures, each expandable into a building when its directory has
+    // internal structure.
+    /**
+     * Groups a room's files into child modules: one group per immediate
+     * subdirectory, an own-named group for each loose file nothing imports (a
+     * CLI, an installer — its own module, not filing material), and a
+     * "(files)" group for loose files the entries import (support code).
+     *
+     * @param room - Directory-backed room to split into children.
+     * @returns One entry per child segment with the files it holds; empty for
+     *   the package-root pseudo-room.
+     */
+    function childRoomsOf(room: Room): { seg: string; files: string[] }[] {
+        const prefix =
+            room.segment === "(root)" ? null : room.pkg.dir === "." ? room.segment : join(room.pkg.dir, room.segment);
+        if (!prefix) return [];
+        const groups = new Map<string, string[]>();
+        for (const file of room.files) {
+            const rest = relative(prefix, file);
+            let seg: string;
+            if (rest.includes(sep)) {
+                const first = rest.split(sep)[0];
+                if (first === undefined) throw new Error(`Empty path split: ${rest}`);
+                seg = first;
+            } else if ((fileCoupling.get(file)?.in ?? 0) === 0) {
+                // A loose file nothing imports is its own module (a CLI, an installer),
+                // not filing material: give it its own room named after the file.
+                seg = rest.replace(/\.[a-z]+$/, "");
+            } else {
+                seg = "(files)"; // loose files imported by the entries: support code
+            }
+            groups.set(seg, [...(groups.get(seg) ?? []), file]);
+        }
+        return [...groups.entries()].map(([seg, files]) => ({ seg, files }));
+    }
+
+    /**
+     * Source refs for a child of a room: the single file's own path when the
+     * child holds exactly one file, the subdirectory when dir-backed, and the
+     * concrete files (capped at five) when it is a loose-file group.
+     *
+     * @param room - Room the child was split from.
+     * @param child - Child segment and the files it holds, as produced by
+     *   childRoomsOf.
+     * @returns Source references pointing at the child's directory or files.
+     */
+    function childSourceRefs(room: Room, child: { seg: string; files: string[] }): SourceRef[] {
+        const dir = roomDir(room);
+        if (child.files.length === 1) {
+            const only = child.files[0];
+            if (only === undefined) throw new Error(`Missing child file for ${child.seg}`);
+            return [{ path: only }];
+        }
+        if (child.seg !== "(files)" && child.files.every((f) => f.startsWith(join(dir, child.seg) + sep))) {
+            return [{ path: join(dir, child.seg) }];
+        }
+        return child.files.slice(0, 5).map((path) => ({ path }));
+    }
+
+    /**
+     * Decides whether a room has interior structure worth expanding into a
+     * building: two subdirs, or one subdir plus loose files.
+     *
+     * @param room - Room to test.
+     * @returns True when the room should expand into child structures.
+     */
+    function hasInteriorStructure(room: Room): boolean {
+        const allChildren = childRoomsOf(room);
+        const dirChildren = allChildren.filter(({ seg }) => seg !== "(files)");
+        return dirChildren.length >= 2 || (dirChildren.length >= 1 && allChildren.length >= 2);
+    }
+
+    const promotedNodes: { id: string; files: string[] }[] = []; // district-less / own-district residual nodes
+    for (const pkg of packages) {
+        const pkgRooms = [...rooms.values()].filter((room) => {
+            if (room.pkg !== pkg || room.files.length === 0) return false;
+            if (claimedSegments.has(pkg.dir === "." ? room.segment : join(pkg.dir, room.segment))) return false;
+            if (isUtilityRoom(room.id)) return false;
+            // lib rooms are shared plumbing, not deployment shape: excluded by
+            // decision, like the C2-eliminated utility rooms.
+            if (basename(room.segment) === "lib") return false;
+            // Orphans: imported by nothing, reachable from nothing, no OTLP coupling,
+            // not an entry dir, not referenced by path from another package. Sample
+            // and demo material (examples/) falls out here.
+            if (
+                !pathReassignments.has(room.id) &&
+                (roomCoupling.get(room.id)?.in ?? 0) === 0 &&
+                !entryDirNames.has(basename(room.segment)) &&
+                room.files.every((f) => !deployReachable.has(f) && !scriptReachable.has(f)) &&
+                !room.files.some((f) => OTLP_PATTERN.test(readText(join(repo, f))))
+            ) {
+                warnings.push(
+                    `Orphan area excluded (unreferenced, undeployed): ${room.segment} (${room.files.length} files).`,
+                );
+                return false;
+            }
+            return true;
+        });
+        if (!pkgRooms.length) continue;
+        const scopeId = `${pkg.id}-area`;
+        // Residual: compose services already claimed part of this package, so the
+        // remaining code is operator tooling rather than the deployable itself.
+        const residual = [...serviceClaimedDirs].some((dir) => owningPackage(dir) === pkg);
+
+        // R5: a whole package that no host deploy root reaches is development
+        // scaffolding (an e2e harness, a dev-only plugin SDK) — it leaves the
+        // deployment view, the way R2 strips dev-tooling files within a package.
+        // Only fires when the repo has a real deployment shape, so a library
+        // monorepo is untouched until D14 recognises its published packages; a
+        // residual or path-referenced package is spared, and the overview keeps
+        // these packages, so this is deployment-view-only.
+        const packageDeployed = pkgRooms.some((room) => room.files.some((f) => hostDeployReachable.has(f)));
+        const pathReferenced = pkgRooms.some((room) => pathReassignments.has(room.id));
+        // A published artefact (D14) or a runnable app (D16) is deployed by
+        // publication or by being run, not by a host, so R5 must not strip it
+        // even though no host root reaches it.
+        if (
+            hasHostDeployShape &&
+            !residual &&
+            !pathReferenced &&
+            !packageDeployed &&
+            pkg.artefact === null &&
+            !runnableByDir.has(pkg.dir)
+        ) {
+            warnings.push(
+                `Dev-only package excluded from the deployment view (reached by no host deploy root): ${pkg.name} (${pkgRooms.length} area${pkgRooms.length === 1 ? "" : "s"}).`,
+            );
+            continue;
+        }
+
+        const entries = pkgRooms
+            .filter((r) => entryDirNames.has(basename(r.segment)) || r.segment === "(root)")
+            .map((r) => r.id);
+        const layers = layerByLongestPath(
+            pkgRooms.map((r) => r.id),
+            roomEdges,
+            entries,
+        );
+
+        // A district never wraps a single synthetic building: rooms are promoted to
+        // campus structures directly. Non-residual packages keep a package district
+        // as the grouping; residual leftovers get a district per structured dir
+        // (devstack, bootstrap) and district-less nodes for flat dirs.
+        if (!residual && !nodes.some((n) => n.id === scopeId)) {
+            nodes.push({
+                id: scopeId,
+                label: titleCase(pkg.name),
+                kind: "scope",
+                archetype: "district",
+                description: `Package ${pkg.name}, rooted at ${pkg.dir === "." ? "the repository root" : `${pkg.dir}/`}.`,
+            });
+        }
+        for (const room of pkgRooms) {
+            const expandable = hasInteriorStructure(room);
+            const children = expandable ? childRoomsOf(room) : [];
+            const label = roomLabel(room.segment);
+            let parentId: string | undefined;
+            const reassigned = pathReassignments.get(room.id);
+            if (reassigned) {
+                const reassignedPkg = reassigned.pkg;
+                parentId = `${reassignedPkg.id}-area`;
+                if (!nodes.some((n) => n.id === parentId)) {
+                    nodes.push({
+                        id: parentId,
+                        label: titleCase(reassignedPkg.name),
+                        kind: "scope",
+                        archetype: "district",
+                        description: `Package ${reassignedPkg.name}, rooted at ${reassignedPkg.dir === "." ? "the repository root" : `${reassignedPkg.dir}/`}.`,
+                    });
+                }
+                const fromRoom = fileToRoom.get(reassigned.fromFile);
+                if (fromRoom) {
+                    addEdge(edges, {
+                        id: `${fromRoom.id}--${room.id}`,
+                        from: fromRoom.id,
+                        to: room.id,
+                        kind: "depends_on",
+                        evidence: "declared",
+                        label: "path reference",
+                        sourceRefs: [{ path: reassigned.fromFile }],
+                    });
+                }
+            } else if (!residual) {
+                parentId = scopeId;
+            } else if (expandable) {
+                // A residual structured dir never wraps a single building either: the
+                // district holds the dir's parts directly as campus structures.
+                const districtId = `${room.id}-district`;
+                nodes.push({
+                    id: districtId,
+                    label,
+                    kind: "scope",
+                    archetype: "district",
+                    description: `Standalone area: ${room.segment}/.`,
+                });
+                for (const child of children) {
+                    // Loose imported files ("Support files") and lib children are shared
+                    // plumbing, not deployment shape: excluded by decision.
+                    if (child.seg === "(files)" || child.seg === "lib") continue;
+                    const childId = uniqueNodeId(kebab(`${room.id}-${child.seg}`));
+                    const childLoc = linesOf(repo, child.files);
+                    const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
+                    // Same entry classification as the overview (O2): a script-referenced
+                    // file or an entry-named loose file (redeploy-cli) is an entry point.
+                    const childIsEntry = isEntryPoint({
+                        files: child.files,
+                        scriptReferencedFiles,
+                        nameArm: { granularity: "child", seg: child.seg },
+                    });
+                    const childEntryFile = child.files[0];
+                    nodes.push({
+                        id: childId,
+                        label: titleCase(child.seg),
+                        kind: "module",
+                        archetype: childAsBuilding ? "building" : childIsEntry ? "gateway" : "worker",
+                        ...(childIsEntry && child.files.length === 1 && childEntryFile !== undefined
+                            ? { attributes: { "entry-point": childEntryFile } }
+                            : {}),
+                        parentId: districtId,
+                        description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
+                        sourceRefs: childSourceRefs(room, child),
+                        metrics: { loc: childLoc },
+                    });
+                    if (childAsBuilding) pushFileRooms(childId, child.files);
+                    for (const f of child.files) fileNodeOwner.set(f, childId);
+                    promotedNodes.push({ id: childId, files: child.files });
+                }
+                continue;
+            }
+            // Not the isEntryPoint rule: this is a room-level archetype choice
+            // (gateway vs worker) from the directory name alone. isEntryPoint
+            // also treats a script-referenced file as an entry, which would
+            // change archetypes here, so the two stay separate by design.
+            const isEntry = entryDirNames.has(basename(room.segment));
+            const leafAsBuilding = modulesAsBuildings && !expandable && room.files.length >= 2;
+            nodes.push({
+                id: room.id,
+                label,
+                kind: "module",
+                archetype: expandable || leafAsBuilding ? "building" : isEntry ? "gateway" : "worker",
+                ...(parentId ? { parentId } : {}),
+                description: `${room.files.length} source file${room.files.length === 1 ? "" : "s"} under ${room.segment === "(root)" ? "the package root" : `${room.segment}/`}.`,
+                sourceRefs:
+                    room.segment === "(root)"
+                        ? room.files.slice(0, 5).map((path) => ({ path }))
+                        : [{ path: roomDir(room) }],
+                metrics: { loc: room.loc },
+                display: { flowLayer: layers.get(room.id) ?? 0 },
+            });
+            for (const f of room.files) fileNodeOwner.set(f, room.id);
+            promotedNodes.push({ id: room.id, files: room.files });
+            if (leafAsBuilding) pushFileRooms(room.id, room.files);
+            if (expandable) {
+                for (const child of children) {
+                    if (child.seg === "lib") continue; // shared plumbing, not shape
+                    nodes.push({
+                        id: uniqueNodeId(kebab(`${room.id}-${child.seg}`)),
+                        label: child.seg === "(files)" ? "Top-level files" : titleCase(child.seg),
+                        kind: "module",
+                        archetype: "room",
+                        parentId: room.id,
+                        description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"}.`,
+                        sourceRefs: childSourceRefs(room, child),
+                    });
+                }
+            }
+        }
+    }
+
+    // 7c-i. The web entry deploys to the edge worker: wrangler builds and serves
+    // the owning package's app, so the app entry carries a deploys edge.
+    if (edgeHost && nodes.some((n) => n.id === "edge-worker")) {
+        const ownerPkg = owningPackage(edgeHost.file);
+        const entryRoom = [...rooms.values()].find(
+            (r) => r.pkg === ownerPkg && entryDirNames.has(basename(r.segment)) && nodes.some((n) => n.id === r.id),
+        );
+        if (entryRoom) {
+            addEdge(edges, {
+                id: `${entryRoom.id}--edge-worker`,
+                from: entryRoom.id,
+                to: "edge-worker",
+                kind: "deploys",
+                evidence: "declared",
+                label: "wrangler deploy",
+                sourceRefs: [{ path: edgeHost.file }],
+            });
+        }
+    }
+
+    // 7c-ii. OTLP producers: residual nodes whose source configures OpenTelemetry
+    // export get a data_flow edge into the OTLP-receiving collector, pulling data
+    // generators and agent plugins toward the ingress host they feed.
+    const collectorTarget =
+        nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id) && /gateway/.test(n.id)) ??
+        nodes.find((n) => n.kind !== "scope" && /otel|collector/.test(n.id));
+    if (collectorTarget) {
+        inferModuleDataFlows({ entries: promotedNodes, edges, fileText, otlpTargetId: collectorTarget.id });
+    }
+
+    // 7c-iii (removed): eliminated shared-utility rooms used to reappear as a
+    // per-district "Shared libraries" copy. Dropped by decision — the copies
+    // repeated across every district without adding information; C2 elimination
+    // now simply removes shared code from the deployment map.
+    return promotedNodes;
 }
 
 /**
