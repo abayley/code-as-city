@@ -9,13 +9,19 @@
  */
 import { basename, join, relative, sep } from "node:path";
 import {
+    assembleConfigExternals,
+    assembleDaemons,
+    assembleExternalServiceSdks,
+    reclassifyPublishedArtefacts,
+    reclassifyRunnableApps,
+} from "./assemble-deployment-phases.ts";
+import {
     addEdge,
     escapeRegex,
     fileModuleName,
     footprintFor,
     linesOf,
     roomLabel,
-    sdkImporterIds,
     splitEdgeKey,
     uniqueId,
 } from "./assembly-helpers.ts";
@@ -33,9 +39,9 @@ import {
     type NodeIndexEntry,
 } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
-import { artefactEntryCandidates, owningPackage as owningPackageOf, type Package } from "./packages.ts";
+import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
-import { readJson, readText } from "./read.ts";
+import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
@@ -271,6 +277,33 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // shadowed (folded to the owner's single node), so supabase's six `Db`
     // nodes become one.
     const isShadowed = (host: Host, serviceName: string): boolean => isServiceShadowed(serviceOwner, host, serviceName);
+
+    /**
+     * Finds the emitted campus node that owns a source file: the direct
+     * fileNodeOwner mapping when present, else the non-scope node whose
+     * longest sourceRef path contains the file. Defined here rather than in its
+     * first-use phase (7e-ii) because the CI, D14/D16, daemon (7c-v), and
+     * config-external (7e-iii) phases all resolve files to nodes through it.
+     *
+     * @param file - Repository-relative source file to attribute.
+     * @returns The owning node's id, or null when nothing on the map claims
+     *   the file.
+     */
+    const nodeOwningFile = (file: string): string | null => {
+        const direct = fileNodeOwner.get(file);
+        if (direct && nodes.some((n) => n.id === direct)) return direct;
+        let best: { id: string; length: number } | null = null;
+        for (const node of nodes) {
+            if (node.kind === "scope") continue;
+            for (const ref of node.sourceRefs ?? []) {
+                if (!ref.path) continue;
+                if (file === ref.path || file.startsWith(`${ref.path.replace(/\/$/, "")}/`)) {
+                    if (!best || ref.path.length > best.length) best = { id: node.id, length: ref.path.length };
+                }
+            }
+        }
+        return best?.id ?? null;
+    };
 
     // 7a. Host districts from deployment shape. Hosts carry explicit flow
     // layers from the declared forwarding chain (gateway before stack before
@@ -1024,67 +1057,21 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         },
     });
 
-    // 7e-i-b. D17: external services a package talks to via a client SDK (an IMAP
-    // mail server, an LLM API). One external node in the externals district, with
-    // an inferred data_flow "uses" edge from each module whose source imports the
-    // SDK. Drawn only when a deployed module actually imports it, so a bare
-    // dependency does not conjure a phantom external.
-    for (const service of externalServiceDeps) {
-        const importerIds = sdkImporterIds(service.depNames, ownedFileEntries, fileText);
-        if (importerIds.length === 0) continue;
-        nodes.push({
-            id: service.id,
-            label: service.label,
-            kind: "external",
-            archetype: "cloud",
-            parentId: ensureExternalsDistrict(),
-            description: service.description,
-            sourceRefs: [{ path: service.path }],
-            display: { flowLayer: 2 },
-        });
-        for (const importer of importerIds) {
-            addEdge(edges, {
-                id: `${importer}--${service.id}`,
-                from: importer,
-                to: service.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "uses",
-                sourceRefs: [{ path: service.path }],
-            });
-        }
-    }
+    // 7e-i-b. D17: external services a package talks to via a client SDK.
+    assembleExternalServiceSdks({
+        externalServiceDeps,
+        ownedFileEntries,
+        fileText,
+        nodes,
+        edges,
+        ensureExternalsDistrict,
+    });
 
     // 7e-ii. CI workflow jobs (D9-D12). A GitHub Actions workflow with a schedule,
     // a workflow_run chain, or a run step invoking repo code becomes a CI job
     // district. Object-storage traffic becomes an external store with directional
     // data flow; an invoked entry's Commander subcommand resolves to its handler
     // module for a `runs` edge.
-    /**
-     * Finds the emitted campus node that owns a source file: the direct
-     * fileNodeOwner mapping when present, else the non-scope node whose
-     * longest sourceRef path contains the file.
-     *
-     * @param file - Repository-relative source file to attribute.
-     * @returns The owning node's id, or null when nothing on the map claims
-     *   the file.
-     */
-    const nodeOwningFile = (file: string): string | null => {
-        const direct = fileNodeOwner.get(file);
-        if (direct && nodes.some((n) => n.id === direct)) return direct;
-        let best: { id: string; length: number } | null = null;
-        for (const node of nodes) {
-            if (node.kind === "scope") continue;
-            for (const ref of node.sourceRefs ?? []) {
-                if (!ref.path) continue;
-                if (file === ref.path || file.startsWith(`${ref.path.replace(/\/$/, "")}/`)) {
-                    if (!best || ref.path.length > best.length) best = { id: node.id, length: ref.path.length };
-                }
-            }
-        }
-        return best?.id ?? null;
-    };
     /**
      * Resolves a Commander subcommand to the module that implements it: the
      * handler is the first braced named import used inside the
@@ -1246,142 +1233,16 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         }
     }
 
-    // 7c-iv. D14: a non-private package that declares a bin, a library entry,
-    // or a VS Code extension is a published deployment artefact. Its entry (the
-    // bin target, main/module/exports, or extension main) resolves to source via
-    // the dist->src convention; the owning node becomes the deployable — a CLI or
-    // extension entry reads as a gateway, a library as a building — tagged by
-    // kind so the viewer can distinguish it from a hosted service. One deployable
-    // per published package.
-    for (const pkg of packages) {
-        const artefact = pkg.artefact;
-        // A runnable app (D16) is shown as the app it runs, not as a published
-        // library, so D14 yields precedence to D16 for it.
-        if (artefact === null || runnableByDir.has(pkg.dir)) continue;
-        const entrySource = artefactEntryCandidates(pkg).find(fileExists);
-        const nodeId = entrySource ? nodeOwningFile(entrySource) : null;
-        const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
-        // Only reclassify a package room; never a hosted service's node.
-        if (node === undefined || node.kind !== "module" || (node.parentId ?? "").startsWith("host-")) continue;
-        node.kind = "deployable";
-        // A library reads as a building, but the validator requires a building to
-        // hold at least two rooms; a single-room entry (and every CLI/extension)
-        // reads as a gateway, which is valid with or without an interior.
-        const childCount = nodes.filter((n) => n.parentId === node.id).length;
-        node.archetype = artefact.kind === "library" && childCount >= 2 ? "building" : "gateway";
-        node.tags = [...new Set([...(node.tags ?? []), artefact.tag])];
-    }
+    // 7c-iv / 7c-iv-b. D14 published artefacts and D16 runnable apps: reclassify
+    // the owning package room into a tagged deployable (D14 yields to D16).
+    reclassifyPublishedArtefacts({ packages, runnableByDir, nodes, fileExists, nodeOwningFile });
+    reclassifyRunnableApps({ runnableApps, nodes, nodeOwningFile });
 
-    // 7c-iv-b. D16: a runnable app's entry node becomes a gateway deployable,
-    // tagged by how it runs — `server` for a start/serve script that starts a
-    // server, `app` for a web SPA rooted at its package. This is how an app you
-    // run directly (no compose, wrangler, or publish) enters the deployment view.
-    for (const app of runnableApps) {
-        const nodeId = nodeOwningFile(app.entry);
-        const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
-        if (node === undefined || node.kind !== "module" || (node.parentId ?? "").startsWith("host-")) continue;
-        node.kind = "deployable";
-        node.archetype = "gateway";
-        node.tags = [...new Set([...(node.tags ?? []), app.tag])];
-    }
+    // 7c-v. D15: runtime-supervised processes spawned from deploy-reachable code.
+    assembleDaemons({ repo, spawnedEntries, nodes, edges, nodeOwningFile });
 
-    // 7c-v. D15: runtime-supervised processes. A deploy-reachable source file
-    // that spawns an inventoried entry (found by daemons.ts) starts a daemon: a
-    // process node with a `starts`-labelled edge from the supervisor's node. The
-    // target is drawn even when it is imported by nothing (a spawned entry is not
-    // an orphan), so its process appears; a spawn on a variable or an external
-    // command resolved to nothing and is absent here already.
-    for (const { caller, target } of spawnedEntries) {
-        const supervisorId = nodeOwningFile(caller);
-        const supervisor = supervisorId ? nodes.find((n) => n.id === supervisorId) : undefined;
-        if (supervisor === undefined) continue;
-        const daemonId = kebab(`daemon-${target}`);
-        if (!nodes.some((n) => n.id === daemonId)) {
-            nodes.push({
-                id: daemonId,
-                label: titleCase(fileModuleName(target)),
-                kind: "deployable",
-                archetype: "worker",
-                parentId: supervisor.parentId,
-                description: `Background process started at runtime (spawned by ${basename(caller)}).`,
-                sourceRefs: [{ path: target }],
-                metrics: { loc: linesOf(repo, [target]) },
-                tags: ["daemon"],
-                display: { flowLayer: 1 },
-            });
-        }
-        addEdge(edges, {
-            id: `${supervisor.id}--${daemonId}`,
-            from: supervisor.id,
-            to: daemonId,
-            kind: "calls",
-            evidence: "inferred",
-            confidence: 0.7,
-            label: "starts",
-            sourceRefs: [{ path: caller }],
-        });
-    }
-
-    // 7e-iii. Config-declared external services (D12): an https URL assigned as a
-    // value in a package-root config.yaml names an external system the package's
-    // CLI entry fetches from.
-    for (const pkg of packages) {
-        const configFile = ["config.yaml", "config.yml"]
-            .map((candidate) => (pkg.dir === "." ? candidate : `${pkg.dir}/${candidate}`))
-            .find(fileExists);
-        if (!configFile) continue;
-        const packageJson = (readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {}) as {
-            bin?: string | Record<string, string> | undefined;
-        };
-        const binTargets =
-            typeof packageJson.bin === "string" ? [packageJson.bin] : Object.values(packageJson.bin ?? {});
-        const entrySource = binTargets
-            .map((target) =>
-                join(pkg.dir === "." ? "" : pkg.dir, target)
-                    .replace(/(^|\/)dist\//, "$1src/")
-                    .replace(/\.js$/, ".ts"),
-            )
-            .find(fileExists);
-        const fromId = entrySource ? nodeOwningFile(entrySource) : null;
-        for (const line of readText(join(repo, configFile)).split("\n")) {
-            if (/^\s*#/.test(line)) continue;
-            const urlMatch = /:\s*['"]?(https:\/\/[^'"\s]+)/.exec(line);
-            if (!urlMatch) continue;
-            const matchedUrl = urlMatch[1];
-            if (matchedUrl === undefined) throw new Error(`URL capture missing in ${configFile}`);
-            let hostname: string;
-            try {
-                hostname = new URL(matchedUrl).hostname;
-            } catch {
-                continue;
-            }
-            if (/localhost|^127\.|cloudflarestorage\.com$/.test(hostname)) continue;
-            const externalId = kebab(`external-${hostname}`);
-            if (!nodes.some((n) => n.id === externalId)) {
-                nodes.push({
-                    id: externalId,
-                    label: hostname,
-                    kind: "external",
-                    archetype: "cloud",
-                    parentId: ensureExternalsDistrict(),
-                    description: `External service configured in ${configFile}.`,
-                    sourceRefs: [{ path: configFile }],
-                    display: { flowLayer: 0 },
-                });
-            }
-            if (fromId) {
-                addEdge(edges, {
-                    id: `${externalId}--${fromId}`,
-                    from: externalId,
-                    to: fromId,
-                    kind: "data_flow",
-                    evidence: "declared",
-                    label: "fetches",
-                    sourceRefs: [{ path: configFile }],
-                });
-            }
-        }
-    }
+    // 7e-iii. Config-declared external services (D12).
+    assembleConfigExternals({ repo, packages, nodes, edges, fileExists, nodeOwningFile, ensureExternalsDistrict });
 
     // 7f. Static I/O classification (data flow from code, no runtime evidence).
     // Declared boundary roles become tags: a module that starts a server listens;
