@@ -62,4 +62,26 @@ describe("stripDevTooling", () => {
             "Dev tooling excluded (reachable only from QA package.json scripts): scripts2 (2 files).",
         ]);
     });
+
+    it("given an orphan file left behind after QA files are stripped, when swept, then it is removed as residue", () => {
+        // orphan.ts is imported by nothing and named by no script, so it is not
+        // dev tooling on its own; once the room's QA file goes, it is residue.
+        writeFile("scripts3/qa.ts", "const q = 1;");
+        writeFile("scripts3/orphan.ts", "const o = 1;");
+        writeFile("scripts3/kept.ts", "const k = 1;");
+        const sourceFiles = ["scripts3/qa.ts", "scripts3/orphan.ts", "scripts3/kept.ts"];
+        writeFile(
+            "package.json",
+            JSON.stringify({ scripts: { lint: "bun scripts3/qa.ts", start: "bun scripts3/kept.ts" } }),
+        );
+        const room = makeRoom("scripts3", ["scripts3/qa.ts", "scripts3/orphan.ts", "scripts3/kept.ts"]);
+        const rooms = new Map([[room.id, room]]);
+        const fileToRoom = new Map(sourceFiles.map((f) => [f, room]));
+        const fileEdges: { from: string; to: string }[] = [];
+        const reachability = analyseReachability(repo, [pkg], [], null, sourceFiles, fileEdges, fileToRoom, []);
+        const warnings = stripDevTooling(repo, rooms, reachability, fileEdges);
+        // kept.ts is an operational script root, so it stays; qa.ts and orphan.ts go.
+        expect(room.files).toEqual(["scripts3/kept.ts"]);
+        expect(warnings).toEqual(["Dev tooling stripped from scripts3: 2 QA-script files (kept 1 operational)."]);
+    });
 });

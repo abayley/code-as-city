@@ -40,4 +40,31 @@ describe("scanImports", () => {
     it("given cross-room file edges, when aggregated, then room edges carry counts", () => {
         expect([...scan.roomEdges.entries()]).toEqual([["root-src->root-src-nested", 1]]);
     });
+
+    it("given a relative specifier resolving to nothing inventoried, when resolved, then it is null", () => {
+        expect(scan.resolveImport("src/a.ts", "./does-not-exist")).toBeNull();
+    });
+
+    it("given an @/ specifier from the root package, when resolved, then it resolves against the root", () => {
+        expect(scan.resolveImport("src/a.ts", "@/src/a")).toEqual({ file: "src/a.ts" });
+    });
+
+    it("given an @/ specifier from a nested package, when resolved, then it resolves against that package dir", () => {
+        expect(scan.resolveImport("packages/other/src/o.ts", "@/src/o")).toEqual({
+            file: "packages/other/src/o.ts",
+        });
+    });
+});
+
+describe("scanImports without a root package", () => {
+    // A repo whose only package sits in a subdirectory: files outside it are
+    // owned by nothing, so an "@/" import from such a file cannot resolve.
+    const packages = discoverPackages(repo, ["packages/other"]);
+    const scan = scanImports(repo, packages, buildRooms(repo, packages, ["packages/other/src/o.ts"]), [
+        "packages/other/src/o.ts",
+    ]);
+
+    it("given an @/ specifier from a file no package owns, when resolved, then it is null", () => {
+        expect(scan.resolveImport("outside/x.ts", "@/foo")).toBeNull();
+    });
 });

@@ -20,6 +20,10 @@ describe("packages", () => {
     writeManifest("packages/private-cli", { name: "@x/private-cli", private: true, bin: { pc: "cli.js" } });
     writeManifest("packages/ext", { name: "@x/ext", engines: { vscode: "^1.80.0" }, main: "dist/extension.js" });
     writeManifest("packages/tool-fork", { name: "@x/tool" });
+    writeManifest("packages/exp-str", { name: "@x/exp-str", exports: "dist/str.js" });
+    writeManifest("packages/exp-root", { name: "@x/exp-root", exports: { ".": "dist/root.js" } });
+    writeManifest("packages/exp-cond", { name: "@x/exp-cond", exports: { ".": { import: "dist/cond.mjs" } } });
+    writeManifest("packages/exp-none", { name: "@x/exp-none", exports: {} });
     const allFiles = [
         "package.json",
         "packages/tool/package.json",
@@ -28,6 +32,10 @@ describe("packages", () => {
         "packages/private-cli/package.json",
         "packages/ext/package.json",
         "packages/tool-fork/package.json",
+        "packages/exp-str/package.json",
+        "packages/exp-root/package.json",
+        "packages/exp-cond/package.json",
+        "packages/exp-none/package.json",
         "src/a.ts",
     ];
     const dirs = packageDirsOf(allFiles);
@@ -42,6 +50,10 @@ describe("packages", () => {
             "packages/private-cli",
             "packages/ext",
             "packages/tool-fork",
+            "packages/exp-str",
+            "packages/exp-root",
+            "packages/exp-cond",
+            "packages/exp-none",
         ]);
     });
 
@@ -82,6 +94,22 @@ describe("packages", () => {
 
     it("given a nameless empty package, when classified, then it is not a published artefact (D14)", () => {
         expect(byName("lib")?.artefact).toBeNull();
+    });
+
+    it("given a string exports entry, when classified, then it is the published library entry (D14)", () => {
+        expect(byName("@x/exp-str")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/str.js" });
+    });
+
+    it("given an exports '.' string subpath, when classified, then that subpath is the entry (D14)", () => {
+        expect(byName("@x/exp-root")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/root.js" });
+    });
+
+    it("given an exports '.' condition map, when classified, then the import condition is the entry (D14)", () => {
+        expect(byName("@x/exp-cond")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/cond.mjs" });
+    });
+
+    it("given an empty exports object, when classified, then it is not a published artefact (D14)", () => {
+        expect(byName("@x/exp-none")?.artefact).toBeNull();
     });
 
     it("given two packages sharing a name, when discovered, then their ids are unique (HC-015)", () => {
