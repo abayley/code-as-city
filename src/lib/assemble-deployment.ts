@@ -14,18 +14,11 @@ import {
     assembleConfigExternals,
     assembleDaemons,
     assembleExternalServiceSdks,
+    assembleStaticClassification,
     reclassifyPublishedArtefacts,
     reclassifyRunnableApps,
 } from "./assemble-deployment-phases.ts";
-import {
-    addEdge,
-    fileModuleName,
-    footprintFor,
-    linesOf,
-    roomLabel,
-    splitEdgeKey,
-    uniqueId,
-} from "./assembly-helpers.ts";
+import { addEdge, fileModuleName, linesOf, roomLabel, splitEdgeKey, uniqueId } from "./assembly-helpers.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
@@ -34,7 +27,6 @@ import { type Host, isServiceShadowed } from "./hosts.ts";
 import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
-    inferExternalDelivers,
     inferModuleDataFlows,
     isEntryPoint,
     type NodeIndexEntry,
@@ -110,10 +102,6 @@ const HOST_LAYER_BASE = 1000;
 // mentions them: they share one district behind the host chain (as overview
 // mode's O7 does).
 const EXTERNALS_DISTRICT_ID = "external-systems";
-
-// 7f. Static I/O classification patterns (declared boundary roles).
-const LISTEN_PATTERN = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|express\s*\(\)/;
-const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
 
 /**
  * Section 7 of the generator: assembles the deployment map's nodes, edges,
@@ -1094,85 +1082,18 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // 7e-iii. Config-declared external services (D12).
     assembleConfigExternals(state, { packages });
 
-    // 7f. Static I/O classification (data flow from code, no runtime evidence).
-    // Declared boundary roles become tags: a module that starts a server listens;
-    // one that constructs HTTP clients calls out. Database sinks/sources become
-    // directional data_flow edges: SQL/ORM writes flow node -> database, reads
-    // flow database -> node. Inferred evidence, because the *binding* to a
-    // specific database node is not stated in the code.
-    const classificationSets: { id: string; files: string[]; entryFile?: string | null | undefined }[] = [
-        ...campusFileSets,
-        ...promotedNodes.map(({ id, files }) => ({ id, files })),
-    ];
-    const districtLookup = new Map<string, string | undefined>(
-        nodes
-            .filter((n) => n.parentId && nodes.some((s) => s.id === n.parentId && s.kind === "scope"))
-            .map((n) => [n.id, n.parentId]),
-    );
-    const databaseNodes = nodes.filter((n) => n.archetype === "database");
-
-    // 7f-i. Nodes referencing an external by SDK import or env-var prefix deliver
-    // data to it (the delivery command pushing scores into Langfuse/Latitude).
-    // Mirrors overview mode's delivers inference.
-    inferExternalDelivers({
-        externals: nodes.filter((n) => n.kind === "external"),
-        entries: classificationSets,
-        edges,
-        fileText,
-    });
-
-    for (const { id, files, entryFile } of classificationSets) {
-        const node = nodes.find((n) => n.id === id);
-        if (!node || !files.length) continue;
-        // Deployment structures size like overview modules (O5): height from lines
-        // of code, floor area from the worst single function inside. Height is
-        // log-scaled — these are multi-file aggregates (services run to 5 figures
-        // of loc) and the overview's linear cap would flatten them all.
-        const sizedLoc = linesOf(repo, files);
-        const sizedComplexity = Math.max(...files.map((f) => fileMaxFunctionComplexity(f)));
-        const sizedHeight = Math.max(0.6, 0.6 + Math.log2(1 + sizedLoc / 200) * 0.55);
-        const sizedFootprint = footprintFor(sizedComplexity);
-        const coverage = coverageForFiles(files);
-        node.metrics = {
-            ...(node.metrics ?? {}),
-            loc: sizedLoc,
-            complexity: sizedComplexity,
-            ...(coverage !== null ? { coverage } : {}),
-        };
-        node.display = { ...(node.display ?? {}), size: [sizedFootprint, sizedHeight, sizedFootprint * 0.85] };
-        // TSDoc prose leads the description as its own paragraph: the node's
-        // DECLARED entry file wins (a service's Dockerfile entrypoint), else the
-        // best entry-like file by name.
-        const doc = (entryFile ? fileDocSummary(entryFile) : null) ?? docForFiles(files);
-        if (doc && !node.description?.startsWith(doc)) {
-            node.description = [doc, node.description].filter(Boolean).join("\n\n");
-        }
-        let listens = false;
-        let callsOut = false;
-        for (const file of files) {
-            const text = readText(join(repo, file));
-            listens ||= LISTEN_PATTERN.test(text);
-            callsOut ||= HTTP_CLIENT_PATTERN.test(text);
-        }
-        const tags = new Set(node.tags ?? []);
-        if (listens) tags.add("listens");
-        if (callsOut) tags.add("http-client");
-        if (tags.size) node.tags = [...tags];
-    }
-
-    // Database sinks/sources over the same classification sets, preferring the
-    // district-local database over the first one declared.
-    inferModuleDataFlows({
-        entries: classificationSets
-            .filter(({ id, files }) => files.length && nodes.some((n) => n.id === id))
-            .map(({ id, files }) => ({ id, files, districtId: districtLookup.get(id) })),
-        edges,
-        fileText,
-        database: {
-            databases: databaseNodes.map((db) => ({ id: db.id, districtId: districtLookup.get(db.id) })),
-            writePattern: dbWritePattern,
-            readPattern: dbReadPattern,
-        },
+    // 7f / 7f-i and the final database pass: static I/O classification — size
+    // and describe the campus/promoted nodes, tag declared boundary roles, and
+    // draw the delivers and database data-flow edges.
+    assembleStaticClassification(state, {
+        campusFileSets,
+        promotedNodes,
+        fileMaxFunctionComplexity,
+        coverageForFiles,
+        fileDocSummary,
+        docForFiles,
+        dbWritePattern,
+        dbReadPattern,
     });
 
     return { nodes, edges, warnings };

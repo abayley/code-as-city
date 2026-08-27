@@ -8,10 +8,10 @@
  * are HEURISTICS.md rule IDs.
  */
 import { basename, join } from "node:path";
-import { addEdge, escapeRegex, fileModuleName, linesOf, sdkImporterIds } from "./assembly-helpers.ts";
+import { addEdge, escapeRegex, fileModuleName, footprintFor, linesOf, sdkImporterIds } from "./assembly-helpers.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import type { Host } from "./hosts.ts";
-import type { NodeIndexEntry } from "./inference.ts";
+import { inferExternalDelivers, inferModuleDataFlows, type NodeIndexEntry } from "./inference.ts";
 import type { MapEdge, MapNode } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
@@ -22,6 +22,13 @@ import type { CiWorkflow } from "./workflows.ts";
 
 /** A resolved import specifier: a local file, a local package, or a bare name. */
 type ResolvedImport = { file: string } | { pkg: Package } | { bare: string };
+
+/** A node's file set for static I/O classification: campus and promoted nodes alike. */
+type ClassificationSet = { id: string; files: string[]; entryFile?: string | null | undefined };
+
+// 7f static I/O classification patterns (declared boundary roles).
+const LISTEN_PATTERN = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|express\s*\(\)/;
+const HTTP_CLIENT_PATTERN = /\bfetch\s*\(|axios[.(]|new\s+Request\s*\(/;
 
 /**
  * The mutable substrate a deployment-assembly phase works against: the map
@@ -473,4 +480,121 @@ export function assembleCiWorkflows(
             }
         }
     }
+}
+
+/**
+ * 7f / 7f-i and the final database pass: static I/O classification with no
+ * runtime evidence. Sizes each campus/promoted node from its files (O5: height
+ * from lines of code, footprint from the worst single function), leads its
+ * description with the entry file's TSDoc, and tags declared boundary roles
+ * (`listens` for a server, `http-client` for outbound fetch). Then two inferred
+ * data-flow passes over the same sets: 7f-i delivers to externals referenced by
+ * SDK import or env-var prefix, and the database pass draws SQL/ORM writes
+ * (node -> database) and reads (database -> node), preferring the district-local
+ * database over the first declared. Evidence is inferred because the binding to
+ * a specific database node is not stated in the code.
+ *
+ * @param state - The assembly state (`repo`, `nodes`/`edges`, `fileText`).
+ * @param options - The handoff sets (`campusFileSets` from the host phase,
+ *   `promotedNodes` from the package phase) plus the metric, coverage, doc, and
+ *   database-pattern lookups used to size, describe, and wire the nodes.
+ */
+export function assembleStaticClassification(
+    state: AssemblyState,
+    options: {
+        campusFileSets: readonly ClassificationSet[];
+        promotedNodes: readonly { id: string; files: string[] }[];
+        fileMaxFunctionComplexity: (file: string) => number;
+        coverageForFiles: (files: readonly string[]) => number | null;
+        fileDocSummary: (file: string) => string | null;
+        docForFiles: (files: readonly string[]) => string | null;
+        dbWritePattern: RegExp;
+        dbReadPattern: RegExp;
+    },
+): void {
+    const { repo, nodes, edges, fileText } = state;
+    const {
+        campusFileSets,
+        promotedNodes,
+        fileMaxFunctionComplexity,
+        coverageForFiles,
+        fileDocSummary,
+        docForFiles,
+        dbWritePattern,
+        dbReadPattern,
+    } = options;
+    const classificationSets: ClassificationSet[] = [
+        ...campusFileSets,
+        ...promotedNodes.map(({ id, files }) => ({ id, files })),
+    ];
+    const districtLookup = new Map<string, string | undefined>(
+        nodes
+            .filter((n) => n.parentId && nodes.some((s) => s.id === n.parentId && s.kind === "scope"))
+            .map((n) => [n.id, n.parentId]),
+    );
+    const databaseNodes = nodes.filter((n) => n.archetype === "database");
+
+    // 7f-i. Nodes referencing an external by SDK import or env-var prefix deliver
+    // data to it (the delivery command pushing scores into Langfuse/Latitude).
+    // Mirrors overview mode's delivers inference.
+    inferExternalDelivers({
+        externals: nodes.filter((n) => n.kind === "external"),
+        entries: classificationSets,
+        edges,
+        fileText,
+    });
+
+    for (const { id, files, entryFile } of classificationSets) {
+        const node = nodes.find((n) => n.id === id);
+        if (!node || !files.length) continue;
+        // Deployment structures size like overview modules (O5): height from lines
+        // of code, floor area from the worst single function inside. Height is
+        // log-scaled — these are multi-file aggregates (services run to 5 figures
+        // of loc) and the overview's linear cap would flatten them all.
+        const sizedLoc = linesOf(repo, files);
+        const sizedComplexity = Math.max(...files.map((f) => fileMaxFunctionComplexity(f)));
+        const sizedHeight = Math.max(0.6, 0.6 + Math.log2(1 + sizedLoc / 200) * 0.55);
+        const sizedFootprint = footprintFor(sizedComplexity);
+        const coverage = coverageForFiles(files);
+        node.metrics = {
+            ...(node.metrics ?? {}),
+            loc: sizedLoc,
+            complexity: sizedComplexity,
+            ...(coverage !== null ? { coverage } : {}),
+        };
+        node.display = { ...(node.display ?? {}), size: [sizedFootprint, sizedHeight, sizedFootprint * 0.85] };
+        // TSDoc prose leads the description as its own paragraph: the node's
+        // DECLARED entry file wins (a service's Dockerfile entrypoint), else the
+        // best entry-like file by name.
+        const doc = (entryFile ? fileDocSummary(entryFile) : null) ?? docForFiles(files);
+        if (doc && !node.description?.startsWith(doc)) {
+            node.description = [doc, node.description].filter(Boolean).join("\n\n");
+        }
+        let listens = false;
+        let callsOut = false;
+        for (const file of files) {
+            const text = readText(join(repo, file));
+            listens ||= LISTEN_PATTERN.test(text);
+            callsOut ||= HTTP_CLIENT_PATTERN.test(text);
+        }
+        const tags = new Set(node.tags ?? []);
+        if (listens) tags.add("listens");
+        if (callsOut) tags.add("http-client");
+        if (tags.size) node.tags = [...tags];
+    }
+
+    // Database sinks/sources over the same classification sets, preferring the
+    // district-local database over the first one declared.
+    inferModuleDataFlows({
+        entries: classificationSets
+            .filter(({ id, files }) => files.length && nodes.some((n) => n.id === id))
+            .map(({ id, files }) => ({ id, files, districtId: districtLookup.get(id) })),
+        edges,
+        fileText,
+        database: {
+            databases: databaseNodes.map((db) => ({ id: db.id, districtId: districtLookup.get(db.id) })),
+            writePattern: dbWritePattern,
+            readPattern: dbReadPattern,
+        },
+    });
 }
