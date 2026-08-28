@@ -102,7 +102,7 @@ export function Sidebar({ search, onSearchChange, sections, onExploreSection, on
                     </InputGroup>
                 </SidebarHeader>
 
-                <SidebarContent>
+                <SidebarContent className="themed-scrollbar">
                     {sections.map((section) => (
                         <SidebarGroup key={section.id}>
                             {section.bandLabel !== undefined && (
