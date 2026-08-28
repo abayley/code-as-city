@@ -204,11 +204,13 @@ function DistrictPlots({
     layout,
     selectedId,
     activeDistrictId,
+    onSelectDistrict,
     hideLabels = false,
 }: {
     layout: FlowLayout;
     selectedId: string;
     activeDistrictId: string | null;
+    onSelectDistrict: (id: string) => void;
     hideLabels?: boolean;
 }) {
     const colors = palette.DISTRICT_PLOT_FILLS;
@@ -244,9 +246,24 @@ function DistrictPlots({
             [minX, 0.004, minZ],
         ];
 
+        // Spread as a bundle (like the structure meshes) so the handlers are
+        // not statically visible as element props: react-three-fiber meshes are
+        // not DOM, but the a11y lint cannot tell.
+        const districtInteractions = {
+            onClick: (event: ThreeEvent<MouseEvent>) => {
+                event.stopPropagation();
+                onSelectDistrict(district.id);
+            },
+            onPointerEnter: () => {
+                document.body.style.cursor = "pointer";
+            },
+            onPointerLeave: () => {
+                document.body.style.cursor = "default";
+            },
+        };
         return (
             <group key={district.id}>
-                <mesh position={[centerX, -0.027, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+                <mesh position={[centerX, -0.027, centerZ]} rotation={[-Math.PI / 2, 0, 0]} {...districtInteractions}>
                     <planeGeometry args={[width, depth]} />
                     <meshBasicMaterial
                         color={district.color ?? colors[index % colors.length] ?? SCENE_INK}
@@ -264,7 +281,7 @@ function DistrictPlots({
                 />
                 {!hideLabels && (
                     <group position={[centerX, 0.048, signZ]} rotation={[-Math.PI / 2, 0, 0]}>
-                        <mesh>
+                        <mesh {...districtInteractions}>
                             <planeGeometry args={[signWidth, signHeight]} />
                             <meshBasicMaterial
                                 color={active ? SCENE_INK : SCENE_PANEL}
@@ -595,6 +612,9 @@ function Structure({
     const [hovered, setHovered] = useState(false);
     const group = useRef<THREE.Group>(null);
     const material = useRef<THREE.MeshStandardMaterial>(null);
+    // The coverage-gap cap is a second material; it must dim with the body,
+    // otherwise its light blue stays opaque while the node fades.
+    const gapMaterial = useRef<THREE.MeshStandardMaterial>(null);
     const declaredSize = node.display?.size ?? [1.65, 1.2, 1.4];
     // Local change: structures render below full size so tightly packed rows do
     // not obscure the nameplates in front of the row behind — campus structures
@@ -743,6 +763,10 @@ function Structure({
             const targetOpacity = dimmed ? 0.22 : expanded ? 0.28 : node.kind === "external" ? 0.82 : 1;
             material.current.opacity = THREE.MathUtils.damp(material.current.opacity, targetOpacity, 7.5, delta);
         }
+        if (gapMaterial.current) {
+            const targetOpacity = dimmed ? 0.22 : expanded ? 0.28 : 1;
+            gapMaterial.current.opacity = THREE.MathUtils.damp(gapMaterial.current.opacity, targetOpacity, 7.5, delta);
+        }
     });
 
     // Spread as a bundle so both segment meshes share the exact same handlers.
@@ -793,8 +817,10 @@ function Structure({
                     {gapGeometry && (
                         <mesh geometry={gapGeometry} castShadow {...meshInteractions} scale={selected ? 1.075 : 1}>
                             <meshStandardMaterial
+                                ref={gapMaterial}
                                 color={palette.COVERAGE_GAP}
                                 roughness={0.86}
+                                transparent
                                 emissive={selected || hovered ? palette.COVERAGE_GAP : "#000000"}
                                 emissiveIntensity={selected ? 0.32 : hovered ? 0.1 : 0}
                             />
@@ -1106,6 +1132,7 @@ function CityScene({
     onSelect,
     onEnter,
     onHover,
+    onSelectDistrict,
     viewKey,
     overheadView,
     onDeselect,
@@ -1125,6 +1152,7 @@ function CityScene({
     onSelect: (id: string) => void;
     onEnter: (id: string) => void;
     onHover: (node: CityNode | null, x: number, y: number) => void;
+    onSelectDistrict: (id: string) => void;
     viewKey: string;
     overheadView: boolean;
     onDeselect: () => void;
@@ -1272,6 +1300,7 @@ function CityScene({
                 layout={layout}
                 selectedId={selectedId}
                 activeDistrictId={districtId}
+                onSelectDistrict={onSelectDistrict}
                 hideLabels={!!interiorModel}
             />
             <Connections
@@ -1915,11 +1944,17 @@ function MapViewer({
                         onSelect={selectNode}
                         onEnter={exploreNode}
                         onHover={handleHover}
+                        onSelectDistrict={exploreDistrict}
                         viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeDistrictId ? `district:${activeDistrictId}` : "campus"}`}
                         overheadView={overheadView}
                         onDeselect={() => {
-                            setSelectedId("");
-                            setSelectedConnectionId(null);
+                            // In a drill-down (rooms open or a focused node), the
+                            // background is not a deselect target: the mode's anchor
+                            // stays the selection so the scene and inspector agree.
+                            // Esc steps back out; only the campus/district view clears.
+                            const anchor = activeExpandedId ?? activeFocusId;
+                            setSelectedId(anchor ?? "");
+                            setSelectedConnectionId(anchor ? (firstCampusConnection(anchor)?.id ?? null) : null);
                         }}
                     />
                 ) : (
