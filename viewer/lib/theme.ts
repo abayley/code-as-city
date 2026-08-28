@@ -10,6 +10,20 @@ export type Theme = "light" | "dark";
 const STORAGE_KEY = "code-as-city:theme";
 
 /**
+ * Whether an event originated from a text-editing target, where a bare-letter
+ * shortcut would swallow the user's typing.
+ *
+ * @param target - The event target to test.
+ * @returns True when the target is an input, textarea, select, or a
+ *   contenteditable node.
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+/**
  * The theme to start in: the remembered choice, else the operating system's
  * preference, else light.
  *
@@ -38,6 +52,20 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
     const toggleTheme = useCallback(() => {
         setTheme((current) => (current === "dark" ? "light" : "dark"));
     }, []);
+
+    // Cmd/Ctrl+Shift+D flips the theme from the keyboard, ignoring text-editing
+    // targets so it never swallows typed input.
+    useEffect(() => {
+        function onKeyDown(event: KeyboardEvent): void {
+            if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+            if (event.key.toLowerCase() !== "d") return;
+            if (isEditableTarget(event.target)) return;
+            event.preventDefault();
+            toggleTheme();
+        }
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [toggleTheme]);
 
     return { theme, toggleTheme };
 }
