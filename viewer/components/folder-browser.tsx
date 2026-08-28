@@ -2,7 +2,7 @@
 // asks /api/generate for a deployment map or module overview of the folder the
 // user settles on.
 
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,7 +13,6 @@ import {
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
     Dialog,
     DialogContent,
@@ -22,12 +21,15 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { Item, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item";
 import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
 import type { CityMap } from "@/lib/city-map";
 import { validateCityMap } from "@/lib/city-map";
+
+/** localStorage key holding the folder the browser was last pointed at. */
+const LAST_FOLDER_KEY = "code-as-city:last-folder";
 
 /** A directory listing as returned by `/api/browse`. */
 type Listing = {
@@ -76,17 +78,17 @@ function pathSegments(path: string): Array<{ label: string; path: string }> {
 export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
     const [listing, setListing] = useState<Listing | null>(null);
     const [busy, setBusy] = useState(false);
-    const [overview, setOverview] = useState(false);
     const [error, setError] = useState<string | null>(null);
     // Roving highlight over the folder list: 0 is "../", entries follow.
     const [highlight, setHighlight] = useState(0);
-    const overviewId = useId();
 
     /**
      * Fetches a directory listing from the server and resets the highlight,
-     * recording any failure for display.
+     * recording any failure for display. The settled folder is remembered so
+     * the browser reopens where it last was.
      *
-     * @param path - The directory to list; the server's default when omitted.
+     * @param path - The directory to list; the last-used or server default
+     *   when omitted.
      */
     const load = useCallback(async (path?: string) => {
         try {
@@ -96,12 +98,23 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
             setListing(data);
             setHighlight(0);
             setError(null);
+            try {
+                localStorage.setItem(LAST_FOLDER_KEY, data.path);
+            } catch {
+                // Private windows and blocked storage throw; the browser still works.
+            }
         } catch (browseError) {
             setError(browseError instanceof Error ? browseError.message : String(browseError));
         }
     }, []);
     useEffect(() => {
-        load();
+        let lastFolder: string | null = null;
+        try {
+            lastFolder = localStorage.getItem(LAST_FOLDER_KEY);
+        } catch {
+            // Ignore storage failures and fall back to the server default.
+        }
+        load(lastFolder ?? undefined);
     }, [load]);
 
     /**
@@ -135,10 +148,10 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
     // submit closure is held in a ref instead of being a dependency. The ref is
     // written in an effect rather than during render: writing it in the render
     // body is unsafe once rendering can be interrupted or replayed.
-    const submitRef = useRef<(forceOverview: boolean) => void>(() => {});
+    const submitRef = useRef<(asOverview: boolean) => void>(() => {});
     useEffect(() => {
-        submitRef.current = (forceOverview: boolean) => {
-            void generate(forceOverview || overview);
+        submitRef.current = (asOverview: boolean) => {
+            void generate(asOverview);
         };
     });
 
@@ -216,7 +229,7 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
 
     return (
         <Dialog open onOpenChange={handleOpenChange}>
-            <DialogContent className="sm:max-w-lg">
+            <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>Map a folder</DialogTitle>
                     <DialogDescription>
@@ -241,7 +254,7 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
                                 </Breadcrumb>
                                 {listing.isRepo && <Badge variant="secondary">git</Badge>}
                             </div>
-                            <ItemGroup className="max-h-64 gap-0 overflow-y-auto">
+                            <ItemGroup className="max-h-96 gap-0 overflow-y-auto">
                                 <Item
                                     size="xs"
                                     variant={highlight === 0 ? "outline" : "default"}
@@ -280,20 +293,6 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
                                 ))}
                             </ItemGroup>
                         </Field>
-                        <Field orientation="horizontal">
-                            <Checkbox
-                                id={overviewId}
-                                checked={overview}
-                                onCheckedChange={setOverview}
-                                disabled={busy}
-                            />
-                            <FieldContent>
-                                <FieldLabel htmlFor={overviewId}>Module overview</FieldLabel>
-                                <FieldDescription>
-                                    Draw modules and their imports instead of the deployment map.
-                                </FieldDescription>
-                            </FieldContent>
-                        </Field>
                     </FieldGroup>
                 )}
                 {error && (
@@ -303,21 +302,24 @@ export function FolderBrowser({ onClose, onGenerated }: FolderBrowserProps) {
                     </Alert>
                 )}
                 <DialogFooter>
-                    <Button variant="outline" onClick={onClose}>
+                    <Button variant="outline" onClick={onClose} disabled={busy}>
                         Cancel
                     </Button>
-                    <Button disabled={!listing || busy} onClick={() => generate(overview)}>
-                        {busy ? (
-                            <>
-                                <Spinner />
-                                Generating…
-                            </>
-                        ) : (
-                            <>
-                                Generate <Kbd>⌘↵</Kbd>
-                            </>
-                        )}
-                    </Button>
+                    {busy ? (
+                        <Button disabled>
+                            <Spinner />
+                            Generating…
+                        </Button>
+                    ) : (
+                        <>
+                            <Button variant="outline" disabled={!listing} onClick={() => generate(true)}>
+                                Module overview <Kbd>⌘⇧↵</Kbd>
+                            </Button>
+                            <Button disabled={!listing} onClick={() => generate(false)}>
+                                Deployment map <Kbd>⌘↵</Kbd>
+                            </Button>
+                        </>
+                    )}
                 </DialogFooter>
             </DialogContent>
         </Dialog>

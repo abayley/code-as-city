@@ -93,6 +93,9 @@ let fake: FetchFake;
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
+    // The browser remembers its last folder in localStorage; clear it so each
+    // test starts from the server default listing.
+    localStorage.clear();
     fake = new FetchFake(
         { "/home/dev": homeListing, "/home/dev/projects": projectsListing, "/home": homeListing },
         { map: generatedMap, jsonPath: "/home/dev/projects/code-as-city/out/map.json" },
@@ -125,12 +128,11 @@ describe("FolderBrowser", () => {
         await waitFor(() => expect(fake.requests.at(-1)?.url).toBe(`/api/browse?path=${encodeURIComponent("/home")}`));
     });
 
-    it("given the overview box ticked, when Generate is pressed, then the overview request is posted", async () => {
+    it("given the module-overview button, when pressed, then the overview request is posted", async () => {
         const onGenerated = vi.fn();
         render(<FolderBrowser onClose={() => {}} onGenerated={onGenerated} />);
         await screen.findByText("projects/");
-        await userEvent.click(screen.getByRole("checkbox", { name: /Module overview/ }));
-        await userEvent.click(screen.getByRole("button", { name: /Generate/ }));
+        await userEvent.click(screen.getByRole("button", { name: /Module overview/ }));
         await waitFor(() =>
             expect(onGenerated).toHaveBeenCalledWith({
                 map: generatedMap,
@@ -144,14 +146,14 @@ describe("FolderBrowser", () => {
         });
     });
 
-    it("given the overview box untouched, when Generate is pressed, then a deployment map is requested", async () => {
+    it("given the deployment-map button, when pressed, then a deployment map is requested", async () => {
         render(<FolderBrowser onClose={() => {}} onGenerated={() => {}} />);
         await screen.findByText("projects/");
-        await userEvent.click(screen.getByRole("button", { name: /Generate/ }));
+        await userEvent.click(screen.getByRole("button", { name: /Deployment map/ }));
         await waitFor(() => expect(fake.requests.at(-1)?.body).toEqual({ repoPath: "/home/dev", overview: false }));
     });
 
-    it("given a failing generate, when Generate is pressed, then the error is shown and nothing is handed back", async () => {
+    it("given a failing generate, when a map is requested, then the error is shown and nothing is handed back", async () => {
         const onGenerated = vi.fn();
         globalThis.fetch = async (input, init) => {
             if (String(input).startsWith("/api/generate")) return Response.json({ error: "Not a directory." });
@@ -159,9 +161,19 @@ describe("FolderBrowser", () => {
         };
         render(<FolderBrowser onClose={() => {}} onGenerated={onGenerated} />);
         await screen.findByText("projects/");
-        await userEvent.click(screen.getByRole("button", { name: /Generate/ }));
+        await userEvent.click(screen.getByRole("button", { name: /Deployment map/ }));
         expect(await screen.findByText("Not a directory.")).toBeInTheDocument();
         expect(onGenerated).not.toHaveBeenCalled();
+    });
+
+    it("given a folder it settled on, when reopened, then it starts from that folder", async () => {
+        // The first mount records the settled folder; a second mount reads it
+        // back from storage instead of starting at the server default.
+        localStorage.setItem("code-as-city:last-folder", "/home/dev/projects");
+        render(<FolderBrowser onClose={() => {}} onGenerated={() => {}} />);
+        await waitFor(() =>
+            expect(fake.requests.at(-1)?.url).toBe(`/api/browse?path=${encodeURIComponent("/home/dev/projects")}`),
+        );
     });
 
     it("given the folder list, when Down then Enter is pressed, then the highlighted folder is browsed", async () => {
