@@ -141,7 +141,7 @@ function CameraRig({
                       4,
                       Math.min(
                           78,
-                          Math.min(viewportSize.width / (spanX + 6), viewportSize.height / (spanZ + 7)) * 0.92,
+                          Math.min(viewportSize.width / (spanX + 6), viewportSize.height / (spanZ + 7)) * 1.08,
                       ),
                   );
         }
