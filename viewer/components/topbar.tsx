@@ -134,16 +134,17 @@ export function Topbar({
                 </ButtonGroup>
             )}
 
+            <ButtonGroup>
+                <Button variant="outline" size="sm" onClick={onMapFolder}>
+                    Map a folder
+                </Button>
+                <Button size="sm" onClick={onOpenMap}>
+                    Open map
+                </Button>
+            </ButtonGroup>
+
             <div className="ml-auto flex items-center gap-2">
                 <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-                <ButtonGroup>
-                    <Button variant="outline" size="sm" onClick={onMapFolder}>
-                        Map a folder
-                    </Button>
-                    <Button size="sm" onClick={onOpenMap}>
-                        Open map
-                    </Button>
-                </ButtonGroup>
             </div>
         </header>
     );

@@ -51,13 +51,7 @@ export function ViewportOverlays({
         <div className="pointer-events-none absolute inset-0 z-10">
             <Card size="sm" className="pointer-events-auto absolute top-3 right-4 w-fit">
                 <CardContent>
-                    <Toggle
-                        variant="outline"
-                        size="sm"
-                        aria-label="Overhead view"
-                        pressed={overhead}
-                        onPressedChange={onOverheadChange}
-                    >
+                    <Toggle size="sm" aria-label="Overhead view" pressed={overhead} onPressedChange={onOverheadChange}>
                         {overhead ? "Isometric" : "Overhead"}
                     </Toggle>
                 </CardContent>

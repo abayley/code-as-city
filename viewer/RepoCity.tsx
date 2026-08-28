@@ -1845,15 +1845,16 @@ function MapViewer({
             ? "Choose a building to open it · Esc to return to the whole city"
             : "Click a structure or nameplate to select · double-click to open";
 
-    // Both the hover card and the inspector describe the same node; the
-    // inspector falls back to the map summary when nothing is under either.
+    // The hover card follows the pointer; the inspector reflects only the
+    // committed selection (a click), falling back to the map summary when
+    // nothing is selected. Hover never drives the inspector.
     const hoveredRoomCount = hoverCard
         ? map.nodes.filter((candidate) => candidate.parentId === hoverCard.node.id).length
         : 0;
     const hoverDetails = hoverCard
         ? hoverCardDetails(hoverCard.node, hoveredRoomCount)
         : { paths: [] as string[], facts: [] as HoverFact[] };
-    const inspectorShown = hoverCard?.node ?? selected;
+    const inspectorShown = selected;
     const inspectorContent: InspectorContent = inspectorShown
         ? nodeInspectorContent(
               map,

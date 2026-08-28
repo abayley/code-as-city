@@ -55,7 +55,7 @@ export function HoverDetails({ at, title, paths, facts }: HoverDetailsProps) {
                     {paths.map((path) => (
                         <Item key={path} size="xs">
                             <ItemContent>
-                                <ItemTitle className="font-mono">{path}</ItemTitle>
+                                <ItemTitle className="font-mono break-all whitespace-normal">{path}</ItemTitle>
                             </ItemContent>
                         </Item>
                     ))}
