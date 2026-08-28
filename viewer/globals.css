@@ -177,28 +177,6 @@ body {
     }
 }
 
-@layer utilities {
-    /* A slim, always-visible scrollbar for scrolling panels (the component
-       rail). Defining ::-webkit-scrollbar opts Chrome/Safari out of overlay
-       scrollbars so the track is visible whenever the panel overflows; the
-       standard scrollbar-* properties cover Firefox. */
-    .themed-scrollbar {
-        scrollbar-width: thin;
-        scrollbar-color: var(--border) transparent;
-    }
-    .themed-scrollbar::-webkit-scrollbar {
-        width: 0.5rem;
-        height: 0.5rem;
-    }
-    .themed-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    .themed-scrollbar::-webkit-scrollbar-thumb {
-        border-radius: 9999px;
-        background: var(--border);
-    }
-}
-
 /* Deliberately unlayered and last: Tailwind's animation utilities live in
    @layer utilities, so a layered copy of this block would lose to them. An
    unlayered rule beats every layered one without !important. */

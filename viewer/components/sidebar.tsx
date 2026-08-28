@@ -4,6 +4,7 @@
 import { SearchIcon, XIcon } from "lucide-react";
 import { ComponentRow, type ComponentRowProps } from "@/components/component-row";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     SidebarContent,
     SidebarGroup,
@@ -102,36 +103,38 @@ export function Sidebar({ search, onSearchChange, sections, onExploreSection, on
                     </InputGroup>
                 </SidebarHeader>
 
-                <SidebarContent className="themed-scrollbar">
-                    {sections.map((section) => (
-                        <SidebarGroup key={section.id}>
-                            {section.bandLabel !== undefined && (
-                                <SidebarGroupLabel className="uppercase">{section.bandLabel}</SidebarGroupLabel>
-                            )}
-                            <SidebarGroupContent>
-                                <SidebarMenu>
-                                    <SidebarMenuItem>
-                                        <SidebarMenuButton
-                                            isActive={section.active}
-                                            aria-pressed={section.active}
-                                            onClick={() => onExploreSection(section.id)}
-                                        >
-                                            <span className="shrink-0 font-mono tabular-nums">{`D${section.index + 1}`}</span>
-                                            <span className="truncate font-medium uppercase">{section.label}</span>
-                                        </SidebarMenuButton>
-                                        <SidebarMenuSub>
-                                            {section.rows.map(({ id, ...row }) => (
-                                                <SidebarMenuSubItem key={id}>
-                                                    <ComponentRow {...row} onSelect={() => onSelectRow(id)} />
-                                                </SidebarMenuSubItem>
-                                            ))}
-                                        </SidebarMenuSub>
-                                    </SidebarMenuItem>
-                                </SidebarMenu>
-                            </SidebarGroupContent>
-                        </SidebarGroup>
-                    ))}
-                </SidebarContent>
+                <ScrollArea className="min-h-0 flex-1">
+                    <SidebarContent className="overflow-visible">
+                        {sections.map((section) => (
+                            <SidebarGroup key={section.id}>
+                                {section.bandLabel !== undefined && (
+                                    <SidebarGroupLabel className="uppercase">{section.bandLabel}</SidebarGroupLabel>
+                                )}
+                                <SidebarGroupContent>
+                                    <SidebarMenu>
+                                        <SidebarMenuItem>
+                                            <SidebarMenuButton
+                                                isActive={section.active}
+                                                aria-pressed={section.active}
+                                                onClick={() => onExploreSection(section.id)}
+                                            >
+                                                <span className="shrink-0 font-mono tabular-nums">{`D${section.index + 1}`}</span>
+                                                <span className="truncate font-medium uppercase">{section.label}</span>
+                                            </SidebarMenuButton>
+                                            <SidebarMenuSub>
+                                                {section.rows.map(({ id, ...row }) => (
+                                                    <SidebarMenuSubItem key={id}>
+                                                        <ComponentRow {...row} onSelect={() => onSelectRow(id)} />
+                                                    </SidebarMenuSubItem>
+                                                ))}
+                                            </SidebarMenuSub>
+                                        </SidebarMenuItem>
+                                    </SidebarMenu>
+                                </SidebarGroupContent>
+                            </SidebarGroup>
+                        ))}
+                    </SidebarContent>
+                </ScrollArea>
             </aside>
         </SidebarProvider>
     );
