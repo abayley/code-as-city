@@ -2,6 +2,7 @@
 // front-to-back flow layers, packs them into districts, and
 // routes edges around the resulting buildings.
 import type { CityEdge, CityNode } from "./city-map";
+import { DEFAULT_FOOTPRINT, MARKER_FOOTPRINT_SCALE, plaqueMetrics, plaqueVariantFor } from "./sizing";
 
 export type FlowLayout = {
     positions: Map<string, [number, number]>;
@@ -483,18 +484,18 @@ export function computeFlowLayout(nodes: CityNode[], edges: CityEdge[], allNodes
             const position = positions.get(node.id);
             if (position === undefined) throw new Error("Node missing from positions map.");
             const [x, z] = position;
-            const [width, , depth] = node.display?.size ?? [1.65, 1.2, 1.4];
+            const [width, , depth] = node.display?.size ?? DEFAULT_FOOTPRINT;
             const hasInterior = allNodes.some((candidate) => candidate.parentId === node.id);
             const labelLength = node.label.length + (hasInterior ? 3 : 0);
             // Matches MapMarker's labelScale: campus nameplates render at 40%.
             const labelScale = 0.4;
-            const plaqueWidth =
-                (hasInterior
-                    ? Math.max(3.15, Math.min(4.7, 2.1 + labelLength * 0.065))
-                    : node.kind === "external"
-                      ? Math.max(2.35, Math.min(3.65, 1.75 + labelLength * 0.05))
-                      : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058))) * labelScale;
-            const plaqueHeight = (hasInterior ? 1.02 : node.kind === "external" ? 0.76 : 0.88) * labelScale;
+            // Campus-scale nameplates only: the layout always draws the outside
+            // view, so a node is a landmark when it has an interior, quieter when
+            // external. The scene shares this mapping (plus the interior case).
+            const variant = plaqueVariantFor({ interior: false, hasInterior, isExternal: node.kind === "external" });
+            const plaque = plaqueMetrics(variant, labelLength);
+            const plaqueWidth = plaque.width * labelScale;
+            const plaqueHeight = plaque.height * labelScale;
             const footprintDepth = depth + 0.24;
             const plaqueFarZ = z + footprintDepth / 2 + plaqueHeight + 0.06;
             return {
@@ -617,10 +618,12 @@ export function createEdgeRouter(layout: FlowLayout, allNodes: CityNode[]): Edge
     for (const node of allNodes) {
         const position = layout.positions.get(node.id);
         if (!position) continue;
-        // Obstacles use the RENDERED footprint (structures draw at 80%) with a
-        // slim pad, so the corridors between tightly packed buildings stay open.
-        const renderScale = 0.8;
-        const [width, , depth] = (node.display?.size ?? [1.65, 1.2, 1.4]).map((d) => d * renderScale) as [
+        // Obstacles use the on-ground footprint marker's extent (the plot a
+        // viewer sees, MARKER_FOOTPRINT_SCALE) with a slim pad, so the corridors
+        // between tightly packed buildings stay open. The Structure mesh itself
+        // draws smaller (see RepoCity's structureScale); the marker, not the
+        // mesh, is what the routes should thread between.
+        const [width, , depth] = (node.display?.size ?? DEFAULT_FOOTPRINT).map((d) => d * MARKER_FOOTPRINT_SCALE) as [
             number,
             number,
             number,

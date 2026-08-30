@@ -23,6 +23,14 @@ import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow
 import { type Showcase, showcases } from "./lib/local-showcases";
 import * as palette from "./lib/palette";
 import { matchesRailSearch } from "./lib/rail-search";
+import {
+    DEFAULT_FOOTPRINT,
+    MARKER_FOOTPRINT_SCALE,
+    plaqueMetrics,
+    plaqueVariantFor,
+    STRUCTURE_MESH_SCALE,
+    STRUCTURE_MESH_SCALE_INTERIOR,
+} from "./lib/sizing";
 import { type Theme, useTheme } from "./lib/theme";
 
 // Vinext's production bundle cannot serialize Troika's typesetting worker.
@@ -615,11 +623,13 @@ function Structure({
     // The coverage-gap cap is a second material; it must dim with the body,
     // otherwise its light blue stays opaque while the node fades.
     const gapMaterial = useRef<THREE.MeshStandardMaterial>(null);
-    const declaredSize = node.display?.size ?? [1.65, 1.2, 1.4];
+    const declaredSize = node.display?.size ?? DEFAULT_FOOTPRINT;
     // Local change: structures render below full size so tightly packed rows do
     // not obscure the nameplates in front of the row behind — campus structures
-    // most of all, since they stack deepest.
-    const structureScale = interior ? 0.85 : 0.68;
+    // most of all, since they stack deepest. These mesh scales sit below the
+    // marker scale (see sizing.ts) on purpose: the mesh must clear the nameplate,
+    // the on-ground marker need not.
+    const structureScale = interior ? STRUCTURE_MESH_SCALE_INTERIOR : STRUCTURE_MESH_SCALE;
     const requestedSize = declaredSize.map((d) => d * structureScale) as [number, number, number];
     const size: [number, number, number] =
         node.archetype === "building" && !hasInterior
@@ -914,28 +924,29 @@ function MapMarker({
     onSelect: () => void;
     onEnter: () => void;
 }) {
-    const requestedSize = node.display?.size ?? [1.65, 1.2, 1.4];
-    // 0.8 matches Structure's campus structureScale so footprints stay snug.
-    const scale = interior ? 0.48 : (expanded ? 1.08 : 1) * 0.8;
+    const requestedSize = node.display?.size ?? DEFAULT_FOOTPRINT;
+    // The footprint marker is the on-ground plot a viewer reads; it draws at
+    // MARKER_FOOTPRINT_SCALE. The Structure mesh draws smaller (structureScale)
+    // so it never hides the nameplate of the row behind it, so the two scales
+    // differ on purpose.
+    const scale = interior ? 0.48 : (expanded ? 1.08 : 1) * MARKER_FOOTPRINT_SCALE;
     const footprintWidth = requestedSize[0] * scale + (interior ? 0.14 : 0.24);
     const footprintDepth = requestedSize[2] * scale + (interior ? 0.14 : 0.24);
     const labelLength = node.label.length + (hasInterior ? 3 : 0);
-    const landmark = hasInterior && !interior;
     const quieter = node.kind === "external" && !interior;
     // Local change: campus nameplates shrink to a fraction of upstream size so
     // buildings can pack tightly; they stay on the floor in front of the building.
     const labelScale = interior ? 1 : 0.4;
-    const plaqueWidth =
-        (interior
-            ? Math.max(1.5, Math.min(2.4, 1.08 + labelLength * 0.045))
-            : landmark
-              ? Math.max(3.15, Math.min(4.7, 2.1 + labelLength * 0.065))
-              : quieter
-                ? Math.max(2.35, Math.min(3.65, 1.75 + labelLength * 0.05))
-                : Math.max(2.6, Math.min(4.1, 1.9 + labelLength * 0.058))) * labelScale;
-    const plaqueHeight = (interior ? 0.58 : landmark ? 1.02 : quieter ? 0.76 : 0.88) * labelScale;
-    const codeFontSize = (interior ? 0.13 : landmark ? 0.2 : quieter ? 0.145 : 0.17) * labelScale;
-    const labelFontSize = (interior ? 0.17 : landmark ? 0.29 : quieter ? 0.205 : 0.24) * labelScale;
+    // The plaque's whole size band — dimensions and font sizes — comes from the
+    // one variant, so the four bands stay defined in a single place (sizing.ts).
+    const plaque = plaqueMetrics(
+        plaqueVariantFor({ interior, hasInterior, isExternal: node.kind === "external" }),
+        labelLength,
+    );
+    const plaqueWidth = plaque.width * labelScale;
+    const plaqueHeight = plaque.height * labelScale;
+    const codeFontSize = plaque.codeFontSize * labelScale;
+    const labelFontSize = plaque.labelFontSize * labelScale;
     const plaqueColor =
         node.kind === "external"
             ? palette.PLAQUE_EXTERNAL
@@ -1199,7 +1210,7 @@ function CityScene({
             const childPosition = positions.get(child.id);
             if (childPosition === undefined) return [];
             const [x, z] = childPosition;
-            const [childWidth, , childDepth] = child.display?.size ?? [1.65, 1.2, 1.4];
+            const [childWidth, , childDepth] = child.display?.size ?? DEFAULT_FOOTPRINT;
             return [
                 {
                     minX: x - childWidth * 0.28,
@@ -1237,7 +1248,7 @@ function CityScene({
                 const nodePosition = layout.positions.get(node.id);
                 if (nodePosition === undefined) return [];
                 const [x, z] = nodePosition;
-                const [width, , depth] = node.display?.size ?? [1.65, 1.2, 1.4];
+                const [width, , depth] = node.display?.size ?? DEFAULT_FOOTPRINT;
                 return [{ minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2 }];
             });
         if (!extents.length) return null;
