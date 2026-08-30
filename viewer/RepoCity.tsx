@@ -17,10 +17,12 @@ import { Legend } from "./components/legend";
 import { Sidebar, type SidebarSection } from "./components/sidebar";
 import { Topbar } from "./components/topbar";
 import { ViewportOverlays } from "./components/viewport-overlays";
+import { useNavigation } from "./hooks/use-navigation";
 import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib/city-map";
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { type Showcase, showcases } from "./lib/local-showcases";
+import { closestVisibleAncestor, type NavigationContext, type NavigationMode } from "./lib/navigation";
 import * as palette from "./lib/palette";
 import { matchesRailSearch } from "./lib/rail-search";
 import {
@@ -545,26 +547,6 @@ function sourceHref(map: CityMap, source: SourceRef) {
     }
     const path = source.path.replace(/^\.\//, "").split("/").map(encodeURIComponent).join("/");
     return `https://${repository}/blob/HEAD/${path}${source.line ? `#L${source.line}` : ""}`;
-}
-
-/**
- * Walks up the parent chain until it finds a node that is visible in the
- * current view, so edges between hidden rooms can be projected onto their
- * campus-level buildings.
- *
- * @param nodeId - The node to start from.
- * @param nodeById - Lookup of every node in the map.
- * @param visibleIds - The ids currently rendered.
- * @returns The nearest visible ancestor's id (possibly the node itself), or
- *   null when the whole chain is hidden.
- */
-function closestVisibleAncestor(nodeId: string, nodeById: Map<string, CityNode>, visibleIds: Set<string>) {
-    let current = nodeById.get(nodeId);
-    while (current) {
-        if (visibleIds.has(current.id)) return current.id;
-        current = current.parentId ? nodeById.get(current.parentId) : undefined;
-    }
-    return null;
 }
 
 type BoxSegment = { x?: number; z?: number; w: number; d: number; y0: number; y1: number };
@@ -1124,7 +1106,9 @@ function InteriorPlot({ bounds }: { bounds: FlowLayout["bounds"] }) {
  * @param props - `nodes`/`edges` are the campus-level view; `allNodes`/
  *   `allEdges` the whole map (for interiors); `selectedId`, `activeEdgeId`,
  *   `interiorActiveEdgeId`, `expandedId`, `focusId`, and `districtId`
- *   describe the current selection and view mode; `onSelect`, `onEnter`,
+ *   describe the current selection, while `mode` is the single drill-down level
+ *   the navigation machine has resolved (the scene no longer re-derives the
+ *   precedence); `onSelect`, `onEnter`,
  *   `onHover`, and `onDeselect` report interactions upward; `viewKey` and
  *   `overheadView` steer the camera rig.
  * @returns The full 3D scene inside its Canvas element.
@@ -1137,6 +1121,7 @@ function CityScene({
     selectedId,
     activeEdgeId,
     interiorActiveEdgeId,
+    mode,
     expandedId,
     focusId,
     districtId,
@@ -1157,6 +1142,7 @@ function CityScene({
     selectedId: string;
     activeEdgeId: string | null;
     interiorActiveEdgeId: string | null;
+    mode: NavigationMode;
     expandedId: string | null;
     focusId: string | null;
     districtId: string | null;
@@ -1235,7 +1221,7 @@ function CityScene({
         return { parent, children, childEdges, positions, plotBounds, cameraBounds };
     }, [allEdges, allNodes, expandedId, layout]);
     const focusModel = useMemo(() => {
-        if (!focusId || interiorModel) return null;
+        if (mode !== "focus" || !focusId) return null;
         const focusedEdges = edges.filter((edge) => edge.from === focusId || edge.to === focusId);
         const nodeIds = new Set([focusId]);
         focusedEdges.forEach((edge) => {
@@ -1259,16 +1245,16 @@ function CityScene({
             maxZ: Math.max(...extents.map((extent) => extent.maxZ)) + 1.5,
         };
         return { nodeIds, edgeIds: new Set(focusedEdges.map((edge) => edge.id)), bounds };
-    }, [edges, focusId, interiorModel, layout, nodes]);
+    }, [edges, focusId, mode, layout, nodes]);
     const districtModel = useMemo(() => {
-        if (!districtId || interiorModel || focusModel) return null;
+        if (mode !== "district" || !districtId) return null;
         const district = layout.districts.find((candidate) => candidate.id === districtId);
         if (!district) return null;
         return {
             nodeIds: new Set(district.nodeIds),
             bounds: { ...district.bounds, maxZ: district.bounds.maxZ + 0.9 },
         };
-    }, [focusModel, interiorModel, layout, districtId]);
+    }, [mode, layout, districtId]);
 
     // Import edges of the selected/focused node route on demand: the router
     // caches per edge, so re-selecting is instant.
@@ -1587,11 +1573,6 @@ function MapViewer({
         [nodeById],
     );
     // Start deselected: the panel opens on the map summary.
-    const [selectedId, setSelectedId] = useState("");
-    const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
-    const [focusId, setFocusId] = useState<string | null>(null);
-    const [districtId, setDistrictId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
     const [overheadView, setOverheadView] = useState(false);
@@ -1612,9 +1593,10 @@ function MapViewer({
     const visibleEdges = useMemo(() => {
         const projected = new Map<string, CityEdge>();
         const evidencePriority: Record<EvidenceKind, number> = { observed: 3, declared: 2, inferred: 1 };
+        const lookup = { nodeById, visibleIds };
         map.edges.forEach((edge) => {
-            const from = closestVisibleAncestor(edge.from, nodeById, visibleIds);
-            const to = closestVisibleAncestor(edge.to, nodeById, visibleIds);
+            const from = closestVisibleAncestor(edge.from, lookup);
+            const to = closestVisibleAncestor(edge.to, lookup);
             if (!from || !to || from === to) return;
             const key = `${from}->${to}`;
             const existing = projected.get(key);
@@ -1624,43 +1606,38 @@ function MapViewer({
         });
         return [...projected.values()];
     }, [map.edges, nodeById, visibleIds]);
-    const activeExpandedId = expandedId && visibleIds.has(expandedId) ? expandedId : null;
-    const activeFocusId = focusId && visibleIds.has(focusId) && !activeExpandedId ? focusId : null;
-    const expandedNode = activeExpandedId ? nodeById.get(activeExpandedId) : undefined;
-    const focusedNode = activeFocusId ? nodeById.get(activeFocusId) : undefined;
-    const expandedChildren = useMemo(
-        () => (activeExpandedId ? map.nodes.filter((node) => node.parentId === activeExpandedId) : []),
-        [activeExpandedId, map.nodes],
-    );
-    const sceneIds = useMemo(
-        () => new Set([...visibleNodes.map((node) => node.id), ...expandedChildren.map((node) => node.id)]),
-        [expandedChildren, visibleNodes],
-    );
     const layout = useMemo(
         () => computeFlowLayout(visibleNodes, visibleEdges, map.nodes),
         [map.nodes, visibleEdges, visibleNodes],
     );
-    const activeDistrictId =
-        districtId &&
-        layout.districts.some((district) => district.id === districtId) &&
-        !activeExpandedId &&
-        !activeFocusId
-            ? districtId
-            : null;
+    // One navigation machine drives the whole campus/district/focus/interior
+    // lattice: the context is the map-derived lookups it reads (stable per map),
+    // and `nav.view` is the single clamped mode every consumer below reads
+    // instead of re-deriving the precedence.
+    const navContext = useMemo<NavigationContext>(
+        () => ({ visibleIds, nodeById, edges: map.edges, districts: layout.districts }),
+        [visibleIds, nodeById, map.edges, layout.districts],
+    );
+    const nav = useNavigation(navContext);
+    const mode: NavigationMode = nav.view.mode;
+    const activeExpandedId = nav.view.expandedId;
+    const activeFocusId = nav.view.focusId;
+    const activeDistrictId = nav.view.districtId;
+    const selectedConnectionId = nav.view.selectedConnectionId;
     // Local change: no forced selection — an empty selection shows the map
     // summary in the panel, and clicking the background deselects.
-    const effectiveSelectedId = selectedId && sceneIds.has(selectedId) ? selectedId : "";
+    const effectiveSelectedId = nav.view.selectedId;
+    const expandedNode = activeExpandedId ? nodeById.get(activeExpandedId) : undefined;
+    const focusedNode = activeFocusId ? nodeById.get(activeFocusId) : undefined;
     const selected = effectiveSelectedId ? nodeById.get(effectiveSelectedId) : undefined;
     const focusConnections = activeFocusId
         ? visibleEdges.filter((edge) => edge.from === activeFocusId || edge.to === activeFocusId)
         : [];
     const selectedConnection = map.edges.find((edge) => edge.id === selectedConnectionId);
     const selectedConnectionFrom = selectedConnection
-        ? closestVisibleAncestor(selectedConnection.from, nodeById, visibleIds)
+        ? closestVisibleAncestor(selectedConnection.from, navContext)
         : null;
-    const selectedConnectionTo = selectedConnection
-        ? closestVisibleAncestor(selectedConnection.to, nodeById, visibleIds)
-        : null;
+    const selectedConnectionTo = selectedConnection ? closestVisibleAncestor(selectedConnection.to, navContext) : null;
     const campusActiveEdgeId =
         selectedConnectionFrom && selectedConnectionTo && selectedConnectionFrom !== selectedConnectionTo
             ? `campus:${selectedConnectionFrom}->${selectedConnectionTo}`
@@ -1700,168 +1677,11 @@ function MapViewer({
         });
     });
 
-    /**
-     * Finds the first map edge that, projected to campus level, touches the
-     * given campus node — used to preselect a connection on node selection.
-     *
-     * @param nodeId - The campus node's id.
-     * @returns The first matching edge, or undefined when none touch it.
-     */
-    const firstCampusConnection = useCallback(
-        (nodeId: string) => {
-            return map.edges.find((edge) => {
-                const from = closestVisibleAncestor(edge.from, nodeById, visibleIds);
-                const to = closestVisibleAncestor(edge.to, nodeById, visibleIds);
-                return from && to && from !== to && (from === nodeId || to === nodeId);
-            });
-        },
-        [map.edges, nodeById, visibleIds],
-    );
-
-    /**
-     * Finds a map edge whose campus-level projection runs between two campus
-     * nodes, in either direction.
-     *
-     * @param leftId - One campus node id.
-     * @param rightId - The other campus node id.
-     * @returns The first matching edge, or undefined when none connects them.
-     */
-    function connectionBetween(leftId: string, rightId: string) {
-        return map.edges.find((edge) => {
-            const from = closestVisibleAncestor(edge.from, nodeById, visibleIds);
-            const to = closestVisibleAncestor(edge.to, nodeById, visibleIds);
-            return (from === leftId && to === rightId) || (from === rightId && to === leftId);
-        });
-    }
-
-    /**
-     * Selects a node (single click): updates the selection, preselects a
-     * connection touching it, and drops focus mode when the pick is unrelated
-     * to the focused node.
-     *
-     * @param nodeId - The clicked node's id (room or campus structure).
-     */
-    function selectNode(nodeId: string) {
-        const campusNodeId = closestVisibleAncestor(nodeId, nodeById, visibleIds);
-        const focusedConnection =
-            activeFocusId && campusNodeId && campusNodeId !== activeFocusId
-                ? connectionBetween(activeFocusId, campusNodeId)
-                : null;
-        if (activeFocusId && campusNodeId && campusNodeId !== activeFocusId && !focusedConnection) setFocusId(null);
-        setSelectedId(nodeId);
-        setSelectedConnectionId(
-            focusedConnection?.id ??
-                (campusNodeId ? firstCampusConnection(campusNodeId)?.id : null) ??
-                map.edges.find((edge) => edge.from === nodeId || edge.to === nodeId)?.id ??
-                null,
-        );
-    }
-
-    /**
-     * Opens a node (double-click or rail click): expands a building's rooms
-     * when it has children, otherwise toggles focus mode on the node's campus
-     * ancestor to trace its direct connections.
-     *
-     * @param nodeId - The activated node's id.
-     */
-    function exploreNode(nodeId: string) {
-        setDistrictId(null);
-        const children = map.nodes.filter((node) => node.parentId === nodeId);
-        if (children.length) {
-            setFocusId(null);
-            setExpandedId((current) => (current === nodeId ? null : nodeId));
-            selectNode(nodeId);
-            return;
-        }
-        if (activeExpandedId && nodeById.get(nodeId)?.parentId === activeExpandedId) {
-            selectNode(nodeId);
-            return;
-        }
-        const campusNodeId = closestVisibleAncestor(nodeId, nodeById, visibleIds);
-        if (!campusNodeId) return;
-        setExpandedId(null);
-        if (campusNodeId === activeFocusId) {
-            setFocusId(null);
-            selectNode(campusNodeId);
-            return;
-        }
-        setFocusId(campusNodeId);
-        setSelectedId(nodeId);
-        setSelectedConnectionId(firstCampusConnection(campusNodeId)?.id ?? null);
-    }
-
-    /**
-     * Toggles district mode: zooms to a district, selecting its first
-     * node, or leaves the mode when the same district is chosen again.
-     *
-     * @param nextDistrictId - The district (district) id to explore.
-     */
-    function exploreDistrict(nextDistrictId: string) {
-        if (activeDistrictId === nextDistrictId) {
-            setDistrictId(null);
-            return;
-        }
-        const district = layout.districts.find((candidate) => candidate.id === nextDistrictId);
-        const firstNodeId = district?.nodeIds[0];
-        if (!district || !firstNodeId) return;
-        setExpandedId(null);
-        setFocusId(null);
-        setDistrictId(nextDistrictId);
-        setSelectedId(firstNodeId);
-        setSelectedConnectionId(firstCampusConnection(firstNodeId)?.id ?? null);
-    }
-
-    /** Leaves the interior view, reselecting the building that was open. */
-    function closeBuilding() {
-        if (activeExpandedId) selectNode(activeExpandedId);
-        setExpandedId(null);
-    }
-
-    /** Leaves focus (connections) mode, reselecting the focused node. */
-    function closeFocus() {
-        if (activeFocusId) selectNode(activeFocusId);
-        setFocusId(null);
-    }
-
-    /** Leaves district mode, returning to the whole city. */
-    function closeDistrict() {
-        setDistrictId(null);
-    }
-
-    useEffect(() => {
-        /**
-         * Escape steps back one view level: interior, then focus, then
-         * district mode.
-         *
-         * @param event - The window keydown event.
-         */
-        function handleKeyDown(event: KeyboardEvent) {
-            if (event.key !== "Escape") return;
-            if (expandedId) {
-                setSelectedId(expandedId);
-                setSelectedConnectionId(firstCampusConnection(expandedId)?.id ?? null);
-                setExpandedId(null);
-            } else if (focusId) {
-                setSelectedId(focusId);
-                setSelectedConnectionId(firstCampusConnection(focusId)?.id ?? null);
-                setFocusId(null);
-            } else if (districtId) {
-                setDistrictId(null);
-            }
-        }
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [expandedId, firstCampusConnection, focusId, districtId]);
-
     // Overlay view model: the three drill-down levels share one back button
-    // and one breadcrumb slot, so they collapse into a single description.
-    const overlayBack = activeExpandedId
-        ? closeBuilding
-        : activeFocusId
-          ? closeFocus
-          : activeDistrictId
-            ? closeDistrict
-            : null;
+    // and one breadcrumb slot, so they collapse into a single description. Back
+    // and Escape are the same policy (nav.back); the machine owns which level
+    // it unwinds.
+    const overlayBack = mode === "campus" ? null : nav.back;
     const overlayBreadcrumb = activeExpandedId
         ? { root: map.name, detail: `${expandedNode?.label ?? ""} rooms open` }
         : activeFocusId
@@ -1928,8 +1748,8 @@ function MapViewer({
                 search={search}
                 onSearchChange={setSearch}
                 sections={railSections}
-                onExploreSection={exploreDistrict}
-                onSelectRow={exploreNode}
+                onExploreSection={nav.exploreDistrict}
+                onSelectRow={nav.explore}
             />
 
             {/* Utilities mirror the retired `.viewport` rules: the canvas column
@@ -1949,24 +1769,17 @@ function MapViewer({
                         selectedId={effectiveSelectedId}
                         activeEdgeId={campusActiveEdgeId}
                         interiorActiveEdgeId={selectedConnectionId}
+                        mode={mode}
                         expandedId={activeExpandedId}
                         focusId={activeFocusId}
                         districtId={activeDistrictId}
-                        onSelect={selectNode}
-                        onEnter={exploreNode}
+                        onSelect={nav.select}
+                        onEnter={nav.explore}
                         onHover={handleHover}
-                        onSelectDistrict={exploreDistrict}
+                        onSelectDistrict={nav.exploreDistrict}
                         viewKey={`${map.id}:${activeExpandedId ? `rooms:${activeExpandedId}` : activeFocusId ? `connections:${activeFocusId}` : activeDistrictId ? `district:${activeDistrictId}` : "campus"}`}
                         overheadView={overheadView}
-                        onDeselect={() => {
-                            // In a drill-down (rooms open or a focused node), the
-                            // background is not a deselect target: the mode's anchor
-                            // stays the selection so the scene and inspector agree.
-                            // Esc steps back out; only the campus/district view clears.
-                            const anchor = activeExpandedId ?? activeFocusId;
-                            setSelectedId(anchor ?? "");
-                            setSelectedConnectionId(anchor ? (firstCampusConnection(anchor)?.id ?? null) : null);
-                        }}
+                        onDeselect={nav.deselect}
                     />
                 ) : (
                     <div className="grid h-full place-content-center justify-items-center gap-4">
