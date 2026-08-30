@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture review 0002 - deepening opportunities</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+<style>
+  .badge-strong { background: #14532d; color: #dcfce7; }
+  .badge-explore { background: #713f12; color: #fef9c3; }
+  .badge-spec { background: #374151; color: #e5e7eb; }
+  .box { border: 2px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 11px; }
+  .iface { background: #1e3a8a; color: #dbeafe; }
+  .impl { background: #0f172a; color: #94a3b8; }
+  code { font-size: 0.85em; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-200 font-sans">
+<div class="max-w-5xl mx-auto px-6 py-10">
+
+<header class="mb-10">
+  <h1 class="text-3xl font-bold text-slate-50">Architecture review 0002 - deepening opportunities</h1>
+  <p class="mt-2 text-slate-400">code-as-city, main @ 48b3dce, 2026-08-30. Scope chosen from commit hot spots:
+  <code>viewer/RepoCity.tsx</code> (15 of the last 60 commits) and the two assembly pipelines under <code>src/lib/</code> (18 + 15 + 8).
+  Vocabulary: deep module = much behaviour behind a small interface; seam = where the interface lives; leverage = capability per unit of interface learned; locality = change concentrates in one place.</p>
+  <p class="mt-2 text-sm text-slate-500">Recorded decisions respected: HC-002 (rejected), HC-011 (deferred by decision, not re-proposed), RFC-0004 deployment model, review-0001 accepted deviations. No ADR directory exists, so no ADR conflicts arise.</p>
+</header>
+
+<!-- ============ CANDIDATE 1 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">1. Extract the viewer's navigation machine</h2>
+    <span class="badge-strong text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Strong</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>viewer/RepoCity.tsx</code> (MapViewer, lines 1546-1993; CityScene 1121-1425)</p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    The campus / district / focus / interior mode lattice is one machine expressed as five <code>useState</code>s and ~15 derived
+    expressions. Its precedence rule (expanded beats focus beats district) is re-derived independently in <em>three</em> places
+    (L1616-1638, L1226-1253, L1847-1875), and "which anchor is current" is asked in four. The global Escape handler (L1820-1843)
+    duplicates <code>closeBuilding</code>/<code>closeFocus</code>/<code>closeDistrict</code> instead of calling them. Every recent
+    interaction bug (drill-down deselect, background-click re-anchor) was a fix to this lattice - and none of it is testable, because
+    the decisions live in closures inside a component that requires mounting a WebGL <code>&lt;Canvas&gt;</code>.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    A deep <code>viewer/lib/navigation.ts</code> module (pure reducer or hook over a reducer). Interface: current mode +
+    <code>selectedId</code> out; <code>select(id)</code>, <code>explore(id)</code>, <code>exploreDistrict(id)</code>,
+    <code>back()</code>, <code>deselect()</code> in. It swallows <code>closestVisibleAncestor</code>, <code>firstCampusConnection</code>,
+    <code>connectionBetween</code>, the precedence clamping, and the Escape policy. MapViewer, CityScene, and the overlay builders all
+    read the <em>same</em> derived mode instead of re-deriving it.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Locality:</strong> the precedence rule exists once; the next interaction bug is a one-file fix with a regression test.</li>
+    <li><strong>Leverage:</strong> tests exercise the whole gesture grammar (double-click, background click, Escape, breadcrumb) through six functions - no WebGL, no jsdom canvas.</li>
+    <li><strong>Testability:</strong> today the tested viewer surface is the props-in/DOM-out layer; the decisions layer is at 0%. This flips that.</li>
+  </ul>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">Before - lattice re-derived x3</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph TD
+  S1[expandedId / focusId / districtId<br/>5 useState] --> A[MapViewer L1616<br/>precedence #1]
+  S1 --> B[CityScene L1226<br/>precedence #2]
+  S1 --> C[overlays L1847<br/>precedence #3]
+  S1 --> D[Escape listener L1820<br/>duplicated close logic]
+</pre>
+    </div>
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">After - one deep module</p>
+      <div class="box iface text-center font-bold">select / explore / exploreDistrict / back / deselect -&gt; mode</div>
+      <div class="box impl mt-1 h-40 flex flex-col justify-center gap-1 text-center">
+        <div>precedence lattice (once)</div>
+        <div>closestVisibleAncestor</div>
+        <div>connectionBetween / firstCampusConnection</div>
+        <div>Escape policy = back()</div>
+        <div>drill-down anchor rule</div>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">MapViewer, CityScene, overlays all read one mode value.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CANDIDATE 2 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">2. Put the flow layout under test; share the sizing constants</h2>
+    <span class="badge-strong text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Strong</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>viewer/lib/flow-layout.ts</code> (816 lines, 0% covered), <code>viewer/RepoCity.tsx</code>, <code>vitest.config.ts</code></p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    <code>flow-layout.ts</code> is already a deep module - four exports, type-only imports, fully deterministic, plain data in and out -
+    yet it has zero tests. The blocker is accidental: the viewer test project only includes <code>*.test.tsx</code>, and the node project
+    only includes <code>test/**/*.test.ts</code>, so the natural test file never runs. Meanwhile the module hard-codes the viewer's
+    rendering knowledge by hand: the default footprint <code>[1.65, 1.2, 1.4]</code> appears in six places across both files, the plaque-width
+    formula (flow-layout L491-497) is a verbatim copy of MapMarker (RepoCity L928-936), and flow-layout L620 asserts "structures draw at 80%"
+    while RepoCity L622 actually uses <span class="text-amber-300">0.68</span> - a live drift the duplication has already caused.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    (a) Admit <code>test/unit/viewer/*.test.ts</code> (or a lib glob) and characterise <code>computeFlowLayout</code> /
+    <code>createEdgeRouter</code> through their existing interface - determinism, band ordering, the 600k-cell and 150k-expansion escape hatches,
+    the throw paths. (b) Move the shared sizing constants (default footprint, render scale, plaque formula) into one exported module both
+    files import, so the invariant is enforced by the compiler instead of by comments.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Leverage:</strong> 816 lines of layout behaviour become assertable through two functions; the deepest untested module in the viewer gains a safety net at near-zero interface cost.</li>
+    <li><strong>Locality:</strong> the 0.8-vs-0.68 class of drift becomes impossible - one constant, two readers.</li>
+    <li>Layout regressions (band overlap, router detours) get caught before an eyeball pass.</li>
+  </ul>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">Before - duplicated constants, drift</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph LR
+  FL[flow-layout.ts<br/>footprint, scale 0.8, plaque formula] -. hand-kept in sync .-> RC[RepoCity.tsx<br/>footprint x3, scale 0.68, plaque formula]
+  style FL fill:#fee2e2
+  style RC fill:#fee2e2
+</pre>
+    </div>
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">After - one constants seam, tests on the interface</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph TD
+  K[viewer/lib/sizing.ts<br/>footprint, renderScale, plaqueWidth] --> FL[flow-layout.ts]
+  K --> RC[RepoCity.tsx]
+  T[flow-layout.test.ts] --> FL
+</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CANDIDATE 3 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">3. Give D17 (and D3) one home, per the catalogue's own convention</h2>
+    <span class="badge-strong text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Strong</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>src/lib/assemble-deployment-phases.ts</code> L169-199, <code>src/lib/assemble-overview-phases.ts</code> L311-336, <code>src/lib/inference.ts</code>, <code>src/lib/dockerfile.ts</code>, <code>src/lib/hosts.ts</code>, <code>src/lib/assemble-overview.ts</code> L121-155</p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    HEURISTICS.md states the convention: rules shared between the two map modes are implemented once in <code>inference.ts</code>
+    with per-mode options. <strong>D17 violates it</strong> - external-service node and edge construction is written twice, and the edge payloads
+    (<code>kind: "data_flow"</code>, <code>confidence: 0.7</code>, <code>label: "uses"</code>) are byte-identical duplicates whose ids differ
+    only by a <code>-u</code> suffix. <strong>D3</strong> is spread over five modules, with deployment and overview each applying an exclusion
+    rule the other lacks (utility-room filter vs coarser-than-room-granularity skip). No module interface expresses "the two pipelines
+    must agree"; only the golden test can notice a divergence, after the fact.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    Move D17 node+edge construction into <code>inference.ts</code> as one function taking per-mode options (id suffix, parent strategy),
+    exactly as M1/M8/M10 already do. For D3, extract a single COPY-attribution function that owns both exclusion rules explicitly, so the
+    difference between the modes is a named option rather than two independent re-implementations. This is the same deepening the recent
+    RFC-0002 dedupe applied elsewhere - finishing the job.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Locality:</strong> the next D17 fix (like the delivers first-word fix, M10) lands once instead of twice.</li>
+    <li><strong>Leverage:</strong> one unit test on the shared constructor covers both pipelines; byte-identity between modes becomes a property of the code, not of vigilance.</li>
+    <li>Restores the catalogue's stated architecture - HEURISTICS.md stops overclaiming.</li>
+  </ul>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">Before - D17 built twice</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph TD
+  S[scans.ts findExternalServiceDeps] --> DP[deployment-phases L169<br/>node+edge, id x]
+  S --> OP[overview-phases L311<br/>node+edge, id x-u]
+  DP -. byte-identical payloads .- OP
+</pre>
+    </div>
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">After - one constructor, per-mode options</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph TD
+  S[scans.ts] --> I[inference.ts<br/>buildExternalServiceNodes opts]
+  I --> DP[deployment phase]
+  I --> OP[overview phase]
+</pre>
+    </div>
+  </div>
+  <p class="text-xs text-slate-500 mt-3">Related three-way duplication worth folding in: the overview district colours are hard-coded in <code>viewer/lib/palette.ts</code>, restated as literals in <code>legend.tsx</code> L57-62, and defined again as <code>OVERVIEW_*</code> in <code>assemble-overview.ts</code> - kept aligned by a comment.</p>
+</section>
+
+<!-- ============ CANDIDATE 4 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">4. Narrow the four golden-only assembly phases</h2>
+    <span class="badge-explore text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Worth exploring</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>src/lib/assemble-deployment-phases.ts</code> (assembleHostDistricts L647, assemblePackageDistricts L1058, assembleDatabases L1493, assembleStaticClassification L524), <code>src/lib/assemble-overview-phases.ts</code> (assembleInfraDistricts L128)</p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    The recent decomposition gave the pipelines named phases, but the four largest phases (340-370 lines each) are still only reachable
+    through the golden end-to-end test. Their interfaces are wide - 15 to 19 options each, including three <em>mutable side-channel sets</em>
+    (<code>claimedSegments</code>, <code>serviceClaimedDirs</code>, <code>campusFileSets</code>) written by one phase and read by another
+    outside <code>AssemblyState</code>. Phase ordering is load-bearing (the <code>nodeIds</code> snapshot at L1437 decides database parenting)
+    and enforced only by the literal call sequence plus comments. These phases fail the interface half of depth: enormous behaviour, but an
+    interface nearly as wide as the implementation.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    Not another decomposition - a narrowing. Move the three side channels into <code>AssemblyState</code> so all inter-phase data flows
+    through one named object; have each phase declare what it reads and writes; and add direct unit tests to the four big phases the way
+    the other eight already have them. The byte-identical golden invariant makes this mechanically safe (the recent 1468-to-400 extraction
+    proved the workflow).
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Locality:</strong> "what does this phase depend on" becomes readable from its signature, not from tracing mutations.</li>
+    <li><strong>Testability:</strong> the only producer of user-facing warnings (L1198, L1231) gains direct tests; ordering assumptions become assertable.</li>
+    <li>Reduces the risk in every future heuristic change to the D/M rules, which land in exactly these phases.</li>
+  </ul>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-5">
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">Before - side channels around the state</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph LR
+  H[hostDistricts] -- claimedSegments --> P[packageDistricts]
+  E[edgeDistrict] -- claimedSegments --> P
+  H -- serviceClaimedDirs --> SC[staticClassification]
+  H -- AssemblyState --> P
+  P -- nodeIds snapshot timing --> DB[databases]
+</pre>
+    </div>
+    <div>
+      <p class="text-xs font-bold text-slate-500 uppercase mb-2">After - one state object, declared reads/writes</p>
+      <pre class="mermaid bg-slate-100 rounded p-2">
+graph LR
+  AS[(AssemblyState<br/>incl. claims)] --> H[hostDistricts]
+  H --> AS
+  AS --> P[packageDistricts]
+  P --> AS
+  AS --> DB[databases]
+</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CANDIDATE 5 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">5. Extract the campus projection</h2>
+    <span class="badge-explore text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Worth exploring</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>viewer/RepoCity.tsx</code> (isCampusNode L1574, visibleEdges L1601-1615, closestVisibleAncestor L553, firstCampusConnection L1699, connectionBetween L1718)</p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    "Collapse the node/edge graph onto the currently visible level" is one idea implemented as five scattered pieces - all pure and
+    three.js-free today, trapped in a component body, so the evidence-priority edge dedup (L1601-1615) and ancestor walk have no tests.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    <code>projectToVisible(map, visibleIds) -&gt; { nodes, edges, ancestorOf, edgesTouching }</code> in <code>viewer/lib/</code>.
+    Natural companion to candidate 1 (the navigation machine consumes it) - if 1 proceeds, this likely falls out of it.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Leverage:</strong> the dedup and ancestor rules become directly assertable with plain CityMap fixtures.</li>
+    <li><strong>Locality:</strong> HC-011 (the deferred 5000-node overview problem) will need exactly this seam for any node-collapsing strategy - building it now is the enabling move, without touching HC-011 itself.</li>
+  </ul>
+</section>
+
+<!-- ============ CANDIDATE 6 ============ -->
+<section class="mb-12 bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <div class="flex items-start justify-between gap-4">
+    <h2 class="text-xl font-semibold text-slate-50">6. A text seam for the host-config scan</h2>
+    <span class="badge-spec text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Speculative</span>
+  </div>
+  <p class="mt-1 text-sm text-slate-400"><strong>Files:</strong> <code>src/lib/host-config.ts</code> (41% covered, no unit test file)</p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Problem</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    <code>scanHostConfigs</code> reads the filesystem directly, so every test needs a temp directory with a co-designed triple of
+    YAML basenames, dirnames, and a Host[] vocabulary. Its uncovered 59% is exactly the subtle logic - the +/-4-line window suppression,
+    the length-threshold gates, the fixed-point relaxation clamp in <code>layerHosts</code>.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Solution</h3>
+  <p class="text-sm text-slate-400 mt-1">
+    Accept an injected reader (as <code>complexity.ts</code> already does at L35) or a <code>(path) =&gt; text</code> map, so tests feed
+    text directly. <code>compose.ts</code> - string in, services out - is the house style to match.
+  </p>
+
+  <h3 class="mt-4 font-semibold text-slate-300">Benefits</h3>
+  <ul class="text-sm text-slate-400 mt-1 list-disc ml-5 space-y-1">
+    <li><strong>Testability:</strong> the threshold gates and relaxation clamp become reachable without filesystem scaffolding.</li>
+    <li>Speculative because the module changes rarely; do it when a D-rule change next touches it, not before.</li>
+  </ul>
+  <p class="text-xs text-slate-500 mt-3">Also noted, no card warranted: shallow pass-throughs that fail the deletion test - <code>theme-toggle.tsx</code> (one call site, props threaded through two levels), the <code>local-showcases.ts</code> type re-export, <code>viewport-overlays.tsx</code> (all six props fully computed upstream). Fold into candidate 1's cleanup if it proceeds; not worth standalone churn.</p>
+</section>
+
+<!-- ============ TOP RECOMMENDATION ============ -->
+<section class="mb-12 bg-emerald-950 rounded-xl p-6 border border-emerald-800">
+  <h2 class="text-xl font-semibold text-emerald-100">Top recommendation: candidate 2 first, then candidate 1</h2>
+  <p class="mt-2 text-sm text-emerald-200/80">
+    <strong>Start with 2</strong> - it is almost pure gain: the deep module already exists with a clean four-export interface; the work is a test
+    glob, characterisation tests, and one shared-constants module, and it fixes a live drift (the 0.8 vs 0.68 scale claim). It also builds the
+    fixture vocabulary (small CityMap graphs) that candidates 1 and 5 will reuse.
+  </p>
+  <p class="mt-2 text-sm text-emerald-200/80">
+    <strong>Then 1</strong> - the navigation machine is where the friction actually bites: the viewer is the active work area, the mode lattice
+    is the source of the recent interaction bugs, and it is the largest body of untested decision logic in the codebase. Extracting it converts
+    the next round of viewer polish from eyeball-verified to regression-tested, and candidate 5 falls out of it nearly for free.
+  </p>
+  <p class="mt-2 text-sm text-emerald-200/80">
+    Candidate 3 is the best generator-side move and can proceed independently at any time - it is small, protected by the byte-identical
+    golden invariant, and finishes what RFC-0002 started.
+  </p>
+</section>
+
+<footer class="text-xs text-slate-600 border-t border-slate-800 pt-4">
+  Generated by the improve-codebase-architecture review. Evidence gathered by two exploration passes over viewer/ and src/lib/ at commit 48b3dce.
+  Line numbers are anchored to that commit.
+</footer>
+
+</div>
+</body>
+</html>
