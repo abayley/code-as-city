@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
     addEdge,
+    deploymentFootprintFor,
     escapeRegex,
     externalReferencePattern,
     fileModuleName,
@@ -102,6 +103,26 @@ describe("footprintFor", () => {
 
     it("given mid complexity, when sized, then follows the sqrt formula", () => {
         expect(footprintFor(4)).toBeCloseTo(1.35);
+    });
+});
+
+describe("deploymentFootprintFor", () => {
+    it("given huge complexity, when sized, then clamps to the tighter 2.0 deployment ceiling", () => {
+        expect(deploymentFootprintFor(1000)).toBe(2.0);
+    });
+
+    it("given complexity that footprintFor would put above 2.0, when sized, then it is pulled down to 2.0", () => {
+        // footprintFor(25) = 0.85 + 5/4 = 2.1, above the deployment ceiling.
+        expect(footprintFor(25)).toBeCloseTo(2.1);
+        expect(deploymentFootprintFor(25)).toBe(2.0);
+    });
+
+    it("given a footprint already under the ceiling, when sized, then it matches footprintFor", () => {
+        expect(deploymentFootprintFor(4)).toBe(footprintFor(4));
+    });
+
+    it("given low complexity, when sized, then keeps the shared 0.95 floor", () => {
+        expect(deploymentFootprintFor(0)).toBe(0.95);
     });
 });
 

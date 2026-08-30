@@ -10,9 +10,9 @@
 import { basename, join, relative, sep } from "node:path";
 import {
     addEdge,
+    deploymentFootprintFor,
     escapeRegex,
     fileModuleName,
-    footprintFor,
     linesOf,
     roomLabel,
     sdkImporterIds,
@@ -572,11 +572,13 @@ export function assembleStaticClassification(
         // Deployment structures size like overview modules (O5): height from lines
         // of code, floor area from the worst single function inside. Height is
         // log-scaled — these are multi-file aggregates (services run to 5 figures
-        // of loc) and the overview's linear cap would flatten them all.
+        // of loc) and the overview's linear cap would flatten them all. The
+        // footprint uses a tighter ceiling than overview (deploymentFootprintFor)
+        // so a service's base never buries the rear row's nameplate from overhead.
         const sizedLoc = linesOf(repo, files);
         const sizedComplexity = Math.max(...files.map((f) => fileMaxFunctionComplexity(f)));
         const sizedHeight = Math.max(0.6, 0.6 + Math.log2(1 + sizedLoc / 200) * 0.55);
-        const sizedFootprint = footprintFor(sizedComplexity);
+        const sizedFootprint = deploymentFootprintFor(sizedComplexity);
         const coverage = coverageForFiles(files);
         node.metrics = {
             ...(node.metrics ?? {}),

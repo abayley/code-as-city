@@ -124,6 +124,29 @@ export function footprintFor(complexity: number): number {
     return Math.min(2.5, Math.max(0.95, 0.85 + Math.sqrt(complexity) / 4));
 }
 
+// Deployment structures aggregate whole services, so their worst-function
+// complexity pushes footprints to the shared 2.5 ceiling far more often than
+// overview modules do. At 2.5 the rendered base (2.5 * the viewer's 0.8 marker
+// scale = 2.0) exactly fills the 2.0 layout step, leaving no ground between a
+// building and the row behind it for that row's nameplate. Viewed from
+// overhead, that buries the rear nameplates. A tighter deployment ceiling keeps
+// a gap: 2.0 * 0.8 = 1.6 < 2.0. Overview keeps the wider ceiling.
+const DEPLOYMENT_FOOTPRINT_CEILING = 2.0;
+
+/**
+ * Building footprint for a deployment node: {@link footprintFor} re-clamped to a
+ * lower ceiling so that, viewed from overhead, a structure's base never grows
+ * wide enough to overlap the nameplate of the row behind it. Deployment nodes
+ * are multi-file service aggregates whose complexity would otherwise peg them to
+ * the shared ceiling; overview modules keep {@link footprintFor} unchanged.
+ *
+ * @param complexity - The node's worst single-function McCabe complexity.
+ * @returns The floor-area multiplier, never exceeding the deployment ceiling.
+ */
+export function deploymentFootprintFor(complexity: number): number {
+    return Math.min(DEPLOYMENT_FOOTPRINT_CEILING, footprintFor(complexity));
+}
+
 /**
  * Escapes a string for literal use inside a regular expression. Every value
  * interpolated into a `RegExp` here comes from the target repository, so an
