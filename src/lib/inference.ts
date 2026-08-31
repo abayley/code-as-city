@@ -7,11 +7,17 @@
 // target selection) surface as options.
 
 import { sep } from "node:path";
-import { addEdge, externalReferencePattern, fileModuleName, sdkImportPattern } from "./assembly-helpers.ts";
+import {
+    addEdge,
+    externalReferencePattern,
+    fileModuleName,
+    sdkImporterIds,
+    sdkImportPattern,
+} from "./assembly-helpers.ts";
 import type { Host, HostService } from "./hosts.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { MapEdge } from "./map-types.ts";
-import type { EmbeddedDatabase } from "./scans.ts";
+import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
 import { OTLP_PATTERN } from "./scans.ts";
 
 /** The node-shaped record the shared inference passes consume. */
@@ -66,6 +72,52 @@ export function inferEmbeddedDatabaseUse(options: {
                 confidence: 0.7,
                 label: "reads/writes",
                 sourceRefs: [{ path: database.path }],
+            });
+        }
+    }
+}
+
+/**
+ * D17: a client-SDK dependency naming an external service becomes one external
+ * node per service, with an inferred `data_flow` "uses" edge (confidence 0.7)
+ * from every entry whose source imports the SDK. Drawn only when an entry
+ * actually imports it, so a bare dependency draws nothing — hence a service
+ * with no importers fires neither the callback nor an edge. `onImporters` runs
+ * before the edges are emitted, letting the deployment map create the external
+ * node parented into its externals district and the overview create its infra
+ * member elsewhere; the overview emits "-u"-suffixed edge ids where the
+ * deployment map uses none.
+ *
+ * @param options - The pass inputs: `services` — the client-SDK services from
+ *   the D17 scan; `entries` — the node-shaped records to test, in the mode's
+ *   own order; `edges` — the accumulating edge list, mutated in place;
+ *   `fileText` — reads a repo-relative file's text; `edgeSuffix` — appended to
+ *   each edge id ("" for the deployment map, "-u" for the overview);
+ *   `onImporters` — optional callback run per drawn service with its importer
+ *   ids before the edges are emitted (not run for a service with no importers).
+ */
+export function inferExternalServiceUse(options: {
+    services: readonly ExternalServiceDep[];
+    entries: readonly NodeIndexEntry[];
+    edges: MapEdge[];
+    fileText: (file: string) => string;
+    edgeSuffix: string;
+    onImporters?: ((service: ExternalServiceDep, importerIds: readonly string[]) => void) | undefined;
+}): void {
+    for (const service of options.services) {
+        const importerIds = sdkImporterIds(service.depNames, options.entries, options.fileText);
+        if (importerIds.length === 0) continue;
+        options.onImporters?.(service, importerIds);
+        for (const importer of importerIds) {
+            addEdge(options.edges, {
+                id: `${importer}--${service.id}${options.edgeSuffix}`,
+                from: importer,
+                to: service.id,
+                kind: "data_flow",
+                evidence: "inferred",
+                confidence: 0.7,
+                label: "uses",
+                sourceRefs: [{ path: service.path }],
             });
         }
     }

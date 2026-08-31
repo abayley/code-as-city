@@ -16,6 +16,7 @@ import {
     type OverviewState,
 } from "./assemble-overview-phases.ts";
 import { linesOf, mermaidId } from "./assembly-helpers.ts";
+import { isExcludedCopyDir, normaliseCopyDir } from "./copy-attribution.ts";
 import type { Coupling } from "./coupling.ts";
 import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
@@ -121,15 +122,15 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     // Deploy-host attribution: which hosts does a file ship to (via D3 COPY
     // membership of services built from this repo)?
     const copyDirHosts = new Map<string, Set<string>>(); // dir -> Set(host name)
+    const activeRoomDirs = activeRooms.map(roomDir);
     for (const host of hosts) {
         for (const service of host.services) {
             if (!service.dockerfile) continue;
             for (const copy of service.copies) {
-                const dir = copy.replace(/\/$/, "");
-                // A COPY of a whole dominant source root (the dashboard image copying
-                // bare `src` for its client bundle) is a packaging convenience, not
-                // module attribution: skip dirs coarser than the room granularity.
-                if (activeRooms.some((room) => roomDir(room).startsWith(`${dir}/`))) continue;
+                const dir = normaliseCopyDir(copy);
+                // Skip a COPY coarser than room granularity (O9); the rule lives
+                // in copy-attribution.ts, shared with the deployment map's filter.
+                if (isExcludedCopyDir(dir, { kind: "coarser-than-room", activeRoomDirs })) continue;
                 let dirHosts = copyDirHosts.get(dir);
                 if (!dirHosts) {
                     dirHosts = new Set();

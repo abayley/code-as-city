@@ -4,12 +4,13 @@ import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
+    inferExternalServiceUse,
     inferModuleDataFlows,
     isEntryPoint,
     type NodeIndexEntry,
 } from "../../src/lib/inference";
 import type { MapEdge } from "../../src/lib/map-types";
-import type { EmbeddedDatabase } from "../../src/lib/scans";
+import type { EmbeddedDatabase, ExternalServiceDep } from "../../src/lib/scans";
 
 const textsOf = (texts: Record<string, string>) => (file: string) => texts[file] ?? "";
 
@@ -87,6 +88,87 @@ describe("inferEmbeddedDatabaseUse", () => {
         });
         expect(edgesWhenCalled).toBe(0);
         expect(edges).not.toHaveLength(0);
+    });
+});
+
+const externalService: ExternalServiceDep = {
+    id: "external-anthropic-api",
+    label: "Anthropic API",
+    depNames: ["@anthropic-ai/sdk"],
+    path: "package.json",
+    description: "Anthropic API.",
+};
+
+describe("inferExternalServiceUse", () => {
+    const texts = textsOf({
+        "src/agent.ts": 'import Anthropic from "@anthropic-ai/sdk";',
+        "src/plain.ts": "export const nothing = 1;",
+    });
+
+    it("given module entries (overview mode), when a module imports the SDK, then a -u edge targets the service", () => {
+        const edges: MapEdge[] = [];
+        const entries: NodeIndexEntry[] = [
+            { id: "mod-agent", files: ["src/agent.ts", "src/plain.ts"] },
+            { id: "mod-plain", files: ["src/plain.ts"] },
+        ];
+        inferExternalServiceUse({ services: [externalService], entries, edges, fileText: texts, edgeSuffix: "-u" });
+        expect(edges).toEqual([
+            {
+                id: "mod-agent--external-anthropic-api-u",
+                from: "mod-agent",
+                to: "external-anthropic-api",
+                kind: "data_flow",
+                evidence: "inferred",
+                confidence: 0.7,
+                label: "uses",
+                sourceRefs: [{ path: "package.json" }],
+            },
+        ]);
+    });
+
+    it("given per-file entries (deployment mode), when a file imports the SDK, then an unsuffixed edge is emitted", () => {
+        const edges: MapEdge[] = [];
+        const entries: NodeIndexEntry[] = [{ id: "svc-a", files: ["src/agent.ts"] }];
+        inferExternalServiceUse({ services: [externalService], entries, edges, fileText: texts, edgeSuffix: "" });
+        expect(edges.map((e) => e.id)).toEqual(["svc-a--external-anthropic-api"]);
+    });
+
+    // The documented contract mirrors inferEmbeddedDatabaseUse: the callback
+    // creates the service node, so it must run before any edge references it.
+    it("given an onImporters callback, when it runs, then no edge has been emitted yet", () => {
+        const edges: MapEdge[] = [];
+        let edgesWhenCalled: number | null = null;
+        inferExternalServiceUse({
+            services: [externalService],
+            entries: [{ id: "svc-a", files: ["src/agent.ts"] }],
+            edges,
+            fileText: texts,
+            edgeSuffix: "",
+            onImporters: () => {
+                edgesWhenCalled = edges.length;
+            },
+        });
+        expect(edgesWhenCalled).toBe(0);
+        expect(edges).not.toHaveLength(0);
+    });
+
+    // D17: "Drawn only when a deployed module actually imports it" — a service
+    // with no importers creates no node (callback never fires) and no edge.
+    it("given no importer imports the SDK, when inferred, then the callback never fires and no edge is emitted", () => {
+        const edges: MapEdge[] = [];
+        let called = false;
+        inferExternalServiceUse({
+            services: [externalService],
+            entries: [{ id: "mod-plain", files: ["src/plain.ts"] }],
+            edges,
+            fileText: texts,
+            edgeSuffix: "",
+            onImporters: () => {
+                called = true;
+            },
+        });
+        expect(called).toBe(false);
+        expect(edges).toHaveLength(0);
     });
 });
 

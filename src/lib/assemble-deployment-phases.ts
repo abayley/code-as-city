@@ -15,9 +15,9 @@ import {
     fileModuleName,
     linesOf,
     roomLabel,
-    sdkImporterIds,
     splitEdgeKey,
 } from "./assembly-helpers.ts";
+import { isExcludedCopyDir, normaliseCopyDir } from "./copy-attribution.ts";
 import type { Coupling } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
@@ -27,6 +27,7 @@ import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
+    inferExternalServiceUse,
     inferModuleDataFlows,
     isEntryPoint,
     type NodeIndexEntry,
@@ -172,32 +173,25 @@ export function assembleExternalServiceSdks(
 ): void {
     const { nodes, edges, fileText, ensureExternalsDistrict } = state;
     const { externalServiceDeps, ownedFileEntries } = options;
-    for (const service of externalServiceDeps) {
-        const importerIds = sdkImporterIds(service.depNames, ownedFileEntries, fileText);
-        if (importerIds.length === 0) continue;
-        nodes.push({
-            id: service.id,
-            label: service.label,
-            kind: "external",
-            archetype: "cloud",
-            parentId: ensureExternalsDistrict(),
-            description: service.description,
-            sourceRefs: [{ path: service.path }],
-            display: { flowLayer: 2 },
-        });
-        for (const importer of importerIds) {
-            addEdge(edges, {
-                id: `${importer}--${service.id}`,
-                from: importer,
-                to: service.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "uses",
+    inferExternalServiceUse({
+        services: externalServiceDeps,
+        entries: ownedFileEntries,
+        edges,
+        fileText,
+        edgeSuffix: "",
+        onImporters: (service) => {
+            nodes.push({
+                id: service.id,
+                label: service.label,
+                kind: "external",
+                archetype: "cloud",
+                parentId: ensureExternalsDistrict(),
+                description: service.description,
                 sourceRefs: [{ path: service.path }],
+                display: { flowLayer: 2 },
             });
-        }
-    }
+        },
+    });
 }
 
 /**
@@ -699,7 +693,7 @@ export function assembleHostDistricts(
             if (isShadowed(host, service.name)) continue;
             const serviceId = kebab(`${host.id}-${service.name}`);
             const allCopiedSegments = service.copies
-                .map((copy) => copy.replace(/\/$/, ""))
+                .map(normaliseCopyDir)
                 .filter((copy) => copy.includes("/") || rooms.has(`${owningPackage(copy)?.id}-${kebab(copy)}`))
                 // A COPY only attributes source when it names a directory that
                 // actually holds source: immich's layer-cache `COPY
@@ -709,7 +703,6 @@ export function assembleHostDistricts(
                 // Reachability still counts the raw COPY, so R5 sees the package
                 // as host-deployed.
                 .filter((copy) => sourceFiles.some((f) => f.startsWith(`${copy}/`)));
-            // Coupling filter: drop shared lib-like dirs (high fan-in, low fan-out).
             /**
              * Resolves a COPY'd source directory to its room id by sampling a
              * file inside it.
@@ -723,11 +716,11 @@ export function assembleHostDistricts(
                 const sample = sourceFiles.find((f) => f.startsWith(`${copy}/`));
                 return sample ? fileToRoom.get(sample)?.id : null;
             };
-            const copiedSegments = allCopiedSegments.filter((copy) => {
-                if (basename(copy) === "lib") return false; // shared plumbing, not shape
-                const roomId = roomIdForCopy(copy);
-                return !(roomId && isUtilityRoom(roomId));
-            });
+            // Coupling filter (D3/C2): drop shared lib-like dirs (high fan-in,
+            // low fan-out). The rule itself lives in copy-attribution.ts.
+            const copiedSegments = allCopiedSegments.filter(
+                (copy) => !isExcludedCopyDir(copy, { kind: "utility-room", roomIdForCopy, isUtilityRoom }),
+            );
             for (const copy of allCopiedSegments) {
                 claimedSegments.add(copy);
                 serviceClaimedDirs.add(copy);

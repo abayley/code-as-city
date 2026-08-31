@@ -7,15 +7,7 @@
  * definition. Rule IDs (O8, O11) refer to HEURISTICS.md.
  */
 import { dirname, relative, sep } from "node:path";
-import {
-    addEdge,
-    barrelAwareName,
-    footprintFor,
-    roomLabel,
-    sdkImporterIds,
-    splitEdgeKey,
-    uniqueId,
-} from "./assembly-helpers.ts";
+import { addEdge, barrelAwareName, footprintFor, roomLabel, splitEdgeKey, uniqueId } from "./assembly-helpers.ts";
 import type { Coupling } from "./coupling.ts";
 import type { HostScanResult } from "./host-config.ts";
 import { type Host, isServiceShadowed } from "./hosts.ts";
@@ -23,6 +15,7 @@ import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
+    inferExternalServiceUse,
     inferModuleDataFlows,
     isEntryPoint,
 } from "./inference.ts";
@@ -310,32 +303,27 @@ export function assembleInfraDistricts(options: {
     infraMembers.push(...embeddedDbMembers);
     // D17: external services imported by a module become external cloud nodes
     // with an inferred "uses" edge, as in the deployment map — one per service,
-    // drawn only when a module actually imports the client SDK.
-    for (const service of externalServiceDeps) {
-        const importerIds = sdkImporterIds(service.depNames, allModules, fileText);
-        if (importerIds.length === 0) continue;
-        infraMembers.push({
-            id: service.id,
-            label: service.label,
-            archetype: "cloud",
-            kind: "external",
-            external: true,
-            description: service.description,
-            path: service.path,
-        });
-        for (const importer of importerIds) {
-            addEdge(overviewEdges, {
-                id: `${importer}--${service.id}-u`,
-                from: importer,
-                to: service.id,
-                kind: "data_flow",
-                evidence: "inferred",
-                confidence: 0.7,
-                label: "uses",
-                sourceRefs: [{ path: service.path }],
+    // drawn only when a module actually imports the client SDK. Shared with the
+    // deployment pass via inferExternalServiceUse; the "-u" suffix and the
+    // infra-member node shape are this mode's options.
+    inferExternalServiceUse({
+        services: externalServiceDeps,
+        entries: allModules,
+        edges: overviewEdges,
+        fileText,
+        edgeSuffix: "-u",
+        onImporters: (service) => {
+            infraMembers.push({
+                id: service.id,
+                label: service.label,
+                archetype: "cloud",
+                kind: "external",
+                external: true,
+                description: service.description,
+                path: service.path,
             });
-        }
-    }
+        },
+    });
     const seenInfra = new Set<string>();
     const uniqueInfra = infraMembers.filter((m) => !seenInfra.has(m.id) && seenInfra.add(m.id));
     const infraDistricts = new Map<string, InfraDistrict>();

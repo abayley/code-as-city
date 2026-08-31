@@ -2,6 +2,7 @@
 // (HEURISTICS.md rules R1 and R2).
 
 import { join } from "node:path";
+import { normaliseCopyDir } from "./copy-attribution.ts";
 import type { Host } from "./hosts.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
 import { readJson, readText } from "./read.ts";
@@ -133,7 +134,7 @@ export function analyseReachability(
         for (const service of host.services) {
             if (service.entryFile) hostDeployRoots.add(service.entryFile);
             for (const copy of service.copies) {
-                for (const f of sourceFiles) if (f.startsWith(`${copy.replace(/\/$/, "")}/`)) hostDeployRoots.add(f);
+                for (const f of sourceFiles) if (f.startsWith(`${normaliseCopyDir(copy)}/`)) hostDeployRoots.add(f);
             }
         }
     }
