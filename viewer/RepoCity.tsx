@@ -22,8 +22,9 @@ import type { CityEdge, CityMap, CityNode, EvidenceKind, SourceRef } from "./lib
 import { validateCityMap } from "./lib/city-map";
 import { computeFlowLayout, createEdgeRouter, type FlowLayout } from "./lib/flow-layout";
 import { type Showcase, showcases } from "./lib/local-showcases";
-import { closestVisibleAncestor, type NavigationContext, type NavigationMode } from "./lib/navigation";
+import type { NavigationContext, NavigationMode } from "./lib/navigation";
 import * as palette from "./lib/palette";
+import { projectToVisible } from "./lib/projection";
 import { matchesRailSearch } from "./lib/rail-search";
 import {
     DEFAULT_FOOTPRINT,
@@ -1559,19 +1560,19 @@ function MapViewer({
     theme: Theme;
     onToggleTheme: () => void;
 }) {
-    const nodeById = useMemo(() => new Map(map.nodes.map((node) => [node.id, node])), [map.nodes]);
-    // Local change: campus structures may be district-less (no parentId).
-    /**
-     * Tests whether a node belongs on the campus (city-level) view: any
-     * non-scope node whose parent is a district or missing.
-     *
-     * @param node - The node to classify.
-     * @returns True when the node renders at campus level.
-     */
-    const isCampusNode = useCallback(
-        (node: CityNode) => node.kind !== "scope" && (!node.parentId || nodeById.get(node.parentId)?.kind === "scope"),
-        [nodeById],
-    );
+    // The campus projection collapses the full graph onto the visible level:
+    // which nodes render at city level, the evidence-priority edge dedup, and
+    // the ancestor walk. One pure module (projection.ts) owns it; the component
+    // and the navigation machine read the same projection.
+    const projection = useMemo(() => projectToVisible(map), [map]);
+    const {
+        nodes: visibleNodes,
+        ids: visibleIds,
+        nodeById,
+        edges: visibleEdges,
+        ancestorOf,
+        edgesTouching,
+    } = projection;
     // Start deselected: the panel opens on the map summary.
     const [search, setSearch] = useState("");
     const [hoverCard, setHoverCard] = useState<{ node: CityNode; x: number; y: number } | null>(null);
@@ -1587,25 +1588,6 @@ function MapViewer({
         setHoverCard(node ? { node, x, y } : null);
     }, []);
 
-    const campusNodes = useMemo(() => map.nodes.filter(isCampusNode), [isCampusNode, map.nodes]);
-    const visibleNodes = campusNodes;
-    const visibleIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
-    const visibleEdges = useMemo(() => {
-        const projected = new Map<string, CityEdge>();
-        const evidencePriority: Record<EvidenceKind, number> = { observed: 3, declared: 2, inferred: 1 };
-        const lookup = { nodeById, visibleIds };
-        map.edges.forEach((edge) => {
-            const from = closestVisibleAncestor(edge.from, lookup);
-            const to = closestVisibleAncestor(edge.to, lookup);
-            if (!from || !to || from === to) return;
-            const key = `${from}->${to}`;
-            const existing = projected.get(key);
-            if (!existing || evidencePriority[edge.evidence] > evidencePriority[existing.evidence]) {
-                projected.set(key, { ...edge, id: `campus:${key}`, from, to });
-            }
-        });
-        return [...projected.values()];
-    }, [map.edges, nodeById, visibleIds]);
     const layout = useMemo(
         () => computeFlowLayout(visibleNodes, visibleEdges, map.nodes),
         [map.nodes, visibleEdges, visibleNodes],
@@ -1630,14 +1612,10 @@ function MapViewer({
     const expandedNode = activeExpandedId ? nodeById.get(activeExpandedId) : undefined;
     const focusedNode = activeFocusId ? nodeById.get(activeFocusId) : undefined;
     const selected = effectiveSelectedId ? nodeById.get(effectiveSelectedId) : undefined;
-    const focusConnections = activeFocusId
-        ? visibleEdges.filter((edge) => edge.from === activeFocusId || edge.to === activeFocusId)
-        : [];
+    const focusConnections = activeFocusId ? edgesTouching(activeFocusId) : [];
     const selectedConnection = map.edges.find((edge) => edge.id === selectedConnectionId);
-    const selectedConnectionFrom = selectedConnection
-        ? closestVisibleAncestor(selectedConnection.from, navContext)
-        : null;
-    const selectedConnectionTo = selectedConnection ? closestVisibleAncestor(selectedConnection.to, navContext) : null;
+    const selectedConnectionFrom = selectedConnection ? ancestorOf(selectedConnection.from) : null;
+    const selectedConnectionTo = selectedConnection ? ancestorOf(selectedConnection.to) : null;
     const campusActiveEdgeId =
         selectedConnectionFrom && selectedConnectionTo && selectedConnectionFrom !== selectedConnectionTo
             ? `campus:${selectedConnectionFrom}->${selectedConnectionTo}`

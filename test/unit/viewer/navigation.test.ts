@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 import type { CityEdge, CityNode } from "../../../viewer/lib/city-map";
 import {
     back,
-    closestVisibleAncestor,
     deriveNavigation,
     deselect,
     explore,
@@ -68,26 +67,6 @@ function context(): NavigationContext {
 function state(overrides: Partial<NavigationState> = {}): NavigationState {
     return { ...INITIAL_NAVIGATION, ...overrides };
 }
-
-describe("closestVisibleAncestor", () => {
-    it("projects a hidden room onto its visible campus building", () => {
-        expect(closestVisibleAncestor("api/r1", context())).toBe("api");
-    });
-
-    it("returns null when the whole ancestor chain is hidden", () => {
-        // A node whose parent is itself hidden and district-less: no visible
-        // ancestor exists anywhere up the chain.
-        const ctx: NavigationContext = {
-            ...context(),
-            nodeById: new Map([
-                ["hidden", node("hidden", { archetype: "room" })],
-                ["leaf", node("leaf", { archetype: "room", parentId: "hidden" })],
-            ]),
-            visibleIds: new Set<string>(),
-        };
-        expect(closestVisibleAncestor("leaf", ctx)).toBeNull();
-    });
-});
 
 describe("deriveNavigation precedence", () => {
     it("lets an open interior beat both focus and district", () => {

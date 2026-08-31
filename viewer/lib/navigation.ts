@@ -9,6 +9,7 @@
 // pure functions over an explicit {@link NavigationContext}, so both the
 // component and its tests read the same decisions.
 import type { CityEdge, CityNode } from "./city-map";
+import { closestVisibleAncestor } from "./projection";
 
 /**
  * The raw navigation state the machine transitions between. The clamped,
@@ -76,30 +77,6 @@ export type NavigationView = {
     /** The highlighted district's id, or null when not in district mode. */
     districtId: string | null;
 };
-
-/**
- * Walks up the parent chain from a node to the nearest ancestor that is
- * currently rendered on the campus view.
- *
- * @param nodeId - The node to start from.
- * @param lookup - The node table and the set of currently visible ids. A full
- *   {@link NavigationContext} satisfies this, but the campus edge projection
- *   needs it before the layout (and so the districts) exist, so it asks for only
- *   the two fields it reads.
- * @returns The nearest visible ancestor's id (possibly the node itself), or
- *   null when the whole chain is hidden.
- */
-export function closestVisibleAncestor(
-    nodeId: string,
-    lookup: Pick<NavigationContext, "nodeById" | "visibleIds">,
-): string | null {
-    let current = lookup.nodeById.get(nodeId);
-    while (current) {
-        if (lookup.visibleIds.has(current.id)) return current.id;
-        current = current.parentId ? lookup.nodeById.get(current.parentId) : undefined;
-    }
-    return null;
-}
 
 /** The campus building whose interior is open, once stale anchors are cleared. */
 function activeExpanded(state: NavigationState, context: NavigationContext): string | null {
