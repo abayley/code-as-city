@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
     addOverviewImportEdges,
+    assembleInfraDistricts,
     bandOverviewDistricts,
     buildOverviewDistricts,
     emitOverviewModuleNodes,
     type OverviewState,
 } from "../../src/lib/assemble-overview-phases";
 import type { Coupling } from "../../src/lib/coupling";
-import type { MapEdge } from "../../src/lib/map-types";
+import type { MapEdge, MapNode } from "../../src/lib/map-types";
 import type { Package } from "../../src/lib/packages";
 import type { Room } from "../../src/lib/rooms";
 
@@ -204,5 +205,100 @@ describe("addOverviewImportEdges", () => {
         expect(overviewEdges).toEqual([
             expect.objectContaining({ from: "mod-a", to: "mod-b", kind: "depends_on", label: "2 imports" }),
         ]);
+    });
+});
+
+describe("assembleInfraDistricts (O7/O11)", () => {
+    type InfraOpts = Parameters<typeof assembleInfraDistricts>[0];
+    const infraOpts = (over: Partial<InfraOpts> = {}): InfraOpts => ({
+        overviewNodes: [],
+        overviewEdges: [],
+        hostScan: [],
+        serviceOwner: new Map(),
+        hosts: [],
+        candidateHosts: [],
+        edgeHost: null,
+        drizzleConfig: undefined,
+        embeddedDatabases: [],
+        externalServiceDeps: [],
+        fileToModule: new Map(),
+        allModules: [],
+        fileText: () => "",
+        hostBand: () => 1,
+        bandLabel: () => "runtime",
+        externalsBand: 2,
+        sharedBand: 0,
+        infraColor: "#888888",
+        ...over,
+    });
+
+    it("given a host with an image-only backing store, when assembled, then it is drawn as an infra node under the host district", () => {
+        const host = {
+            file: "docker-compose.yml",
+            name: "api",
+            id: "host-api",
+            rank: 0,
+            services: [{ name: "postgres", image: "postgres:16", imageClass: "database", copies: [], entryFile: null }],
+        };
+        const overviewNodes: MapNode[] = [];
+        const members = assembleInfraDistricts(
+            infraOpts({
+                overviewNodes,
+                hosts: [host],
+                candidateHosts: [host],
+                hostScan: [
+                    {
+                        host,
+                        externals: [],
+                        hostTargets: new Set(),
+                        hostTargetMatches: [],
+                        serviceTargets: [],
+                        configs: [],
+                    },
+                ],
+            }),
+        );
+        expect(members.map((m) => m.id)).toContain("infra-api-postgres");
+        expect(overviewNodes.find((n) => n.id === "host-api")).toMatchObject({ kind: "scope", archetype: "district" });
+        expect(overviewNodes.find((n) => n.id === "infra-api-postgres")).toMatchObject({
+            kind: "infra",
+            archetype: "database",
+            parentId: "host-api",
+        });
+    });
+
+    it("given a host declaring an external OTLP receiver, when assembled, then it is drawn as an external node behind the last host", () => {
+        const host = {
+            file: "docker-compose.yml",
+            name: "api",
+            id: "host-api",
+            rank: 0,
+            services: [{ name: "collector", image: "otel/collector", copies: [], entryFile: null }],
+        };
+        const overviewNodes: MapNode[] = [];
+        const members = assembleInfraDistricts(
+            infraOpts({
+                overviewNodes,
+                hosts: [host],
+                candidateHosts: [host],
+                hostScan: [
+                    {
+                        host,
+                        externals: [
+                            { candidate: "langfuse", config: "otel-collector.yaml", envToken: "LANGFUSE_HOST" },
+                        ],
+                        hostTargets: new Set(),
+                        hostTargetMatches: [],
+                        serviceTargets: [],
+                        configs: ["otel-collector.yaml"],
+                    },
+                ],
+            }),
+        );
+        expect(members.find((m) => m.id === "external-langfuse")).toMatchObject({ kind: "external", external: true });
+        expect(overviewNodes.find((n) => n.id === "external-langfuse")).toMatchObject({
+            kind: "external",
+            parentId: "external-systems",
+        });
     });
 });
