@@ -2,7 +2,7 @@
 
 // Deterministic (agent-free) Functionary city map generator, orchestrating
 // the typed modules under src/lib/ (one per HEURISTICS.md rule group; see
-// docs/rfc-0001-generator-extraction.md).
+// docs/rfcs/rfc-0001-generator-extraction.md).
 //
 // Usage: bun src/generate-map.ts <target-repo> [--out-dir out/<name>] [--overview]
 // Outputs: map.json, deploy-shape.json, deps-files.json, deps-rooms.json, deps-rooms.dot
