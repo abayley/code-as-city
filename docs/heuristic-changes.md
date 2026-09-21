@@ -63,9 +63,9 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-019 | Client-SDK table misses common SDKs and cannot resolve endpoints                                        | D13, D17, M6    | Done     |
 | HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Done     |
 | HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Proposed |
-| HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Proposed |
+| HC-022 | Next.js apps are not runnable; `docs` dirs are not apps     | D16, I3     | Done     |
 | HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
-| HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Proposed |
+| HC-024 | Inferred edges over-fire; templates and dev environments present as production | M8, M10, D7, D3 | Done     |
 | HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
 | HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Proposed |
 | HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Done     |
@@ -880,6 +880,28 @@ directory-name ignore set should not apply at `apps/`/`packages/` depth
 inside a workspace (a `docs` *member package* is a package first), or
 should yield when the directory has its own `package.json` with an entry.
 
+**Resolution (Done).** Two changes:
+
+- *D16 framework arm.* A package whose `start`/`serve`/`dev` script runs an
+  app-framework command (`next`/`nuxt`/`astro`/`svelte-kit` with
+  start/dev/preview/serve) is a runnable app tagged `server`, anchored to
+  the router dir's first inventoried file (`app/`, `pages/`, `src/app/`,
+  `src/pages/`). The `dev` script name is included for frameworks only — a
+  generic runner (`vite`, `tsc`) matches nothing — so a library with a dev
+  script stays a library. Verified live: supabase's studio, www, learn, and
+  docs apps read as `App server` deployables.
+- *I3 member-package yield.* A content dir (`docs`/`examples`/`data`) with
+  its own package.json is a workspace member and stays inventoried;
+  build-output and dependency dirs never yield (bundlers write
+  package.json into `dist/`), so the O1 district-flip risk the original I3
+  note records is bounded to real packages. Verified live: supabase's
+  `apps/docs` is inventoried (2.5k files — its district size is HC-011's
+  scale concern, not this rule's).
+
+Fixture: a Next-shaped `studio` package (`next start`, app router) and a
+pages-router package with a `dev` script; a docs-member-package inventory
+case pinned in the inventory unit tests.
+
 ## HC-023: In-Host Service Calls and Monitoring Scrapes Draw No Edges
 
 **Rules:** a new inference rule in the D or M groups; D6 (depends_on only).
@@ -941,6 +963,40 @@ the same pair; D7 could skip configs under a directory named `*-template*`/
 compose host `dev-environment` on bind-mounting the repo root or running
 known dev servers (a tag, not exclusion — excalidraw's dev-args compose
 shows the same shape and its judgement is subtler).
+
+**Resolution (Done, five fixes; one residual recorded).**
+
+- *M8 server-side requirement.* The database arm of the shared data-flow
+  pass skips a module whose every file is `.tsx`/`.jsx` (a browser module
+  cannot open a SQL connection) and — the load-bearing half — a module with
+  NO database-client reference anywhere (an SDK import — kysely, typeorm,
+  drizzle, pg, embedded-postgres, ... — or a pool factory). paperclip's UI
+  write edges are gone; immich's repositories/schema edges survive. One
+  residual stands, recorded: supabase's ConnectSheet dialog embeds drizzle
+  TUTORIAL snippets, and one studio module still draws a single write edge
+  to postgres from them — tutorial code samples are indistinguishable from
+  queries without semantics.
+- *M10 script guard.* `inferExternalDelivers` takes the R1 script-reachable
+  set and skips an entry whose files are ALL script-reachable — ollama-code's
+  build scripts no longer "deliver to Gemini" (its inferred delivers edges
+  fell from 17 to 5, the rest being real modules). The overview passes no
+  script set (its script-owned modules are R2-stripped there).
+- *M10/D17 dedup.* A pair D17 already connected with a `uses` edge draws no
+  second `delivers` edge (checked against the accumulated edges, so it works
+  in both modes and across the `-u` suffix).
+- *D7 template guard.* A wrangler config under a path segment containing
+  `template` finds no edge host when it is the only one; a real config
+  elsewhere wins. paperclip's phantom `edge-delivery`/`edge-worker` district
+  is gone.
+- *D3 dev-environment tag.* A compose service bind-mounting the repo root
+  (`volumes: - .:/work`) is a dev container, not a deployment — the service
+  node carries a `dev-environment` tag (mermaid's host reads as what it is).
+  Excalidraw's `NODE_ENV=development` build-args compose correctly stays
+  untagged: build args are a self-host build of the same image, not a
+  mounted checkout.
+
+Unit tests pin each guard at its seam (inference, wrangler, compose, hosts);
+a generate-map assertion pins the fixture's dev-bind-mount tag.
 
 ## HC-025: Platform Deploy Configs (Netlify, Vercel, ECS, Quadlet) Go Unseen
 
