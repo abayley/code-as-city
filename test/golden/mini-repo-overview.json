@@ -657,7 +657,7 @@
       "kind": "module",
       "archetype": "gateway",
       "parentId": "mini-api-district",
-      "description": "Talks to the OpenAI API to summarise a message.",
+      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.",
       "attributes": {
         "entry-point": "packages/api/src/ai.ts"
       },
@@ -667,7 +667,7 @@
         }
       ],
       "metrics": {
-        "loc": 10,
+        "loc": 12,
         "complexity": 2,
         "files": 1
       },
@@ -938,6 +938,55 @@
         "color": "#C77740",
         "flowLayer": 1,
         "flowOrder": 5
+      }
+    },
+    {
+      "id": "mini-ml-district",
+      "label": "@Mini/Ml",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/ml/ — 1 module — deploys to mini-repo.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "mini-ml-src-main",
+      "label": "Main",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-ml-district",
+      "description": "Serves the ml model over HTTP.",
+      "attributes": {
+        "entry-point": "packages/ml/src/main.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/ml/src/main.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer",
+        "host:mini-repo"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
       }
     },
     {
@@ -1228,7 +1277,7 @@
       "label": "External systems",
       "kind": "scope",
       "archetype": "district",
-      "description": "External systems: 2 nodes.",
+      "description": "External systems: 1 node.",
       "tags": [
         "band:External systems"
       ],
@@ -1238,31 +1287,15 @@
       }
     },
     {
-      "id": "external-openai-api",
-      "label": "OpenAI API",
-      "kind": "external",
-      "archetype": "cloud",
-      "parentId": "external-systems",
-      "description": "External service (OpenAI API) addressed via a client SDK declared in packages/api/package.json.",
-      "sourceRefs": [
-        {
-          "path": "packages/api/package.json"
-        }
-      ],
-      "display": {
-        "color": "#283B47"
-      }
-    },
-    {
       "id": "external-ollama",
       "label": "Ollama",
       "kind": "external",
       "archetype": "cloud",
       "parentId": "external-systems",
-      "description": "External service (Ollama) addressed via a client SDK declared in packages/service/package.json.",
+      "description": "External service (Ollama) — endpoint resolved from the OpenAI API SDK's configuration declared in packages/api/package.json.",
       "sourceRefs": [
         {
-          "path": "packages/service/package.json"
+          "path": "packages/api/package.json"
         }
       ],
       "display": {
@@ -1272,9 +1305,9 @@
   ],
   "edges": [
     {
-      "id": "mini-api-src-ai--external-openai-api-u",
-      "from": "mini-api-src-ai",
-      "to": "external-openai-api",
+      "id": "mini-service-src-handler--external-ollama-u",
+      "from": "mini-service-src-handler",
+      "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.7,
@@ -1286,8 +1319,8 @@
       ]
     },
     {
-      "id": "mini-service-src-handler--external-ollama-u",
-      "from": "mini-service-src-handler",
+      "id": "mini-api-src-ai--external-ollama-u",
+      "from": "mini-api-src-ai",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1295,7 +1328,7 @@
       "label": "uses",
       "sourceRefs": [
         {
-          "path": "packages/service/package.json"
+          "path": "packages/api/package.json"
         }
       ]
     },
@@ -1323,17 +1356,17 @@
       ]
     },
     {
-      "id": "mini-api-src-ai--external-openai-api-d",
-      "from": "mini-api-src-ai",
-      "to": "external-openai-api",
+      "id": "mini-service-src-handler--external-ollama-d",
+      "from": "mini-service-src-handler",
+      "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.6,
       "label": "delivers"
     },
     {
-      "id": "mini-service-src-handler--external-ollama-d",
-      "from": "mini-service-src-handler",
+      "id": "mini-api-src-ai--external-ollama-d",
+      "from": "mini-api-src-ai",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",

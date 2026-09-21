@@ -7,6 +7,9 @@ services:
       - "3000:3000"
     depends_on:
       - db
+  ml:
+    build:
+      context: packages/ml
   db:
     image: postgres:16
   rest:

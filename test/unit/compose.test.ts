@@ -21,12 +21,27 @@ describe("parseComposeServices", () => {
         expect(parseComposeServices(text)).toEqual([
             {
                 name: "api",
+                context: ".",
                 dockerfile: "packages/api/Dockerfile",
                 hasPorts: true,
                 dependsOn: ["db", "cache"],
                 dependsOnIndent: 4,
             },
             { name: "db", image: "postgres:16" },
+        ]);
+    });
+
+    it("given a build context and dockerfile, when parsed, then both are captured", () => {
+        const text = [
+            "services:",
+            "  ml:",
+            "    build:",
+            "      context: ../machine-learning",
+            "      dockerfile: Dockerfile",
+            "",
+        ].join("\n");
+        expect(parseComposeServices(text)).toEqual([
+            { name: "ml", context: "../machine-learning", dockerfile: "Dockerfile" },
         ]);
     });
 

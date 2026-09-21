@@ -191,6 +191,69 @@ export function isServiceShadowed(
     return owner !== undefined && owner !== host.id;
 }
 
+/**
+ * Whether a build context is a usable repo-relative path: not absolute and
+ * not scheme-prefixed (a registry or http(s) reference), so it can be joined
+ * under the compose dir.
+ *
+ * @param context - The service's `build.context` value.
+ * @returns True when the context can be resolved against the compose dir.
+ */
+function isLocalContext(context: string): boolean {
+    return !context.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(context);
+}
+
+/**
+ * D3 service-to-Dockerfile binding: resolves a compose service's Dockerfile
+ * path and build context. Resolution order: repo-root-relative (the monorepo
+ * convention), then compose-dir-relative, then build-context-relative — the
+ * compose spec resolves a `build.dockerfile` against the `build.context`
+ * (HC-017, immich's `context: ../machine-learning`); a build block naming
+ * only a context defaults to that context's own `Dockerfile` (HC-017,
+ * excalidraw's `context: .` root image); finally the
+ * `images/<service>.Dockerfile` convention.
+ *
+ * @param options - `service` the parsed compose service; `dir` the compose
+ *   file's repo-relative directory; `fileExists` tests the inventory;
+ *   `allFiles` the full inventory for the naming convention.
+ * @returns The resolved Dockerfile path and the build context dir to resolve
+ *   its COPY sources against (both undefined when nothing binds).
+ */
+function resolveServiceDockerfile(options: {
+    service: ComposeService;
+    dir: string;
+    fileExists: (path: string) => boolean;
+    allFiles: readonly string[];
+}): { dockerfile: string | undefined; contextDir: string | undefined } {
+    const { service, dir, fileExists, allFiles } = options;
+    let dockerfile = service.dockerfile;
+    if (dockerfile !== undefined && !fileExists(dockerfile)) {
+        const relToCompose = join(dir, dockerfile);
+        dockerfile = fileExists(relToCompose) ? relToCompose : dockerfile;
+    }
+    const context = service.context;
+    const contextLocal = context !== undefined && isLocalContext(context);
+    let contextDir: string | undefined;
+    if (dockerfile !== undefined && !fileExists(dockerfile) && contextLocal) {
+        const relToContext = join(dir, context, dockerfile);
+        if (fileExists(relToContext)) {
+            dockerfile = relToContext;
+            contextDir = join(dir, context);
+        }
+    }
+    if (dockerfile === undefined && contextLocal) {
+        const contextDefault = join(dir, context, "Dockerfile");
+        if (fileExists(contextDefault)) {
+            dockerfile = contextDefault;
+            contextDir = join(dir, context);
+        }
+    }
+    if (dockerfile === undefined) {
+        dockerfile = allFiles.find((f) => basename(f) === `${service.name}.Dockerfile`);
+    }
+    return { dockerfile, contextDir };
+}
+
 export type HostShape = {
     hosts: Host[];
     candidateHosts: Host[];
@@ -240,17 +303,15 @@ export function buildHosts(
             // name rather than the placeholder "host".
             const name = parts.join(" ") || basename(repo);
             const services = parseComposeServices(readText(join(repo, file))).map((service): HostService => {
-                let dockerfile = service.dockerfile;
-                if (dockerfile !== undefined && !fileExists(dockerfile)) {
-                    const relToCompose = join(dir, dockerfile);
-                    dockerfile = fileExists(relToCompose) ? relToCompose : dockerfile;
-                }
-                if (dockerfile === undefined) {
-                    dockerfile = allFiles.find((f) => basename(f) === `${service.name}.Dockerfile`);
-                }
+                const { dockerfile, contextDir } = resolveServiceDockerfile({
+                    service,
+                    dir,
+                    fileExists,
+                    allFiles,
+                });
                 const built =
                     dockerfile !== undefined && fileExists(dockerfile)
-                        ? parseDockerfile(repo, dockerfile, allFiles)
+                        ? parseDockerfile(repo, dockerfile, allFiles, contextDir)
                         : null;
                 const imageClass = classifyService(service.image, service.name);
                 return {

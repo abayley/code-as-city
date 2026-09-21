@@ -5,6 +5,7 @@
 export type ComposeService = {
     name: string;
     image?: string | undefined;
+    context?: string | undefined;
     dockerfile?: string | undefined;
     hasPorts?: boolean | undefined;
     dependsOn?: string[] | undefined;
@@ -50,6 +51,8 @@ export function parseComposeServices(text: string): ComposeService[] {
         if (!current) continue;
         const image = /^image:\s*(.+)$/.exec(key)?.[1];
         if (image !== undefined) current.image = image.trim();
+        const context = /^context:\s*(.+)$/.exec(key)?.[1];
+        if (context !== undefined) current.context = context.trim();
         const dockerfile = /^dockerfile:\s*(.+)$/.exec(key)?.[1];
         if (dockerfile !== undefined) current.dockerfile = dockerfile.trim();
         if (/^ports:\s*$/.test(key)) current.hasPorts = true;

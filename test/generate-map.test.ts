@@ -43,6 +43,7 @@ type GeneratedMap = {
         label?: string;
         parentId?: string;
         tags?: string[];
+        attributes?: Record<string, string> | null;
         sourceRefs?: Array<{ path?: string }>;
     }>;
 };
@@ -195,10 +196,28 @@ describe("generate-map golden master", async () => {
             nodes: Array<{ id?: string; kind?: string; label?: string }>;
             edges: Array<{ from?: string; to?: string; label?: string }>;
         };
-        // packages/api depends on and imports `openai` (src/ai.ts).
-        const external = map.nodes.find((node) => node.kind === "external" && node.label === "OpenAI API");
+        // packages/api depends on and imports `openai` (src/ai.ts), but its
+        // endpoint falls back to OLLAMA_BASE_URL — so the external resolves to
+        // Ollama, folding with @mini/service's own `ollama` SDK external.
+        const external = map.nodes.find((node) => node.kind === "external" && node.label === "Ollama");
         expect(external).toBeDefined();
+        expect(map.nodes.some((node) => node.label === "OpenAI API")).toBe(false);
         expect(map.edges.some((edge) => edge.label === "uses" && edge.to === external?.id)).toBe(true);
+    });
+
+    it("given a compose service with a build context and no dockerfile key, when generating, then the context Dockerfile binds (D3, HC-017)", async () => {
+        const map = await generateMap([]);
+        // The ml service builds `context: packages/ml` with no dockerfile key,
+        // so the default <context>/Dockerfile binds and its COPY sources
+        // resolve against that context: the service lands on the host with the
+        // context-resolved entry point.
+        const ml = map.nodes.find(
+            (node) =>
+                (node.parentId ?? "").startsWith("host-") &&
+                node.attributes?.["entry-point"] === "packages/ml/src/main.ts",
+        );
+        expect(ml).toBeDefined();
+        expect(ml?.attributes?.["service-source"]).toBe("packages/ml/Dockerfile");
     });
 
     it("given a wrangler entry-dir room, when generating the deployment map, then it deploys to the edge worker (7c-i)", async () => {

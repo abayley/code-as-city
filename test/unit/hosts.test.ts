@@ -145,4 +145,54 @@ describe("buildHosts", () => {
         const a = built.hosts.find((h) => h.file === "q/docker-compose.a.yml");
         expect(built.serviceOwner.get(`q db`)).toBe(a?.id);
     });
+
+    it("given a build block naming only a context, when bound, then the default <context>/Dockerfile is used (D3, HC-017)", () => {
+        writeFile("app/docker-compose.yml", ["services:", "  web:", "    build:", "      context: ."].join("\n"));
+        writeFile("app/Dockerfile", "FROM nginx\nCOPY app/src app/src\n");
+        const built = buildHosts(
+            repo,
+            ["app/docker-compose.yml", "app/Dockerfile", "app/src/index.ts"],
+            ["app/docker-compose.yml"],
+            new Map(),
+        );
+        const web = built.hosts[0]?.services.find((s) => s.name === "web");
+        expect(web).toMatchObject({ dockerfile: "app/Dockerfile", copies: ["app/src"] });
+    });
+
+    it("given a build dockerfile relative to a context outside the compose dir, when bound, then it resolves against the context (D3, HC-017)", () => {
+        writeFile(
+            "sub/compose/docker-compose.yml",
+            [
+                "services:",
+                "  ml:",
+                "    build:",
+                "      context: ../machine-learning",
+                "      dockerfile: Dockerfile",
+            ].join("\n"),
+        );
+        writeFile("sub/machine-learning/Dockerfile", "FROM python\nCOPY immich_ml immich_ml\n");
+        const built = buildHosts(
+            repo,
+            [
+                "sub/compose/docker-compose.yml",
+                "sub/machine-learning/Dockerfile",
+                "sub/machine-learning/immich_ml/app.py",
+            ],
+            ["sub/compose/docker-compose.yml"],
+            new Map(),
+        );
+        const ml = built.hosts[0]?.services.find((s) => s.name === "ml");
+        expect(ml).toMatchObject({
+            dockerfile: "sub/machine-learning/Dockerfile",
+            copies: ["sub/machine-learning/immich_ml"],
+        });
+    });
+
+    it("given a build block whose context Dockerfile does not exist, when bound, then nothing binds", () => {
+        writeFile("ghost/docker-compose.yml", ["services:", "  api:", "    build:", "      context: ."].join("\n"));
+        const built = buildHosts(repo, ["ghost/docker-compose.yml"], ["ghost/docker-compose.yml"], new Map());
+        const api = built.hosts[0]?.services.find((s) => s.name === "api");
+        expect(api?.dockerfile).toBeUndefined();
+        expect(api?.copies).toEqual([]);
+    });
 });

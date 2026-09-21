@@ -18,7 +18,8 @@ import type { Host, HostService } from "./hosts.ts";
 import { ENTRY_FILE_PATTERN } from "./inventory.ts";
 import type { MapEdge } from "./map-types.ts";
 import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
-import { OTLP_PATTERN } from "./scans.ts";
+import { ENDPOINT_ENV_OVERRIDES, externalNodeId, OTLP_PATTERN } from "./scans.ts";
+import { stripJsComments } from "./text.ts";
 
 /** The node-shaped record the shared inference passes consume. */
 export type NodeIndexEntry = {
@@ -78,6 +79,46 @@ export function inferEmbeddedDatabaseUse(options: {
 }
 
 /**
+ * D17 endpoint resolution (HC-019): resolves a service's identity against its
+ * importers' source. When an importer references an env var that redirects
+ * the SDK's base URL to a different backend, the service takes that backend's
+ * identity (id, label, description) before any node or edge names it — the
+ * `openai` SDK configured through `OLLAMA_BASE_URL` is an Ollama server. A
+ * service already labelled as the target, or with no matching env reference,
+ * resolves to itself.
+ *
+ * @param options - `service` the detected client-SDK service; `importerFiles`
+ *   the files of every entry importing the SDK; `fileText` reads a
+ *   repo-relative file's text.
+ * @returns The resolved service identity (a copy when overridden).
+ */
+function resolveServiceEndpoint(options: {
+    service: ExternalServiceDep;
+    importerFiles: readonly string[];
+    fileText: (file: string) => string;
+}): ExternalServiceDep {
+    const { service, importerFiles, fileText } = options;
+    for (const override of ENDPOINT_ENV_OVERRIDES) {
+        // Identity by node id, not display label: the label is prose, the id
+        // is the node the pass addresses.
+        const resolvedId = externalNodeId(override.label);
+        if (resolvedId === service.id) continue;
+        if (!service.depNames.some((dep) => override.deps.includes(dep))) continue;
+        // A reference in a comment is not a configuration: resolve against the
+        // comment-stripped text (HC-019; the guard M6's window gives config
+        // files, adapted to source).
+        if (!importerFiles.some((file) => override.pattern.test(stripJsComments(fileText(file))))) continue;
+        return {
+            ...service,
+            id: resolvedId,
+            label: override.label,
+            description: `External service (${override.label}) — endpoint resolved from the ${service.label} SDK's configuration declared in ${service.path}.`,
+        };
+    }
+    return service;
+}
+
+/**
  * D17: a client-SDK dependency naming an external service becomes one external
  * node per service, with an inferred `data_flow` "uses" edge (confidence 0.7)
  * from every entry whose source imports the SDK. Drawn only when an entry
@@ -86,7 +127,8 @@ export function inferEmbeddedDatabaseUse(options: {
  * before the edges are emitted, letting the deployment map create the external
  * node parented into its externals district and the overview create its infra
  * member elsewhere; the overview emits "-u"-suffixed edge ids where the
- * deployment map uses none.
+ * deployment map uses none. The service resolves through the endpoint-override
+ * table (HC-019) before the callback, so both modes name the resolved backend.
  *
  * @param options - The pass inputs: `services` — the client-SDK services from
  *   the D17 scan; `entries` — the node-shaped records to test, in the mode's
@@ -104,9 +146,35 @@ export function inferExternalServiceUse(options: {
     edgeSuffix: string;
     onImporters?: ((service: ExternalServiceDep, importerIds: readonly string[]) => void) | undefined;
 }): void {
+    // Resolve each detected service against its own importers first, then fold
+    // the ones whose resolved identity collides (HC-019: an `openai` SDK
+    // pointed at OLLAMA_BASE_URL and an `ollama` SDK are one backend). The
+    // fold unions dep names, and importers are re-discovered over the union so
+    // every SDK's importers reach the one node.
+    const folded = new Map<string, ExternalServiceDep>();
     for (const service of options.services) {
         const importerIds = sdkImporterIds(service.depNames, options.entries, options.fileText);
         if (importerIds.length === 0) continue;
+        // The index carries one entry per owned file, several sharing a node
+        // id — collect the files of every entry the importers name, not just
+        // the first entry per id.
+        const importerIdSet = new Set(importerIds);
+        const importerFiles = options.entries
+            .filter((entry) => importerIdSet.has(entry.id))
+            .flatMap((entry) => entry.files);
+        const resolved = resolveServiceEndpoint({ service, importerFiles, fileText: options.fileText });
+        const existing = folded.get(resolved.id);
+        if (existing === undefined) {
+            folded.set(resolved.id, resolved);
+            continue;
+        }
+        folded.set(resolved.id, {
+            ...existing,
+            depNames: [...existing.depNames, ...resolved.depNames.filter((d) => !existing.depNames.includes(d))],
+        });
+    }
+    for (const service of folded.values()) {
+        const importerIds = sdkImporterIds(service.depNames, options.entries, options.fileText);
         options.onImporters?.(service, importerIds);
         for (const importer of importerIds) {
             addEdge(options.edges, {

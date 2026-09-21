@@ -170,6 +170,215 @@ describe("inferExternalServiceUse", () => {
         expect(called).toBe(false);
         expect(edges).toHaveLength(0);
     });
+
+    // HC-019 endpoint resolution: an SDK's base URL can fall back to a
+    // different backend, and the map must name the backend the env config
+    // names (ollama-code's `OLLAMA_BASE_URL || OPENAI_BASE_URL`).
+    it("given an importer referencing a backend-override env var, when inferred, then the service resolves to the override backend", () => {
+        const edges: MapEdge[] = [];
+        const openai: ExternalServiceDep = {
+            id: "external-openai-api",
+            label: "OpenAI API",
+            depNames: ["openai"],
+            path: "package.json",
+            description: "External service (OpenAI API).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [openai],
+            entries: [{ id: "svc-a", files: ["src/gen.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/gen.ts":
+                    'import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1" });',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => [s.id, s.label])).toEqual([["external-ollama", "Ollama"]]);
+        expect(edges.map((e) => [e.id, e.to])).toEqual([["svc-a--external-ollama", "external-ollama"]]);
+    });
+
+    it("given no importer references the override env var, when inferred, then the service keeps its own identity", () => {
+        const edges: MapEdge[] = [];
+        const openai: ExternalServiceDep = {
+            id: "external-openai-api",
+            label: "OpenAI API",
+            depNames: ["openai"],
+            path: "package.json",
+            description: "External service (OpenAI API).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [openai],
+            entries: [{ id: "svc-a", files: ["src/gen.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/gen.ts":
+                    'import OpenAI from "openai";\nconst client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => [s.id, s.label])).toEqual([["external-openai-api", "OpenAI API"]]);
+        expect(edges.map((e) => e.id)).toEqual(["svc-a--external-openai-api"]);
+    });
+
+    it("given a service already labelled as the override backend, when inferred, then it is unchanged", () => {
+        const edges: MapEdge[] = [];
+        const ollama: ExternalServiceDep = {
+            id: "external-ollama",
+            label: "Ollama",
+            depNames: ["ollama"],
+            path: "package.json",
+            description: "External service (Ollama).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [ollama],
+            entries: [{ id: "svc-a", files: ["src/gen.ts"] }],
+            edges,
+            fileText: textsOf({ "src/gen.ts": 'import Ollama from "ollama";\nprocess.env.OLLAMA_BASE_URL;' }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => [s.id, s.label])).toEqual([["external-ollama", "Ollama"]]);
+    });
+
+    it("given two SDKs resolving to the same backend, when inferred, then they fold to one node with unioned importers (HC-019)", () => {
+        const edges: MapEdge[] = [];
+        const openai: ExternalServiceDep = {
+            id: "external-openai-api",
+            label: "OpenAI API",
+            depNames: ["openai"],
+            path: "packages/api/package.json",
+            description: "External service (OpenAI API).",
+        };
+        const ollama: ExternalServiceDep = {
+            id: "external-ollama",
+            label: "Ollama",
+            depNames: ["ollama"],
+            path: "packages/service/package.json",
+            description: "External service (Ollama).",
+        };
+        const nodes: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [openai, ollama],
+            entries: [
+                { id: "svc-api", files: ["packages/api/src/ai.ts"] },
+                { id: "svc-service", files: ["packages/service/src/main.ts"] },
+            ],
+            edges,
+            fileText: textsOf({
+                "packages/api/src/ai.ts":
+                    'import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: process.env.OLLAMA_BASE_URL });',
+                "packages/service/src/main.ts": 'import { Ollama } from "ollama";',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                nodes.push(service);
+            },
+        });
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0]).toMatchObject({ id: "external-ollama", label: "Ollama" });
+        expect(nodes[0]?.depNames).toEqual(["openai", "ollama"]);
+        expect(edges.map((e) => e.id)).toEqual(["svc-api--external-ollama", "svc-service--external-ollama"]);
+    });
+
+    // The deployment index carries one entry per owned file, several sharing a
+    // node id; the env reference can sit in any of the id's files.
+    it("given per-file entries sharing a node id, when the env reference is in any of them, then the service resolves (HC-019)", () => {
+        const edges: MapEdge[] = [];
+        const openai: ExternalServiceDep = {
+            id: "external-openai-api",
+            label: "OpenAI API",
+            depNames: ["openai"],
+            path: "package.json",
+            description: "External service (OpenAI API).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [openai],
+            entries: [
+                { id: "svc-a", files: ["src/first.ts"] },
+                { id: "svc-a", files: ["src/gen.ts"] },
+            ],
+            edges,
+            fileText: textsOf({
+                "src/first.ts": "export const nothing = 1;",
+                "src/gen.ts": 'import OpenAI from "openai";\nprocess.env.OLLAMA_BASE_URL;',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => s.id)).toEqual(["external-ollama"]);
+    });
+
+    // The override is SDK-scoped: only an SDK that routes by base URL resolves.
+    // A file can import both the genai SDK and mention OLLAMA_BASE_URL for its
+    // openai-compatible sibling (ollama-code's contentGenerator) without the
+    // Gemini service becoming an Ollama server.
+    it("given an SDK the override does not name, when its importer references the env var, then the service keeps its identity (HC-019)", () => {
+        const edges: MapEdge[] = [];
+        const gemini: ExternalServiceDep = {
+            id: "external-google-gemini-api",
+            label: "Google Gemini API",
+            depNames: ["@google/genai"],
+            path: "package.json",
+            description: "External service (Google Gemini API).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [gemini],
+            entries: [{ id: "svc-a", files: ["src/gen.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/gen.ts": 'import { GoogleGenAI } from "@google/genai";\nconst url = process.env.OLLAMA_BASE_URL;',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => s.id)).toEqual(["external-google-gemini-api"]);
+    });
+
+    // M6's window guards a match against nearby prose; in source the false
+    // reference is a comment mentioning the env var, so only non-comment text
+    // resolves the service.
+    it("given the env var only inside a comment, when inferred, then the service does not resolve (HC-019)", () => {
+        const edges: MapEdge[] = [];
+        const openai: ExternalServiceDep = {
+            id: "external-openai-api",
+            label: "OpenAI API",
+            depNames: ["openai"],
+            path: "package.json",
+            description: "External service (OpenAI API).",
+        };
+        const resolved: ExternalServiceDep[] = [];
+        inferExternalServiceUse({
+            services: [openai],
+            entries: [{ id: "svc-a", files: ["src/gen.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/gen.ts":
+                    'import OpenAI from "openai";\n// TODO: support OLLAMA_BASE_URL fallback one day.\nconst client = new OpenAI();',
+            }),
+            edgeSuffix: "",
+            onImporters: (service) => {
+                resolved.push(service);
+            },
+        });
+        expect(resolved.map((s) => s.id)).toEqual(["external-openai-api"]);
+    });
 });
 
 describe("inferExternalDelivers", () => {

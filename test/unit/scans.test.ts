@@ -98,4 +98,20 @@ describe("findExternalServiceDeps", () => {
         const result = findExternalServiceDeps([pkg(".", { mailparser: "1", "@anthropic-ai/tokenizer": "2" })]);
         expect(result).toEqual([]);
     });
+
+    it("given firebase, socket.io, and sentry SDKs, when found, then each names its external service (D17, HC-019)", () => {
+        const result = findExternalServiceDeps([
+            pkg(".", { firebase: "11", "socket.io-client": "4", "@sentry/browser": "9" }),
+        ]);
+        expect(result.map((s) => [s.id, s.label, s.depNames])).toEqual([
+            ["external-firebase", "Firebase", ["firebase"]],
+            ["external-socket-io-server", "Socket.IO server", ["socket.io-client"]],
+            ["external-sentry", "Sentry", ["@sentry/browser"]],
+        ]);
+    });
+
+    it("given an embedded-postgres dependency, when found, then it is a database (D13, HC-019)", () => {
+        const result = findEmbeddedDatabases([pkg(".", { "embedded-postgres": "1" })]);
+        expect(result.map((db) => [db.id, db.label])).toEqual([["infra-embedded-postgres", "PostgreSQL database"]]);
+    });
 });

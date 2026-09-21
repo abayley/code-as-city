@@ -171,6 +171,7 @@ const EMBEDDED_DB_DEPS: readonly (readonly [RegExp, string])[] = [
     [/^chromadb$/, "Chroma vector database"],
     [/^(better-sqlite3|sqlite3)$/, "SQLite database"],
     [/^(duckdb$|@duckdb\/)/, "DuckDB database"],
+    [/^embedded-postgres$/, "PostgreSQL database"],
 ];
 
 /**
@@ -217,7 +218,7 @@ export type ExternalServiceDep = {
 // system it talks to (D17). Deliberately precise: `@anthropic-ai/tokenizer` and
 // `mailparser` are offline libraries, not clients, so they are not matched.
 // Vendor-biased like D5's tables; one node per service, several SDKs folding to
-// the same one.
+// the same one. Firebase/Socket.IO/Sentry joined under HC-019.
 const EXTERNAL_SERVICE_DEPS: readonly (readonly [RegExp, string])[] = [
     [/^(imapflow|node-imap|imap|emailjs-imap-client)$/, "IMAP mail server"],
     [/^nodemailer$/, "SMTP mail server"],
@@ -230,7 +231,49 @@ const EXTERNAL_SERVICE_DEPS: readonly (readonly [RegExp, string])[] = [
     [/^groq-sdk$/, "Groq API"],
     [/^stripe$/, "Stripe API"],
     [/^twilio$/, "Twilio API"],
+    [/^firebase$/, "Firebase"],
+    [/^socket\.io-client$/, "Socket.IO server"],
+    [/^@sentry\//, "Sentry"],
 ];
+
+/**
+ * An endpoint-override row: the env var whose reference in an importer of one
+ * of `deps`' SDKs resolves the service to `label`'s backend (HC-019).
+ */
+export type EndpointEnvOverride = {
+    /** Token-boundary matcher for the env var, tested against comment-stripped source. */
+    pattern: RegExp;
+    /** The backend the service resolves to. */
+    label: string;
+    /** The SDK dependency names that route by base URL, so can be redirected. */
+    deps: readonly string[];
+};
+
+/**
+ * D17 endpoint resolution (HC-019): env vars that redirect a client SDK's
+ * base URL to a different backend. When an importer of one of the named SDKs
+ * references the env var, that service resolves to the backend — ollama-code's
+ * `openai` SDK pointed at `OLLAMA_BASE_URL` is an Ollama server, not the
+ * OpenAI cloud. Scoped to the SDKs that route by base URL: a file may import
+ * several SDKs and mention the env var for one of them, and only that one
+ * resolves. Token-boundary matchers, so a longer name sharing the prefix
+ * (`OLLAMA_BASE_URL_DEFAULT`) does not resolve the service.
+ */
+export const ENDPOINT_ENV_OVERRIDES: readonly EndpointEnvOverride[] = [
+    { pattern: /\bOLLAMA_BASE_URL\b/, label: "Ollama", deps: ["openai"] },
+];
+
+/**
+ * The external node's id for a service label — the one home for the
+ * `external-<label>` format, so detection and endpoint resolution cannot
+ * diverge.
+ *
+ * @param label - The external service's display label.
+ * @returns The kebab-cased node id.
+ */
+export function externalNodeId(label: string): string {
+    return kebab(`external-${label}`);
+}
 
 /**
  * D17: finds the external services a repo talks to, from client-SDK
@@ -253,7 +296,7 @@ export function findExternalServiceDeps(packages: readonly Package[]): ExternalS
             let entry = byLabel.get(label);
             if (entry === undefined) {
                 entry = {
-                    id: kebab(`external-${label}`),
+                    id: externalNodeId(label),
                     label,
                     depNames: [],
                     path: pkgManifest,

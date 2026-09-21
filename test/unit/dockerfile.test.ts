@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -61,5 +61,21 @@ describe("parseDockerfile", () => {
             ["src/main.ts"],
         );
         expect(result.entryFile).toBe("src/main.ts");
+    });
+
+    it("given a build context, when parsed, then COPY sources and entry tokens resolve against the context (D3, HC-017)", () => {
+        mkdirSync(join(repo, "machine-learning/immich_ml"), { recursive: true });
+        writeFileSync(
+            join(repo, "machine-learning/Dockerfile"),
+            ["FROM python", "COPY immich_ml immich_ml", 'CMD ["python", "immich_ml/__main__.py"]'].join("\n"),
+        );
+        const result = parseDockerfile(
+            repo,
+            "machine-learning/Dockerfile",
+            ["machine-learning/immich_ml/app.py", "machine-learning/immich_ml/__main__.py"],
+            "machine-learning",
+        );
+        expect(result.copies).toEqual(["machine-learning/immich_ml"]);
+        expect(result.entryFile).toBe("machine-learning/immich_ml/__main__.py");
     });
 });

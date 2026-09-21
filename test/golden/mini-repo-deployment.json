@@ -78,7 +78,7 @@
         }
       ],
       "metrics": {
-        "loc": 81,
+        "loc": 83,
         "complexity": 2,
         "coverage": 62.5
       },
@@ -90,7 +90,7 @@
         "flowLayer": 1,
         "size": [
           1.2035533905932738,
-          0.8698135717454107,
+          0.8754411291814367,
           1.0230203820042827
         ]
       }
@@ -131,6 +131,36 @@
       },
       "display": {
         "flowLayer": 0
+      }
+    },
+    {
+      "id": "host-mini-repo-ml",
+      "label": "Ml",
+      "kind": "deployable",
+      "archetype": "worker",
+      "parentId": "host-mini-repo",
+      "description": "Serves the ml model over HTTP.",
+      "attributes": {
+        "service-source": "packages/ml/Dockerfile",
+        "entry-point": "packages/ml/src/main.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/ml/Dockerfile"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1
+      },
+      "tags": [],
+      "display": {
+        "flowLayer": 1,
+        "size": [
+          1.1,
+          0.6118138500757483,
+          0.935
+        ]
       }
     },
     {
@@ -273,20 +303,20 @@
       "kind": "module",
       "archetype": "worker",
       "parentId": "mini-api-src-district",
-      "description": "Talks to the OpenAI API to summarise a message.\n\n1 source file under src/.",
+      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.\n\n1 source file under src/.",
       "sourceRefs": [
         {
           "path": "packages/api/src/ai.ts"
         }
       ],
       "metrics": {
-        "loc": 10,
+        "loc": 12,
         "complexity": 2
       },
       "display": {
         "size": [
           1.2035533905932738,
-          0.6387141303402689,
+          0.646235345633661,
           1.0230203820042827
         ]
       }
@@ -848,31 +878,15 @@
       }
     },
     {
-      "id": "external-openai-api",
-      "label": "OpenAI API",
-      "kind": "external",
-      "archetype": "cloud",
-      "parentId": "external-systems",
-      "description": "External service (OpenAI API) addressed via a client SDK declared in packages/api/package.json.",
-      "sourceRefs": [
-        {
-          "path": "packages/api/package.json"
-        }
-      ],
-      "display": {
-        "flowLayer": 2
-      }
-    },
-    {
       "id": "external-ollama",
       "label": "Ollama",
       "kind": "external",
       "archetype": "cloud",
       "parentId": "external-systems",
-      "description": "External service (Ollama) addressed via a client SDK declared in packages/service/package.json.",
+      "description": "External service (Ollama) — endpoint resolved from the OpenAI API SDK's configuration declared in packages/api/package.json.",
       "sourceRefs": [
         {
-          "path": "packages/service/package.json"
+          "path": "packages/api/package.json"
         }
       ],
       "display": {
@@ -1036,9 +1050,9 @@
       ]
     },
     {
-      "id": "mini-api-src-ai--external-openai-api",
+      "id": "mini-api-src-ai--external-ollama",
       "from": "mini-api-src-ai",
-      "to": "external-openai-api",
+      "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.7,
@@ -1059,7 +1073,7 @@
       "label": "uses",
       "sourceRefs": [
         {
-          "path": "packages/service/package.json"
+          "path": "packages/api/package.json"
         }
       ]
     },
@@ -1091,18 +1105,18 @@
       ]
     },
     {
-      "id": "host-mini-repo-api--external-openai-api-d",
+      "id": "host-mini-repo-api--external-ollama-d",
       "from": "host-mini-repo-api",
-      "to": "external-openai-api",
+      "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.6,
       "label": "delivers"
     },
     {
-      "id": "mini-api-src-ai--external-openai-api-d",
+      "id": "mini-api-src-ai--external-ollama-d",
       "from": "mini-api-src-ai",
-      "to": "external-openai-api",
+      "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.6,
