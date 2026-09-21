@@ -5,7 +5,7 @@ status: Open
 owners:
     - alistairbayley
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-09-21
 ---
 
 # Candidate Heuristic Changes
@@ -24,7 +24,12 @@ The "deployed model" cluster — HC-001, HC-005, HC-007, HC-008, HC-009,
 HC-010, HC-012 — is drawn together into `docs/rfcs/rfc-0004-deployment-mental-model.md`.
 The legibility and scale cluster — only HC-011 remains open (HC-003, HC-004,
 HC-006 done; HC-002 rejected as based on incorrect evidence) — is being worked
-directly, without an RFC.
+directly, without an RFC. HC-017 to HC-027 come from a 2026-09 comparison run
+over six repositories (excalidraw, immich, mermaid, paperclip, ollama-code,
+supabase) against independently authored architecture diagrams of each,
+produced with the archify skill from the same repo evidence. Archify is not a
+gold standard — it is agent-authored, one diagram per repo — but its per-repo
+diagrams make a useful contrast: a semantic reading of the same manifests.
 
 ## Status Key
 
@@ -35,24 +40,36 @@ directly, without an RFC.
 
 ## Candidate Index
 
-| ID     | Title                                                       | Rules       | Status   |
-| ------ | ----------------------------------------------------------- | ----------- | -------- |
-| HC-001 | No deployment category for a published package              | new; D, M   | Done     |
-| HC-002 | O4 shared-district colouring never fires                    | O4          | Rejected |
-| HC-003 | Collapse a redundant sole `src/` level                      | S2, M3      | Done     |
-| HC-004 | Disambiguate colliding module labels across packages        | O2, M3, S4  | Done     |
-| HC-005 | CI maintenance workflows surface as deployables             | D9, D10, M3 | Done     |
-| HC-006 | Emoji leak from workflow names into node labels             | D9          | Done     |
-| HC-007 | Dev and test packages rank as peer districts                | S1, M3, R   | Done     |
-| HC-008 | Monorepo root and generic hosts make empty districts        | S1, D2, M3  | Done     |
-| HC-009 | Same service across compose files duplicates infra          | D1          | Done     |
-| HC-010 | D5 name classification mislabels API layers as databases    | D5          | Done     |
-| HC-011 | Overview emits one node per file; unrenderable at scale     | O2; viewer  | Proposed |
-| HC-012 | Runtime-spawned daemons are invisible to the deployment map | new; D, M   | Done     |
-| HC-013 | No deployment category for an app you run directly          | new; D16, R5| Done     |
-| HC-014 | External systems (IMAP, LLM APIs) from client SDKs go unseen | new; D17     | Done     |
-| HC-015 | Same-named packages merge silently at the room level        | S, rooms    | Done     |
-| HC-016 | Overview gold means both shared-district and .tsx module    | O4; viewer  | Done     |
+| ID     | Title                                                                                                   | Rules           | Status   |
+| ------ | ------------------------------------------------------------------------------------------------------- | --------------- | -------- |
+| HC-001 | No deployment category for a published package                                                          | new; D, M       | Done     |
+| HC-002 | O4 shared-district colouring never fires                                                                | O4              | Rejected |
+| HC-003 | Collapse a redundant sole `src/` level                                                                  | S2, M3          | Done     |
+| HC-004 | Disambiguate colliding module labels across packages                                                    | O2, M3, S4      | Done     |
+| HC-005 | CI maintenance workflows surface as deployables                                                         | D9, D10, M3     | Done     |
+| HC-006 | Emoji leak from workflow names into node labels                                                         | D9              | Done     |
+| HC-007 | Dev and test packages rank as peer districts                                                            | S1, M3, R       | Done     |
+| HC-008 | Monorepo root and generic hosts make empty districts                                                    | S1, D2, M3      | Done     |
+| HC-009 | Same service across compose files duplicates infra                                                      | D1              | Done     |
+| HC-010 | D5 name classification mislabels API layers as databases                                                | D5              | Done     |
+| HC-011 | Overview emits one node per file; unrenderable at scale                                                 | O2; viewer      | Proposed |
+| HC-012 | Runtime-spawned daemons are invisible to the deployment map                                             | new; D, M       | Done     |
+| HC-013 | No deployment category for an app you run directly                                                      | new; D16, R5    | Done     |
+| HC-014 | External systems (IMAP, LLM APIs) from client SDKs go unseen                                            | new; D17        | Done     |
+| HC-015 | Same-named packages merge silently at the room level                                                    | S, rooms        | Done     |
+| HC-016 | Overview gold means both shared-district and .tsx module                                                | O4; viewer      | Done     |
+| HC-017 | Compose `build.context` with a default Dockerfile never binds                                           | D3              | Done     |
+| HC-018 | A standalone root Dockerfile declares no deployment                                                     | D1, D3          | Proposed |
+| HC-019 | Client-SDK table misses common SDKs and cannot resolve endpoints                                        | D13, D17, M6    | Done     |
+| HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Proposed |
+| HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Proposed |
+| HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Proposed |
+| HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
+| HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Proposed |
+| HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
+| HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Proposed |
+| HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Proposed |
+| HC-028 | Residual packages fragment and orphan their root files; districts label by directory, not artefact role | M3, S4          | Proposed |
 
 ## HC-001: No Deployment Category for a Published Package
 
@@ -607,18 +624,432 @@ shows in the overview (which sets node colours) and not the deployment map
 (which leaves colour to the archetype). Verified in the browser. The overview
 golden updated (the fixture's `@mini/web` `app.tsx` now `#A15A34`).
 
+## HC-017: Compose `build.context` With a Default Dockerfile Never Binds
+
+**Rules:** D3 (service-to-Dockerfile binding).
+
+**Evidence.** D3 binds a compose service to its Dockerfile only via
+`build.dockerfile` or the `images/<service>.Dockerfile` convention. When a
+service declares only `build.context` — so the Dockerfile is the default
+`<context>/Dockerfile` — the binding fails and the service keeps no COPYs and
+no entry. Three repos, three symptoms:
+
+- excalidraw: `docker-compose.yml` builds `context: .` with no `dockerfile`
+  key; the root `Dockerfile` COPYs `.` and multi-stage-copies
+  `excalidraw-app/build` into nginx. deploy-shape.json shows
+  `copies: [], entryFile: null`, so the host's only service is a bare
+  image-only infra node and R5 has no host deploy shape to read.
+- immich: the `immich-machine-learning` service builds
+  `context: ../machine-learning`, `dockerfile: Dockerfile` — a
+  *compose-relative* path the parser does not resolve (it reads as
+  repo-root `Dockerfile`, which does not exist, or is dropped). The whole
+  Python ML service is therefore unbuilt on the map, while CI resolves the
+  same path fine (`.github/workflows/docker.yml` builds
+  `machine-learning/Dockerfile`).
+- paperclip: the `server` service's Dockerfile is resolved, but the binding
+  only attributed the per-package `package.json` COPYs from the deps stage,
+  so the host building has no rooms and `entryFile` is null despite
+  `ENTRYPOINT docker-entrypoint.sh` resolving to an inventoried script.
+
+**Direction (to decide).** Resolve the default: a `build` block with a
+context but no `dockerfile` names `<context>/Dockerfile`; a relative
+`dockerfile` resolves against the context, not the repo root. Verify the
+paperclip deps-stage case separately — binding succeeds there, but
+coarse/COPY-from stages attribute nothing (a known D3 stance for the
+overview; the deployment view may want the first-party stage instead).
+
+**Resolution (Done).** Three changes, all in the D3 home (`compose.ts`
+capturing `build.context`, `hosts.ts` resolving, `dockerfile.ts` consuming):
+
+- *Default Dockerfile.* A build block naming only a local context binds
+  `<composeDir>/<context>/Dockerfile` when it exists (excalidraw's service is
+  now bound to its root `Dockerfile`; its COPYs are `COPY . .`, so rooms stay
+  empty — the coarse-COPY stance is unchanged).
+- *Context-relative dockerfile.* A `build.dockerfile` unresolvable at the
+  repo root and the compose dir resolves against the context, with a guard
+  against absolute and remote contexts. immich's `immich-machine-learning`
+  now binds `machine-learning/Dockerfile`, and its COPY sources
+  (`immich_ml`, `ann`) and entry resolve against the context, so the ML
+  service's building carries real source for the first time.
+- *Context-scoped COPY resolution.* When the context is not the repo root, a
+  COPY source or entry token matching nowhere at the repo root resolves
+  against `<context>/`. Repo-root matches keep winning, so the monorepo
+  convention is untouched.
+
+One deliberate departure from the Direction, recorded here: the Direction
+read "a relative `dockerfile` resolves against the context, not the repo
+root", and the implementation resolves the context **last** — repo root
+first, then the compose dir, then the context. A context-relative
+`dockerfile: Dockerfile` next to a repo-root `Dockerfile` would otherwise
+bind the wrong file in every monorepo built from the root (the convention
+HEURISTICS.md records), so the context is a fallback, not the first resort.
+
+Paperclip verification, per the Direction's "verify the paperclip
+deps-stage case separately": confirmed against a generated
+`deploy-shape.json` — the `paperclip` and `server` services both bind their
+Dockerfile, and the attributed copies are exactly the deps-stage
+per-package `package.json` manifests plus `scripts/docker-entrypoint.sh`;
+the `COPY --from=build /app /app` stage attributes nothing. Binding succeeds
+while staged artefacts attribute nothing, as predicted; whether the
+deployment view wants the first-party stage instead is left open with the
+other COPY-attribution questions (HC-024's precision cluster).
+
+Fixture: a new private `packages/ml` built by a compose service
+`build: context: packages/ml` with no `dockerfile` key; a generate-map
+assertion pins the bound service's `service-source`/`entry-point` attributes.
+
+## HC-018: A Standalone Root Dockerfile Declares No Deployment
+
+**Rules:** D1 (one host per compose file), D3.
+
+**Evidence.** ollama-code has a root `Dockerfile` (node:20-slim, installs the
+built `cli` and `core` tgz packages globally, `CMD ["gemini"]`) and no
+compose file. D1 only creates host districts from compose, so
+deploy-shape.json has `hosts: []` and the repo's one real containerised
+deployment — the image a user actually pulls and runs — is invisible. The
+same holds for any repo whose only deployment declaration is a Dockerfile.
+
+**Direction (to decide).** Treat an inventoried Dockerfile with no compose
+owner as a single-service host district: name from the repo basename (D2's
+fallback), rooms from its COPYs, entry from ENTRYPOINT/CMD per D3, infra
+classification from nothing (it is whatever the image runs). Needs a guard
+against double-counting when compose *also* builds the same Dockerfile, and
+a stance on Dockerfiles that are clearly dev or test images.
+
+## HC-019: Client-SDK Table Misses Common SDKs and Cannot Resolve Endpoints
+
+**Rules:** D17 (service client SDKs), D13 (embedded databases), M6 (env-token
+externals), M10 (delivers edges).
+
+**Evidence.** Four failure shapes, each seen live:
+
+- *Missing SDKs.* excalidraw's app depends on `firebase` (Firestore and
+  Storage), `socket.io-client` (the collab server), and `@sentry/browser`
+  (error tracking). None is in the D17 table, so all three externals are
+  absent — the app reads as a lone SPA. paperclip's `embedded-postgres`
+  dependency (root, server, and db packages) is absent from D13's table, so
+  the compose-free deployment mode (postgres in-process) is invisible.
+- *Endpoint resolution.* ollama-code reaches its model backend through the
+  `openai` SDK pointed at an OpenAI-compatible base URL
+  (`openaiContentGenerator.ts`: `OLLAMA_BASE_URL || OPENAI_BASE_URL ||
+  http://localhost:11434/v1`). D17 sees the `openai` import and emits
+  "OpenAI API" — the map names the wrong system, and the default (a local
+  ollama server) is the map's biggest factual gap.
+- *Split by purpose.* One SDK can front several externals: firebase is
+  Firestore *and* Storage. The archify diagram draws two nodes with distinct
+  edges (sync scenes vs binary files); D17 folds one node per service.
+- *Hardcoded endpoints.* ollama-code's clearcut logger posts telemetry to
+  `play.googleapis.com` from source (`clearcut-logger.ts:129`). D12 reads
+  https URLs only from a package-root `config.yaml`; no rule reads URL
+  constants from source.
+
+**Direction (to decide).** Extend the D17 table (firebase, socket.io,
+sentry) and D13's (embedded-postgres); add an endpoint-resolution step that
+traces an SDK's base URL through env fallbacks (the M6 window is the model)
+so `openai` + `OLLAMA_BASE_URL` reads as ollama, and consider one node per
+resolved purpose rather than per SDK. Decide whether a URL constant in
+deploy-reachable source is a D12-class signal.
+
+**Resolution (Done, two of the four arms).**
+
+- *Table extensions.* D17 gains `firebase` ("Firebase"), `socket.io-client`
+  ("Socket.IO server"), and `@sentry/*` ("Sentry"); D13 gains
+  `embedded-postgres` ("PostgreSQL database"). Excalidraw's map now shows
+  Firebase, the Socket.IO collab server, and Sentry; paperclip's shows the
+  embedded-postgres database node.
+- *Endpoint resolution.* An override table (`ENDPOINT_ENV_OVERRIDES` in
+  `scans.ts`) names, per backend, the env var and the SDKs it can redirect.
+  In the shared pass (`inferExternalServiceUse`), when an importer file of a
+  scoped SDK references the env var, the service resolves to that backend
+  before `onImporters` — so both modes name it — and services resolving to
+  the same backend fold to one node with unioned dep names and re-discovered
+  importers. ollama-code's `openai` SDK now reads as "Ollama (endpoint
+  resolved...)" while `@google/genai` keeps "Google Gemini API" — the two
+  live in the same file there, which is why scoping the override to the
+  base-URL-routing SDK matters. The Direction's "the M6 window is the model"
+  is adapted, not copied: the window's intent (a match must not fire on
+  nearby prose) is implemented as comment-stripped matching
+  (`stripJsComments`), because the failure the ±4-line window guards —
+  adjacent blocks in a config file — has no source-file analogue.
+- *Deferred: purpose split and source URLs.* One node per resolved purpose
+  (firebase's Firestore vs Storage) needs import-level use analysis, not just
+  SDK presence — left, recorded in HEURISTICS.md's D17 failure modes. A
+  hardcoded URL constant in source (ollama-code's clearcut endpoint) is a
+  D12-class extension and stays open there.
+
+Two defects found by the live repos while landing this, both covered by unit
+tests: the resolution must read every file of a per-file index entry's node
+id (they share ids), and the fold must re-discover importers over the unioned
+dep names. Fixture: `packages/api/src/ai.ts` now points its `openai` SDK at
+`OLLAMA_BASE_URL ?? localhost:11434/v1`, so the fixture's "OpenAI API"
+external resolves to Ollama and folds with `@mini/service`'s `ollama` SDK
+external — the D17 generate-map assertion pins the resolved node and the
+absence of any "OpenAI API" external; goldens regenerated.
+
+## HC-020: D1 Folds Distinct Services That Merely Share a Name
+
+**Rules:** D1 (service folding across compose files, added by HC-009).
+
+**Evidence.** HC-009's fix folds a service name recurring across a
+directory's compose files to one owner node. supabase shows the over-fire:
+`docker-compose.kong.yml` defines `api-gw` with image `kong/kong:3.9.3`
+while `docker-compose.yml` defines `api-gw` with envoy — alternative
+gateways a self-hoster chooses between, not duplicates. Name-folding
+shadows the kong node, so the canonical kong topology is unreachable on the
+map. The same file's logs topology defines its own `studio` (the logflare
+dashboard, no image) which folds into the Supabase host's `supabase/studio`
+node — a different service erased.
+
+**Direction (to decide).** Make image identity the fold key: same name *and*
+same (or absent) image folds; same name with different images stays
+distinct, tagged as the variants they are. Check the interaction with the
+environment-variant dedup (which compares service-name sets, not images) and
+that immich's single `Db` does not regress.
+
+## HC-021: Every Non-Private Workspace Library Becomes a Published Deployable
+
+**Rules:** D14 (published-artefact classification).
+
+**Evidence.** D14's published signal is `private: true`'s absence plus a
+declared entry. paperclip's release workflow does publish its packages, but
+the deployment map shows ~20 `published` deployables — every adapter,
+gateway, plugin, `shared`, `db`, `eslint-config`-class package — when the
+runtime reality is one server image that bundles them (the Dockerfile
+COPYs the packages; the CLI and the server are the artefacts a user runs).
+supabase shows the same inversion: `eslint-config-supabase`, `api-types`,
+and `shared-data` rate deployables while the studio app (HC-022) does not.
+The `published` tag stops meaning "ships to users".
+
+**Direction (to decide).** Discount a workspace library whose files land in
+a host image via D3 COPY membership: it is a component of that deployment
+(a building inside the host), not an artefact of its own. Alternatives: a
+release-evidence signal (a publish workflow or `files`/`publishConfig`
+content) as a second gate; or a milder `bundled` tag keeping the node but
+demoting the deployable status. Care needed where a package is *both*
+bundled and genuinely published (paperclip's adapters may be exactly that).
+
+## HC-022: Next.js Apps Are Not Runnable; `docs` Dirs Are Not Apps
+
+**Rules:** D16 (runnable app), I3 (directory ignore set).
+
+**Evidence.** Two compounding misses on supabase. D16 recognises a web-role
+SPA entry or a `start` script that calls `Bun.serve`/`.listen`/
+`createServer`/fastify/express — `next start` matches none of them, so
+`apps/studio`, `apps/www`, and `apps/learn` (real Next.js deployments with
+their own hosting) appear only as plain code districts, while trivial
+libraries take the deployable slots (HC-021). Separately, I3's ignore set
+excludes any directory named `docs`, which swallows `apps/docs` — a deployed
+Next.js site — whole; the documented I3 failure mode, but here it deletes a
+product.
+
+**Direction (to decide).** D16: add Next/Nuxt/SvelteKit-style framework
+start scripts (`next start`, `next dev`?) and recognise the framework's
+entry conventions; keep `next build`-only packages out. I3: the
+directory-name ignore set should not apply at `apps/`/`packages/` depth
+inside a workspace (a `docs` *member package* is a package first), or
+should yield when the directory has its own `package.json` with an entry.
+
+## HC-023: In-Host Service Calls and Monitoring Scrapes Draw No Edges
+
+**Rules:** a new inference rule in the D or M groups; D6 (depends_on only).
+
+**Evidence.** The edges that make a deployment map read as a *system* are
+service-to-service calls, and the generator draws none of them. immich's
+server calls its ML container over HTTP
+(`server/src/repositories/machine-learning.repository.ts` posts to the
+`immich-machine-learning` host) — the map shows both nodes with no edge.
+paperclip's server serves the UI bundle (`SERVE_UI=true`); the UI floats as
+an independent D16 app with no relationship to the server that ships it.
+supabase's studio reaches every service through the api-gw. And immich's
+`docker/prometheus.yml` `scrape_configs` name the server's metrics ports,
+yet Prometheus and Grafana sit as isolated leaves — D6 reads only
+`depends_on`.
+
+**Direction (to decide).** Two candidate rules. (a) In-host HTTP call
+inference: a `fetch`/axios/SDK call whose target host or port resolves to a
+sibling service's declared ports or hostname (compose service names,
+`ports:`, env config) draws a declared `data_flow` caller -> service. (b)
+Monitoring: `scrape_configs` job targets matching a service's container name
+or port draw a scrape edge prometheus -> service. Both need the resolved
+host topology from D1/D3 as input, so they sit downstream of it. Risk:
+HTTP-target matching is where guesses start — hold to targets that resolve
+to a *declared* service.
+
+## HC-024: Inferred Edges Over-Fire; Templates and Dev Environments Present as Production
+
+**Rules:** M8 (SQL forms), M10 (delivers), D17 (double edges), D7 (wrangler),
+D3 (dev-environment compose).
+
+**Evidence.** A precision cluster from the same comparison run:
+
+- *M8 on browser code.* paperclip's React SPA and supabase's
+  studio-pages/www-pages modules draw inferred read/write edges straight
+  into postgres — SQL-write regexes firing on string literals or ORM-ish
+  receivers in client code that actually goes through REST. Implausible
+  topology, drawn with 0.75 confidence.
+- *M10 on build scripts.* ollama-code's `scripts/` modules "deliver" to
+  Google Gemini via the env-prefix sweep; build scripts ship no prompts.
+  ~17 inferred edges, most ungrounded.
+- *Double-drawn relationships.* Each OpenAI-using module in supabase emits
+  both a D17 `uses` (0.7) and an M10 `delivers` (0.6) edge for the same
+  SDK import. One relationship, two edges.
+- *D7 on a template.* paperclip's `edge-delivery`/`edge-worker` district
+  comes from `packages/plugins/sandbox-providers/cloudflare/bridge-template/
+  wrangler.jsonc` — a template copied into *user* projects, not a worker
+  this repo deploys.
+- *D3 on a dev container.* mermaid's host gateway is a dev environment:
+  the Dockerfile bind-mounts the whole repo, runs dev servers, keeps a pty.
+  It presents as a production service with ports.
+
+**Direction (to decide).** Per item: M8 could require a server-side
+receiving module (the node already starts a server or the SDK import is
+server-runtime) or demote UI-dir hits; M10 could exclude script/QA dirs it
+inherits from R1's sets; D17+M10 should suppress M10 when D17 already drew
+the same pair; D7 could skip configs under a directory named `*-template*`/
+`*template*` or one not referenced by any deploy mechanism; D3 could tag a
+compose host `dev-environment` on bind-mounting the repo root or running
+known dev servers (a tag, not exclusion — excalidraw's dev-args compose
+shows the same shape and its judgement is subtler).
+
+## HC-025: Platform Deploy Configs (Netlify, Vercel, ECS, Quadlet) Go Unseen
+
+**Rules:** a new D-group family; D1 covers compose only.
+
+**Evidence.** Three repos declare deployments through configs no rule reads.
+mermaid's `netlify.toml` deploys the live editor (`publish =
+"mermaid-live-editor/docs"`, build via `scripts/editor.bash`); excalidraw's
+`vercel.json` declares the app's real production hosting (the compose file
+is the self-host path); paperclip's `docker/ecs-task-definition.json` and
+`docker/quadlet/` systemd units declare container deployments beside the
+compose files. None appears anywhere in the maps.
+
+**Direction (to decide).** A rule per config family or one generic
+"deployment config" rule: netlify/vercel yield a site deployable (name from
+the config, entry from `publish`/output dir, build from the command); ECS
+task definitions and quadlet units yield host districts the way compose
+does (containers, images, port/dependency edges). Each family is small; the
+risk is table sprawl — maybe land them one at a time, evidence-led.
+
+## HC-026: Non-Node Services (Python) Are Never Inventoried
+
+**Rules:** I1 (inventory), D17 (client SDKs).
+
+**Evidence.** immich's `machine-learning/` is a real deployed service — its
+own container, its own Dockerfile — built in Python (`pyproject.toml`,
+`immich_ml/` package). The inventory is Node-shaped: no pyproject/uv entry
+detection, so the package never becomes a deploy root, no rooms form, and
+the service exists on the map only as a D5-classified infra shell (a
+`gateway` by service-name fallback, with no source behind it — itself
+misleading, see HC-017). Its dependency scan also misses
+`huggingface-hub`/`transformers` in pyproject, so the model-download flow to
+Hugging Face (a defining behaviour of the service) draws nothing.
+
+**Direction (to decide).** An I-group extension: a directory with
+`pyproject.toml`/`uv.lock`/`requirements.txt` is a package whose rooms come
+from its layout (`immich_ml/...`). Scope the first cut to making the
+*deployment* node real (bound via HC-017's D3 fix, entry from the
+Dockerfile CMD); the import-graph interior and a pyproject D17 scan are
+follow-ups. A language-family decision is implied: how far past
+TypeScript/JavaScript is the generator willing to go?
+
+## HC-027: D14 Entry Resolution Misses Conventional Entries
+
+**Rules:** D14 (published-artefact classification, source-entry resolution).
+
+**Evidence.** D14 resolves a published package's source entry through
+dist->src and `.m/cjs`->`.ts` conventions, then `src/index.ts`/`index.ts`/
+`src/main.ts`. Entries outside that list lose their deployable. mermaid's
+headline package (`mermaid`, non-private, `module: ./dist/mermaid.core.mjs`)
+resolves to a `src/mermaid.ts` that is not in the convention list, so it
+renders as a plain module while `tidy-tree` and `parser` (which happen to
+have `src/index.ts`) take the `published` slots; `@mermaid-js/layout-elk`,
+`mermaid-zenuml`, and `tiny` are likewise missing or demoted. ollama-code's
+VS Code extension (`engines.vscode`, `main: ./dist/extension.js`) fails the
+same way: the package shows only as an `esbuild.js` worker room, never an
+`extension` deployable. HEURISTICS.md records the failure mode ("a bundled
+library whose source entry is neither the declared path nor a conventional
+`src/index.ts` gets no deployable") without candidates.
+
+**Direction (to decide).** Extend the resolution chain: a package-name-derived
+entry (`@mermaid-js/parser` -> `src/parser.ts`), a `.d.ts`-typed dist entry
+back-mapped to source, and an entry that is the dist path itself when no
+source match exists (keep the node, cite the dist file). Worth pairing with
+HC-021 since both reshape D14's deployable set.
+
+## HC-028: Residual Packages Fragment and Orphan Their Root Files; Districts Label by Directory, Not Artefact Role
+
+**Rules:** M3 (residual-package assembly), S4 (loose-file grouping), the
+district-label rule; HC-003's deferred residual is its sibling on the normal
+(non-residual) path.
+
+**Evidence.** immich's deployment map, 2026-09: three nodes sit outside every
+district — `packages/plugin-core/src` (a bare deployable labelled "Src"),
+`packages/plugin-core/esbuild.js`, and `packages/plugin-sdk/esbuild.js` +
+`plugin-sdk.mjs` (two "Top-level files" nodes). All three come from M3's
+residual path ("Residual packages (partly claimed by compose services)
+instead yield a district per structured dir and district-less nodes for flat
+dirs"):
+
+- plugin-sdk **is** baked into the server image (`COPY ./packages/plugin-sdk`),
+  so it survives as a residual package. Its `src/` gets a per-directory
+  district ("D6 Src") — a *directory* container, not a *package* container —
+  and its loose root files belong to no structured dir, so the residual path
+  has nowhere to put them and they render district-less.
+- plugin-core is **not** actually host-deployed: the server Dockerfile only
+  layer-caches its `mise.toml`, which attributes nothing. It is spared by D14
+  as a published artefact (`main: src/index.ts`); its `src/` holds exactly
+  one file, and M3 never wraps a single synthetic building, so the room is
+  promoted to a bare district-less deployable labelled "Src", leaving
+  `esbuild.js` orphaned too. (This also corrects HC-007's resolution, which
+  recorded plugin-core as baked into the server image — only its `mise.toml`
+  is copied, so it is on the map as a published artefact, not as a deployed
+  package.)
+
+The same examination exposes a naming gap across the map: "D5 Src"
+(@immich/cli), "D6 Src" (@immich/plugin-sdk), and "D2 Immich"
+(@immich/server) all name districts by directory or bare package, when each
+package deploys as one artefact — CLI, Plugin SDK, Server (the host building
+is already "Immich Server"; the district disagrees).
+
+**Direction (to decide).** Three linked changes, M3-first:
+
+1. *Residual assembly grows a package-level container.* A residual package
+   gets one district (labelled by the package, below) holding its structured
+   dirs as buildings; its loose root files attach to that district as a
+   support room (or collapse when they are build scripts of the package's one
+   artefact). The single-synthetic-building guard then applies at the
+   *package* level, not per directory — plugin-core's one-file `src/` plus
+   `esbuild.js` becomes the "Plugin Core" district with its deployable
+   entry, not a bare "Src" and an orphan.
+2. *Artefact-role labels.* A code district whose package deploys as one
+   artefact takes the artefact's role name — the package name scope-stripped
+   ("Plugin SDK"), the deployable's tag ("CLI"), or the host service's role
+   ("Server") — instead of the directory name ("Src") or the scoped package
+   display name ("Immich"). This dissolves the bare "Src" district labels
+   HC-003's residual also chases, and needs a decision on the name source's
+   precedence (tag vs package name vs D14 entry).
+3. *Where the two paths meet.* The normal path's package districts and the
+   residual path's new package districts should be one shape; check whether
+   change 1 makes the residual branch of M3 expressible as the normal branch
+   with a spared-package flag, which would retire the per-structured-dir
+   special case outright.
+
+Risk: district labels feed the viewer's rail and grouping; relabeling
+"Immich" -> "Server" touches goldens across every sampled repo and should
+land with HC-003's residual rather than twice.
+
 ## Repositories Examined
 
-| Repo            | Shape                                  | Modes run      | Deployment map verdict                                         |
-| --------------- | -------------------------------------- | -------------- | -------------------------------------------------------------- |
-| aria-evals      | Deployment-shaped, multi-host          | deployment, ov | Good: the design target                                        |
-| aria-tools      | Tooling monorepo, ~20 CLIs             | deployment, ov | Degenerate: 42 workers, 0 deployables (HC-001)                 |
-| nzlaw           | Small, two packages                    | deployment, ov | Reasonable                                                     |
-| functionary.dev | Cloudflare edge app                    | deployment, ov | Good but sparse (edges by mode design)                         |
-| immich          | Self-hosted server, 10 compose files   | deployment, ov | Core shape captured; scaffolding over-ranked (HC-007)          |
-| mermaid         | Diagramming library, plugins           | deployment     | Wrong: CI jobs as deployables (HC-001, HC-005)                 |
-| ollama-code     | CLI, core lib, VS Code extension       | deployment     | Wrong: no real deployable, CI jobs fill it (HC-001, HC-005)    |
-| excalidraw      | Self-host app plus published library   | deployment     | App captured; the library invisible (HC-001, HC-008)           |
-| paperclip       | Design tool: server, db, 44 packages   | deployment     | Real shape captured; CI jobs and scale clutter (HC-005)        |
-| supabase        | Postgres platform, ~15 compose files   | deployment     | Full stack found but services duplicated 2-6x (HC-009, HC-010) |
-| aria            | Agent executable, spawned daemons, SDK | deployment     | Missed its whole shape: executable + daemons (HC-001, HC-012)  |
+| Repo | Shape | Modes run | Deployment map verdict |
+| --- | --- | --- | --- |
+| aria-evals | Deployment-shaped, multi-host | deployment, ov | Good: the design target |
+| aria-tools | Tooling monorepo, ~20 CLIs | deployment, ov | Degenerate: 42 workers, 0 deployables (HC-001) |
+| nzlaw | Small, two packages | deployment, ov | Reasonable |
+| functionary.dev | Cloudflare edge app | deployment, ov | Good but sparse (edges by mode design) |
+| immich | Self-hosted server, 10 compose files | deployment, ov | Core shape captured; scaffolding over-ranked (HC-007); ML service invisible (HC-017, HC-023, HC-026); residual packages fragment (HC-028) |
+| mermaid | Diagramming library, plugins | deployment | Wrong: CI jobs as deployables (HC-001, HC-005); dev container as host (HC-024); headline package not a deployable (HC-027) |
+| ollama-code | CLI, core lib, VS Code extension | deployment | Wrong backend named (HC-019); Dockerfile invisible (HC-018); M10 noise (HC-024) |
+| excalidraw | Self-host app plus published library | deployment | App captured; the library invisible (HC-001, HC-008); Firebase/Sentry/collab externals missing (HC-019); host unbound (HC-017) |
+| paperclip | Design tool: server, db, 44 packages | deployment | Real shape captured; deployable inflation (HC-021), template wrangler (HC-024), M8 noise (HC-024) |
+| supabase | Postgres platform, ~15 compose files | deployment | Full stack found but services duplicated 2-6x (HC-009, HC-010); kong folded away (HC-020); apps missing (HC-022) |
+| aria | Agent executable, spawned daemons, SDK | deployment | Missed its whole shape: executable + daemons (HC-001, HC-012) |
