@@ -36,3 +36,18 @@ export function titleCase(text: string): string {
             .trim()
     );
 }
+
+/**
+ * Strips JavaScript-style comments (`/*...*`/ blocks and `//` line tails) so
+ * pattern scans over source text cannot match inside a comment. String
+ * literals are not protected: a `//` inside one is over-stripped, which only
+ * loses text a comment-shaped scan would not match anyway.
+ *
+ * @param text - The source text to strip.
+ * @returns The text with comments replaced by spaces, lines preserved.
+ */
+export function stripJsComments(text: string): string {
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
+        .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}

@@ -143,14 +143,15 @@ function isCanonicalComposeFile(file: string): boolean {
 /**
  * The ownership key for a service in a compose directory: services fold across
  * topology files within the same directory, so the key pairs the directory
- * with the service name.
+ * with the service name **and its image** (HC-020) — alternative services that
+ * merely share a name but ship different images are distinct, not duplicates.
  *
  * @param file - Repo-relative path of the compose file.
- * @param serviceName - The compose service name.
- * @returns The `<dir> <name>` key used by {@link HostShape.serviceOwner}.
+ * @param service - The compose service (its name and image).
+ * @returns The `<dir> <name> <image>` key used by {@link HostShape.serviceOwner}.
  */
-function serviceOwnerKey(file: string, serviceName: string): string {
-    return `${dirname(file)} ${serviceName}`;
+function serviceOwnerKey(file: string, service: { name: string; image?: string | undefined }): string {
+    return `${dirname(file)} ${service.name} ${service.image ?? ""}`;
 }
 
 /** A host's claim on a service name, ranked to pick the D1 owner. */
@@ -175,19 +176,21 @@ function claimBeats(candidate: ServiceClaim, existing: ServiceClaim | undefined)
 /**
  * D1: whether a service is shadowed under a host — owned by a different host's
  * canonical topology file, so it folds to that owner's single node rather than
- * being redrawn here. Shared by both map assemblers.
+ * being redrawn here. Ownership matches on name **and image** (HC-020): a
+ * same-named service shipping a different image is an alternative, not a
+ * duplicate, and is not shadowed. Shared by both map assemblers.
  *
  * @param serviceOwner - The {@link HostShape.serviceOwner} map.
  * @param host - The host the service would be drawn under.
- * @param serviceName - The compose service name.
- * @returns True when another host owns this service name in the directory.
+ * @param service - The compose service (its name and image).
+ * @returns True when another host owns this name-and-image in the directory.
  */
 export function isServiceShadowed(
     serviceOwner: ReadonlyMap<string, string>,
     host: Pick<Host, "file" | "id">,
-    serviceName: string,
+    service: { name: string; image?: string | undefined },
 ): boolean {
-    const owner = serviceOwner.get(serviceOwnerKey(host.file, serviceName));
+    const owner = serviceOwner.get(serviceOwnerKey(host.file, service));
     return owner !== undefined && owner !== host.id;
 }
 
@@ -293,8 +296,13 @@ export function buildHosts(
     schedules: ReadonlyMap<string, CrontabSchedule>,
 ): HostShape {
     const fileExists = (p: string) => allFiles.includes(p);
+    // I4 applies to topology files too: a compose under a test/tests dir (or a
+    // *.test.* filename) is a test fixture, not the deployment shape (HC-020).
+    const isTestCompose = (file: string) =>
+        /(^|\/)(test|tests|__tests__)\//.test(file) || /\.test\.ya?ml$/.test(basename(file));
     const candidateHosts: Host[] = composeFiles
         .filter((file) => !/\.(override|build)\.ya?ml$/.test(basename(file)))
+        .filter((file) => !isTestCompose(file))
         .map((file) => {
             const dir = dirname(file);
             const parts = hostNameParts(file).filter((p) => p !== "example");
@@ -340,12 +348,24 @@ export function buildHosts(
     }
 
     const serviceNames = (host: Host) => new Set(host.services.map((s) => s.name));
+    // HC-020: coverage counts a service as shared only when its image matches
+    // too — alternative services that reuse a name (supabase's kong/envoy/caddy
+    // `api-gw`) are different topologies, not environment variants.
+    const serviceIdentities = (host: Host) => new Set(host.services.map((s) => `${s.name} ${s.image ?? ""}`));
     const hosts = candidateHosts.filter((host) => {
+        const identities = serviceIdentities(host);
         const names = serviceNames(host);
         return !candidateHosts.some((other) => {
             if (other === host) return false;
-            const otherNames = serviceNames(other);
-            const shared = [...names].filter((n) => otherNames.has(n)).length;
+            const otherIdentities = serviceIdentities(other);
+            // HC-020: a topology alternative (rank >= 2) is covered only by a
+            // host running the same services on the same images; a dev variant
+            // (rank 1) keeps the original name-coverage dedup, since its builds
+            // replace the canonical images wholesale.
+            const shared =
+                host.rank < 2
+                    ? [...names].filter((n) => serviceNames(other).has(n)).length
+                    : [...identities].filter((s) => otherIdentities.has(s)).length;
             const covered = names.size > 0 && shared / names.size >= 0.5;
             if (!covered) return false;
             if (other.rank !== host.rank) return other.rank > host.rank;
@@ -361,7 +381,7 @@ export function buildHosts(
     for (const host of hosts) {
         const canonical = isCanonicalComposeFile(host.file);
         for (const service of host.services) {
-            const key = serviceOwnerKey(host.file, service.name);
+            const key = serviceOwnerKey(host.file, service);
             const candidate: ServiceClaim = { hostId: host.id, canonical, rank: host.rank, file: host.file };
             if (claimBeats(candidate, claims.get(key))) claims.set(key, candidate);
         }

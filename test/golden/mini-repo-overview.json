@@ -347,6 +347,84 @@
       }
     },
     {
+      "id": "mini-plugin-district",
+      "label": "@Mini/Plugin",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/plugin/ — 2 modules.",
+      "tags": [
+        "band:Shared & support"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "mini-plugin-root-esbuild",
+      "label": "Esbuild",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-plugin-district",
+      "attributes": {
+        "entry-point": "packages/plugin/esbuild.js"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/plugin/esbuild.js"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-plugin-src-index",
+      "label": "Src",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-plugin-district",
+      "description": "The plugin's single entry.",
+      "sourceRefs": [
+        {
+          "path": "packages/plugin/src/index.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 1
+      }
+    },
+    {
       "id": "mini-service-district",
       "label": "@Mini/Service",
       "kind": "scope",

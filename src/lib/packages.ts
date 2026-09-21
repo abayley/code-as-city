@@ -18,6 +18,8 @@ type PublishedArtefact = {
     kind: "cli" | "library" | "extension";
     tag: "cli" | "published" | "extension";
     entry: string | null;
+    /** The manifest's `types`/`typings` entry, whose d.ts maps to source (HC-027). */
+    types: string | null;
 };
 
 export type Package = {
@@ -41,6 +43,8 @@ type PackageManifest = {
     exports?: unknown;
     engines?: { vscode?: string };
     contributes?: unknown;
+    types?: string;
+    typings?: string;
 };
 
 /**
@@ -78,15 +82,16 @@ function firstExportEntry(exports: unknown): string | null {
  */
 function classifyArtefact(manifest: PackageManifest): PublishedArtefact | null {
     if (manifest.private === true) return null;
+    const types = manifest.types ?? manifest.typings ?? null;
     const binEntry = typeof manifest.bin === "string" ? manifest.bin : Object.values(manifest.bin ?? {})[0];
-    if (binEntry !== undefined) return { kind: "cli", tag: "cli", entry: binEntry };
+    if (binEntry !== undefined) return { kind: "cli", tag: "cli", entry: binEntry, types };
     const isExtension = manifest.engines?.vscode !== undefined || manifest.contributes !== undefined;
     if (isExtension) {
-        return { kind: "extension", tag: "extension", entry: manifest.main ?? null };
+        return { kind: "extension", tag: "extension", entry: manifest.main ?? null, types };
     }
     const libraryEntry = manifest.main ?? manifest.module ?? firstExportEntry(manifest.exports);
     if (libraryEntry !== undefined && libraryEntry !== null && manifest.name !== undefined) {
-        return { kind: "library", tag: "published", entry: libraryEntry };
+        return { kind: "library", tag: "published", entry: libraryEntry, types };
     }
     return null;
 }
@@ -95,7 +100,9 @@ function classifyArtefact(manifest: PackageManifest): PublishedArtefact | null {
  * D14: the candidate source-entry paths for a package's published artefact, in
  * preference order. A bundled library's declared `module` (dist/name.core.mjs)
  * rarely maps to a source file by name, so the declared entry (with the
- * dist->src and .m/cjs->ts conventions) is tried first, then the conventional
+ * dist->src and .m/cjs->ts conventions, the `./` segments normalised — HC-027)
+ * is tried first, then the manifest `types` d.ts mapped to source, then the
+ * package-name-derived source entries (`src/<name>.ts`), then the conventional
  * source entries. The caller picks the first that exists. Empty when the
  * package publishes nothing.
  *
@@ -105,17 +112,35 @@ function classifyArtefact(manifest: PackageManifest): PublishedArtefact | null {
 export function artefactEntryCandidates(pkg: Package): string[] {
     if (pkg.artefact === null) return [];
     const inPkg = (rel: string) => (pkg.dir === "." ? rel : `${pkg.dir}/${rel}`);
+    const normalise = (rel: string) => rel.replace(/^\.\//, "").replace(/(^|\/)\.\//g, "$1");
+    const declaredArms = (declared: string): string[] => {
+        const clean = normalise(declared);
+        return [
+            inPkg(clean),
+            inPkg(clean)
+                .replace(/(^|\/)dist\//, "$1src/")
+                .replace(/\.[mc]?js$/, ".ts"),
+            inPkg(clean).replace(/\.[mc]?js$/, ".ts"),
+            // A .d.ts entry names its source by basename (HC-027):
+            // dist/detector.d.ts -> src/detector.ts, or detector.ts at the root.
+            ...(clean.endsWith(".d.ts")
+                ? [
+                      inPkg(clean.replace(/(^|\/)dist\//, "$1src/").replace(/\.d\.ts$/, ".ts")),
+                      inPkg(basename(clean).replace(/\.d\.ts$/, ".ts")),
+                  ]
+                : []),
+        ];
+    };
     const declared = pkg.artefact.entry;
+    const types = pkg.artefact.types;
+    const nameSegment = (pkg.name.split("/").at(-1) ?? pkg.name).replace(/\.js$/, "");
     return [
-        ...(declared === null
-            ? []
-            : [
-                  inPkg(declared),
-                  inPkg(declared)
-                      .replace(/(^|\/)dist\//, "$1src/")
-                      .replace(/\.[mc]?js$/, ".ts"),
-                  inPkg(declared).replace(/\.[mc]?js$/, ".ts"),
-              ]),
+        ...(declared ? declaredArms(declared) : []),
+        ...(types ? declaredArms(types) : []),
+        // A package whose entry basename is the package name (mermaid ->
+        // src/mermaid.ts) (HC-027).
+        inPkg(`src/${nameSegment}.ts`),
+        inPkg(`${nameSegment}.ts`),
         inPkg("src/index.ts"),
         inPkg("src/index.tsx"),
         inPkg("index.ts"),

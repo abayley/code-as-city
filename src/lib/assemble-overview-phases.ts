@@ -182,7 +182,7 @@ export function assembleInfraDistricts(options: {
             if (service.dockerfile) continue; // built from this repo's modules
             // D1: a service owned by another topology's canonical file folds to
             // that owner; it is not redrawn under this host.
-            if (isServiceShadowed(serviceOwner, host, service.name)) continue;
+            if (isServiceShadowed(serviceOwner, host, service)) continue;
             infraMembers.push({
                 id: kebab(`infra-${host.name}-${service.name}`),
                 label: titleCase(service.name),

@@ -71,7 +71,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         ];
         const state = makeState({ nodes, nodeOwningFile: () => "x-p-src", fileExists: () => true });
         reclassifyPublishedArtefacts(state, {
-            packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js" } })],
+            packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js", types: null } })],
             runnableByDir: new Map(),
         });
         expect(nodes[0]).toMatchObject({ kind: "deployable", archetype: "building", tags: ["published"] });
@@ -81,7 +81,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         const nodes = [moduleNode("x-p-src")];
         const state = makeState({ nodes, nodeOwningFile: () => "x-p-src", fileExists: () => true });
         reclassifyPublishedArtefacts(state, {
-            packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js" } })],
+            packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js", types: null } })],
             runnableByDir: new Map(),
         });
         expect(nodes[0]).toMatchObject({ kind: "deployable", archetype: "gateway" });
@@ -91,7 +91,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         const nodes = [moduleNode("x-p-src")];
         const state = makeState({ nodes, nodeOwningFile: () => "x-p-src", fileExists: () => true });
         reclassifyPublishedArtefacts(state, {
-            packages: [pkg({ artefact: { kind: "cli", tag: "cli", entry: "cli.js" } })],
+            packages: [pkg({ artefact: { kind: "cli", tag: "cli", entry: "cli.js", types: null } })],
             runnableByDir: new Map([
                 ["packages/p", { pkgDir: "packages/p", entry: "packages/p/src/main.ts", tag: "server" }],
             ]),
@@ -103,7 +103,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         const nodes = [moduleNode("x-p-src", { parentId: "host-mini-api" })];
         const state = makeState({ nodes, nodeOwningFile: () => "x-p-src", fileExists: () => true });
         reclassifyPublishedArtefacts(state, {
-            packages: [pkg({ artefact: { kind: "cli", tag: "cli", entry: "cli.js" } })],
+            packages: [pkg({ artefact: { kind: "cli", tag: "cli", entry: "cli.js", types: null } })],
             runnableByDir: new Map(),
         });
         expect(nodes[0]?.kind).toBe("module");
@@ -493,9 +493,9 @@ describe("assemblePackageDistricts (7c)", () => {
         hostDeployReachable: new Set(),
         hasHostDeployShape: false,
         runnableByDir: new Map(),
+        hosts: [],
         roomEdges: new Map(),
         fileToRoom: new Map(),
-        scriptReferencedFiles: new Set(),
         modulesAsBuildings: false,
         edgeHost: null,
         ...over,

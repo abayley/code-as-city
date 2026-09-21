@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildHosts } from "../../src/lib/hosts";
+import { buildHosts, isServiceShadowed } from "../../src/lib/hosts";
 
 const repo = mkdtempSync(join(tmpdir(), "code-as-city-hosts-"));
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
@@ -128,9 +128,9 @@ describe("buildHosts", () => {
         expect(canonical).toBeDefined();
         expect(topology).toBeDefined();
         // db recurs in both surviving hosts; the canonical file owns it.
-        expect(built.serviceOwner.get(`topo db`)).toBe(canonical?.id);
+        expect(built.serviceOwner.get(`topo db postgres:16`)).toBe(canonical?.id);
         // minio is unique to the topology host, which owns it.
-        expect(built.serviceOwner.get(`topo minio`)).toBe(topology?.id);
+        expect(built.serviceOwner.get(`topo minio minio/minio`)).toBe(topology?.id);
     });
 
     it("given a service across two topology composes with no canonical, when owners resolve, then the lower filename wins (D1)", () => {
@@ -143,7 +143,103 @@ describe("buildHosts", () => {
             new Map(),
         );
         const a = built.hosts.find((h) => h.file === "q/docker-compose.a.yml");
-        expect(built.serviceOwner.get(`q db`)).toBe(a?.id);
+        expect(built.serviceOwner.get(`q db postgres:16`)).toBe(a?.id);
+    });
+
+    // HC-020: kong and envoy are alternative gateways that merely share the
+    // service name `api-gw`; image identity, not the name, is the fold key.
+    // Mirrors supabase: the canonical compose holds the full topology, the
+    // kong variant only the alternative gateway.
+    it("given the same service name with different images across composes, when owners resolve, then each host keeps its service (D1, HC-020)", () => {
+        writeFile(
+            "alt/docker-compose.yml",
+            [
+                "services:",
+                "  api-gw:",
+                "    image: envoy:1.31",
+                "  db:",
+                "    image: postgres:16",
+                "  rest:",
+                "    image: postgrest/postgrest:latest",
+            ].join("\n"),
+        );
+        writeFile("alt/docker-compose.kong.yml", ["services:", "  api-gw:", "    image: kong/kong:3.9.3"].join("\n"));
+        writeFile("alt/docker-compose.caddy.yml", ["services:", "  api-gw:", "    image: caddy:2"].join("\n"));
+        const built = buildHosts(
+            repo,
+            ["alt/docker-compose.yml", "alt/docker-compose.kong.yml", "alt/docker-compose.caddy.yml"],
+            ["alt/docker-compose.yml", "alt/docker-compose.kong.yml", "alt/docker-compose.caddy.yml"],
+            new Map(),
+        );
+        const canonical = built.hosts.find((h) => h.file === "alt/docker-compose.yml");
+        const kong = built.hosts.find((h) => h.file === "alt/docker-compose.kong.yml");
+        const caddy = built.hosts.find((h) => h.file === "alt/docker-compose.caddy.yml");
+        if (!canonical || !kong || !caddy) throw new Error("expected all alternative-proxy hosts to survive dedup");
+        // Same image on db folds to the canonical owner; the gateways stay distinct.
+        expect(isServiceShadowed(built.serviceOwner, kong, { name: "api-gw", image: "kong/kong:3.9.3" })).toBe(false);
+        expect(isServiceShadowed(built.serviceOwner, kong, { name: "db", image: "postgres:16" })).toBe(true);
+    });
+
+    it("given an image-less service sharing a name with an imaged service, when owners resolve, then they stay distinct (D1, HC-020)", () => {
+        writeFile(
+            "logs/docker-compose.yml",
+            [
+                "services:",
+                "  studio:",
+                "    image: studio:1",
+                "  vector:",
+                "    image: vector:1",
+                "  auth:",
+                "    image: auth:1",
+            ].join("\n"),
+        );
+        writeFile(
+            "logs/docker-compose.logs.yml",
+            ["services:", "  studio:", "    depends_on:", "      - vector"].join("\n"),
+        );
+        const built = buildHosts(
+            repo,
+            ["logs/docker-compose.yml", "logs/docker-compose.logs.yml"],
+            ["logs/docker-compose.yml", "logs/docker-compose.logs.yml"],
+            new Map(),
+        );
+        const canonical = built.hosts.find((h) => h.file === "logs/docker-compose.yml");
+        const logs = built.hosts.find((h) => h.file === "logs/docker-compose.logs.yml");
+        if (!canonical || !logs) throw new Error("expected both topology hosts to survive dedup");
+        // The imaged studio folds to the canonical owner; the image-less logs
+        // studio is a distinct service and is not shadowed by it.
+        expect(isServiceShadowed(built.serviceOwner, canonical, { name: "studio", image: "studio:1" })).toBe(false);
+        expect(isServiceShadowed(built.serviceOwner, logs, { name: "studio", image: undefined })).toBe(false);
+    });
+
+    it("given a compose under a test directory, when hosts are built, then it is not a deployment topology (I4 via D1, HC-020)", () => {
+        writeFile("tests/docker-compose.rustfs.test.yml", ["services:", "  rustfs:", "    image: rustfs:1"].join("\n"));
+        const built = buildHosts(
+            repo,
+            ["tests/docker-compose.rustfs.test.yml"],
+            ["tests/docker-compose.rustfs.test.yml"],
+            new Map(),
+        );
+        expect(built.hosts).toEqual([]);
+        expect(built.candidateHosts).toEqual([]);
+    });
+
+    it("given a dev-ranked variant its canonical covers by name, when deduped, then the dev variant drops (D1, HC-020)", () => {
+        writeFile(
+            "dcomp/docker-compose.yml",
+            ["services:", "  db:", "    image: postgres:17", "  api:", "    image: api:1"].join("\n"),
+        );
+        writeFile(
+            "dcomp/dev/docker-compose.dev.yml",
+            ["services:", "  db:", "    build:", "      context: ."].join("\n"),
+        );
+        const built = buildHosts(
+            repo,
+            ["dcomp/docker-compose.yml", "dcomp/dev/docker-compose.dev.yml"],
+            ["dcomp/docker-compose.yml", "dcomp/dev/docker-compose.dev.yml"],
+            new Map(),
+        );
+        expect(built.hosts.map((h) => h.file)).toEqual(["dcomp/docker-compose.yml"]);
     });
 
     it("given a build block naming only a context, when bound, then the default <context>/Dockerfile is used (D3, HC-017)", () => {

@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { discoverPackages, owningPackage, packageDirsOf } from "../../src/lib/packages";
+import {
+    artefactEntryCandidates,
+    discoverPackages,
+    owningPackage,
+    type Package,
+    packageDirsOf,
+} from "../../src/lib/packages";
 
 const repo = mkdtempSync(join(tmpdir(), "code-as-city-pkg-"));
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
@@ -77,11 +83,16 @@ describe("packages", () => {
     const byName = (name: string) => packages.find((p) => p.name === name);
 
     it("given a non-private bin package, when classified, then it is a published CLI artefact (D14)", () => {
-        expect(byName("@x/tool")?.artefact).toEqual({ kind: "cli", tag: "cli", entry: "cli.js" });
+        expect(byName("@x/tool")?.artefact).toEqual({ kind: "cli", tag: "cli", entry: "cli.js", types: null });
     });
 
     it("given a non-private package with main, when classified, then it is a published library artefact (D14)", () => {
-        expect(byName("@x/pub-lib")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/index.js" });
+        expect(byName("@x/pub-lib")?.artefact).toEqual({
+            kind: "library",
+            tag: "published",
+            entry: "dist/index.js",
+            types: null,
+        });
     });
 
     it("given a private bin package, when classified, then it is not a published artefact (D14)", () => {
@@ -89,7 +100,12 @@ describe("packages", () => {
     });
 
     it("given an engines.vscode package, when classified, then it is a published extension artefact (D14)", () => {
-        expect(byName("@x/ext")?.artefact).toEqual({ kind: "extension", tag: "extension", entry: "dist/extension.js" });
+        expect(byName("@x/ext")?.artefact).toEqual({
+            kind: "extension",
+            tag: "extension",
+            entry: "dist/extension.js",
+            types: null,
+        });
     });
 
     it("given a nameless empty package, when classified, then it is not a published artefact (D14)", () => {
@@ -97,15 +113,30 @@ describe("packages", () => {
     });
 
     it("given a string exports entry, when classified, then it is the published library entry (D14)", () => {
-        expect(byName("@x/exp-str")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/str.js" });
+        expect(byName("@x/exp-str")?.artefact).toEqual({
+            kind: "library",
+            tag: "published",
+            entry: "dist/str.js",
+            types: null,
+        });
     });
 
     it("given an exports '.' string subpath, when classified, then that subpath is the entry (D14)", () => {
-        expect(byName("@x/exp-root")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/root.js" });
+        expect(byName("@x/exp-root")?.artefact).toEqual({
+            kind: "library",
+            tag: "published",
+            entry: "dist/root.js",
+            types: null,
+        });
     });
 
     it("given an exports '.' condition map, when classified, then the import condition is the entry (D14)", () => {
-        expect(byName("@x/exp-cond")?.artefact).toEqual({ kind: "library", tag: "published", entry: "dist/cond.mjs" });
+        expect(byName("@x/exp-cond")?.artefact).toEqual({
+            kind: "library",
+            tag: "published",
+            entry: "dist/cond.mjs",
+            types: null,
+        });
     });
 
     it("given an empty exports object, when classified, then it is not a published artefact (D14)", () => {
@@ -117,5 +148,43 @@ describe("packages", () => {
         expect(tools).toHaveLength(2);
         expect(tools[0]?.id).toBe("x-tool");
         expect(tools[1]?.id).toBe("x-tool-2");
+    });
+});
+
+describe("artefactEntryCandidates (HC-027)", () => {
+    const pkg = (dir: string, name: string, entry: string | null, types: string | null = null): Package => ({
+        dir,
+        name,
+        deps: {},
+        role: "package",
+        id: dir.replace(/\//g, "-"),
+        artefact: { kind: "library", tag: "published", entry, types },
+    });
+
+    it("given a declared entry with a leading ./, when resolved, then the . segment is normalised away", () => {
+        const candidates = pkg("packages/ext", "@x/ext", "./dist/extension.js").artefact
+            ? artefactEntryCandidates(pkg("packages/ext", "@x/ext", "./dist/extension.js"))
+            : [];
+        expect(candidates).toContain("packages/ext/src/extension.ts");
+        expect(candidates.some((c) => c.includes("/./"))).toBe(false);
+    });
+
+    it("given a package name unlike the declared entry, when resolved, then the name-derived source entries are candidates", () => {
+        const candidates = artefactEntryCandidates(pkg("packages/mermaid", "mermaid", "./dist/mermaid.core.mjs"));
+        expect(candidates).toContain("packages/mermaid/src/mermaid.ts");
+        expect(candidates).toContain("packages/mermaid/mermaid.ts");
+    });
+
+    it("given a types entry pointing at a d.ts, when resolved, then the d.ts maps to its source", () => {
+        const candidates = artefactEntryCandidates(
+            pkg("packages/zenuml", "@mermaid-js/zenuml", "./dist/core.mjs", "./dist/detector.d.ts"),
+        );
+        expect(candidates).toContain("packages/zenuml/src/detector.ts");
+        expect(candidates).toContain("packages/zenuml/detector.ts");
+    });
+
+    it("given a scoped package name, when resolved, then only the last segment derives the entry", () => {
+        const candidates = artefactEntryCandidates(pkg("packages/parser", "@mermaid-js/parser", null));
+        expect(candidates).toContain("packages/parser/src/parser.ts");
     });
 });

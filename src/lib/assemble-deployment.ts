@@ -78,7 +78,6 @@ export type DeploymentContext = {
     scriptReachable: ReadonlySet<string>;
     spawnedEntries: readonly SpawnedEntry[];
     runnableApps: readonly RunnableApp[];
-    scriptReferencedFiles: ReadonlySet<string>;
     devToolingWarnings: readonly string[];
     pathReassignments: Map<string, PathReassignment>;
     entryDirNames: ReadonlySet<string>;
@@ -149,7 +148,6 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         hostDeployReachable,
         hasHostDeployShape,
         scriptReachable,
-        scriptReferencedFiles,
         spawnedEntries,
         runnableApps,
         devToolingWarnings,
@@ -262,7 +260,8 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // its owner; the same name in another topology file of the directory is
     // shadowed (folded to the owner's single node), so supabase's six `Db`
     // nodes become one.
-    const isShadowed = (host: Host, serviceName: string): boolean => isServiceShadowed(serviceOwner, host, serviceName);
+    const isShadowed = (host: Host, service: { name: string; image?: string | undefined }): boolean =>
+        isServiceShadowed(serviceOwner, host, service);
 
     /**
      * Finds the emitted campus node that owns a source file: the direct
@@ -347,9 +346,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         hostDeployReachable,
         hasHostDeployShape,
         runnableByDir,
+        hosts,
         roomEdges,
         fileToRoom,
-        scriptReferencedFiles,
         modulesAsBuildings,
         edgeHost,
     });

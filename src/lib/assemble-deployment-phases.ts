@@ -14,6 +14,7 @@ import {
     escapeRegex,
     fileModuleName,
     linesOf,
+    packageDistrictLabel,
     roomLabel,
     splitEdgeKey,
 } from "./assembly-helpers.ts";
@@ -22,15 +23,14 @@ import type { Coupling } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
-import type { Host } from "./hosts.ts";
+import type { Host, HostService } from "./hosts.ts";
+import type { NodeIndexEntry } from "./inference.ts";
 import {
     classifiedVariantServices,
     inferEmbeddedDatabaseUse,
     inferExternalDelivers,
     inferExternalServiceUse,
     inferModuleDataFlows,
-    isEntryPoint,
-    type NodeIndexEntry,
 } from "./inference.ts";
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
@@ -87,8 +87,8 @@ export type AssemblyState = {
     ensureExternalsDistrict: () => string;
     /** The emitted node owning a source file (direct mapping, else longest sourceRef). */
     nodeOwningFile: (file: string) => string | null;
-    /** Whether a service name is shadowed by its canonical topology owner (D1). */
-    isShadowed: (host: Host, serviceName: string) => boolean;
+    /** Whether a service is shadowed by its canonical topology owner (D1, name+image). */
+    isShadowed: (host: Host, service: { name: string; image?: string | undefined }) => boolean;
 };
 
 /**
@@ -690,7 +690,7 @@ export function assembleHostDistricts(
             display: { flowLayer: hostLayerBase + (hostLayer.get(host.name) ?? 0) },
         });
         for (const service of host.services) {
-            if (isShadowed(host, service.name)) continue;
+            if (isShadowed(host, service)) continue;
             const serviceId = kebab(`${host.id}-${service.name}`);
             const allCopiedSegments = service.copies
                 .map(normaliseCopyDir)
@@ -837,12 +837,14 @@ export function assembleHostDistricts(
             const fromId = kebab(`${host.id}-${service.name}`);
             if (!nodes.some((n) => n.id === fromId)) continue;
             for (const dep of deps) {
+                const variant = variantServices.get(dep);
                 // D1: a dependency owned by another topology's canonical file is
                 // not re-materialised here — it lives as the owner's single node.
-                if (isShadowed(host, dep)) continue;
+                // The dep's image identity comes from its variant service, so the
+                // name-and-image ownership key matches the claim (HC-020).
+                if (isShadowed(host, { name: dep, image: variant?.image })) continue;
                 const toId = kebab(`${host.id}-${dep}`);
                 if (!nodes.some((n) => n.id === toId)) {
-                    const variant = variantServices.get(dep);
                     if (!variant) continue;
                     const variantArchetype = variant.imageClass;
                     if (variantArchetype === undefined) throw new Error(`Variant without imageClass: ${dep}`);
@@ -1067,9 +1069,9 @@ export function assemblePackageDistricts(
         hostDeployReachable: ReadonlySet<string>;
         hasHostDeployShape: boolean;
         runnableByDir: ReadonlyMap<string, RunnableApp>;
+        hosts: readonly Host[];
         roomEdges: ReadonlyMap<string, number>;
         fileToRoom: ReadonlyMap<string, Room>;
-        scriptReferencedFiles: ReadonlySet<string>;
         modulesAsBuildings: boolean;
         edgeHost: EdgeHost | null;
     },
@@ -1090,9 +1092,9 @@ export function assemblePackageDistricts(
         hostDeployReachable,
         hasHostDeployShape,
         runnableByDir,
+        hosts,
         roomEdges,
         fileToRoom,
-        scriptReferencedFiles,
         modulesAsBuildings,
         edgeHost,
     } = options;
@@ -1239,13 +1241,34 @@ export function assemblePackageDistricts(
         );
 
         // A district never wraps a single synthetic building: rooms are promoted to
-        // campus structures directly. Non-residual packages keep a package district
-        // as the grouping; residual leftovers get a district per structured dir
-        // (devstack, bootstrap) and district-less nodes for flat dirs.
-        if (!residual && !nodes.some((n) => n.id === scopeId)) {
+        // campus structures directly. Every package — residual or not — keeps one
+        // package district (HC-028): the residual special case (a district per
+        // structured dir, district-less flat nodes) orphaned root files and
+        // labelled districts "Src"; the unified path groups the leftover rooms and
+        // the package's loose root files under the one district. A residual
+        // package claimed by one host service takes that service's role label
+        // ("Server" from "Immich Server").
+        console.log(
+            "DBG",
+            pkg.name,
+            "residual:",
+            residual,
+            "claimedDirs:",
+            [...serviceClaimedDirs].filter((d) => owningPackage(d) === pkg).length,
+        );
+        // A package claimed by one host service takes that service's role label
+        // ("Server" from "Immich Server"), residual or not (HC-028).
+        const claimingService = hosts
+            .flatMap((h: Host) => h.services)
+            .find((s: HostService) => s.copies.some((dir: string) => owningPackage(dir) === pkg));
+        if (!nodes.some((n) => n.id === scopeId)) {
             nodes.push({
                 id: scopeId,
-                label: titleCase(pkg.name),
+                label: packageDistrictLabel(
+                    pkg,
+                    packages,
+                    claimingService ? titleCase(claimingService.name) : undefined,
+                ),
                 kind: "scope",
                 archetype: "district",
                 description: `Package ${pkg.name}, rooted at ${pkg.dir === "." ? "the repository root" : `${pkg.dir}/`}.`,
@@ -1263,7 +1286,7 @@ export function assemblePackageDistricts(
                 if (!nodes.some((n) => n.id === parentId)) {
                     nodes.push({
                         id: parentId,
-                        label: titleCase(reassignedPkg.name),
+                        label: packageDistrictLabel(reassignedPkg, packages),
                         kind: "scope",
                         archetype: "district",
                         description: `Package ${reassignedPkg.name}, rooted at ${reassignedPkg.dir === "." ? "the repository root" : `${reassignedPkg.dir}/`}.`,
@@ -1281,52 +1304,10 @@ export function assemblePackageDistricts(
                         sourceRefs: [{ path: reassigned.fromFile }],
                     });
                 }
-            } else if (!residual) {
+            } else {
+                // Residual or not, the room groups under its package's district
+                // (HC-028); the claimed rooms are already filtered out above.
                 parentId = scopeId;
-            } else if (expandable) {
-                // A residual structured dir never wraps a single building either: the
-                // district holds the dir's parts directly as campus structures.
-                const districtId = `${room.id}-district`;
-                nodes.push({
-                    id: districtId,
-                    label,
-                    kind: "scope",
-                    archetype: "district",
-                    description: `Standalone area: ${room.segment}/.`,
-                });
-                for (const child of children) {
-                    // Loose imported files ("Support files") and lib children are shared
-                    // plumbing, not deployment shape: excluded by decision.
-                    if (child.seg === "(files)" || child.seg === "lib") continue;
-                    const childId = uniqueNodeId(kebab(`${room.id}-${child.seg}`));
-                    const childLoc = linesOf(repo, child.files);
-                    const childAsBuilding = modulesAsBuildings && child.files.length >= 2;
-                    // Same entry classification as the overview (O2): a script-referenced
-                    // file or an entry-named loose file (redeploy-cli) is an entry point.
-                    const childIsEntry = isEntryPoint({
-                        files: child.files,
-                        scriptReferencedFiles,
-                        nameArm: { granularity: "child", seg: child.seg },
-                    });
-                    const childEntryFile = child.files[0];
-                    nodes.push({
-                        id: childId,
-                        label: titleCase(child.seg),
-                        kind: "module",
-                        archetype: childAsBuilding ? "building" : childIsEntry ? "gateway" : "worker",
-                        ...(childIsEntry && child.files.length === 1 && childEntryFile !== undefined
-                            ? { attributes: { "entry-point": childEntryFile } }
-                            : {}),
-                        parentId: districtId,
-                        description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"} under ${room.segment}/.`,
-                        sourceRefs: childSourceRefs(room, child),
-                        metrics: { loc: childLoc },
-                    });
-                    if (childAsBuilding) pushFileRooms(childId, child.files);
-                    for (const f of child.files) fileNodeOwner.set(f, childId);
-                    promotedNodes.push({ id: childId, files: child.files });
-                }
-                continue;
             }
             // Not the isEntryPoint rule: this is a room-level archetype choice
             // (gateway vs worker) from the directory name alone. isEntryPoint

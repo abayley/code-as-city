@@ -291,90 +291,99 @@
       }
     },
     {
-      "id": "mini-api-src-district",
-      "label": "Src",
+      "id": "mini-api-area",
+      "label": "Api",
       "kind": "scope",
       "archetype": "district",
-      "description": "Standalone area: src/."
+      "description": "Package @mini/api, rooted at packages/api/."
     },
     {
-      "id": "mini-api-src-ai",
-      "label": "Ai",
+      "id": "mini-api-src",
+      "label": "Src",
       "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-api-src-district",
-      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.\n\n1 source file under src/.",
+      "archetype": "building",
+      "parentId": "mini-api-area",
+      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.\n\n5 source files under src/.",
       "sourceRefs": [
         {
-          "path": "packages/api/src/ai.ts"
+          "path": "packages/api/src"
         }
       ],
       "metrics": {
-        "loc": 12,
-        "complexity": 2
+        "loc": 49,
+        "complexity": 2,
+        "coverage": 50
       },
       "display": {
+        "flowLayer": 0,
         "size": [
           1.2035533905932738,
-          0.646235345633661,
+          0.7738801582613459,
           1.0230203820042827
         ]
       }
     },
     {
+      "id": "mini-api-src-ai",
+      "label": "Ai",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-api-src",
+      "description": "1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/ai.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-api-src-files",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-api-src",
+      "description": "2 source files.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/config.ts"
+        },
+        {
+          "path": "packages/api/src/store.ts"
+        }
+      ]
+    },
+    {
       "id": "mini-api-src-server",
       "label": "Server",
       "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-api-src-district",
-      "description": "Starts the HTTP server.\n\n1 source file under src/.",
+      "archetype": "room",
+      "parentId": "mini-api-src",
+      "description": "1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/server.ts"
         }
-      ],
-      "metrics": {
-        "loc": 16,
-        "complexity": 1,
-        "coverage": 50
-      },
-      "display": {
-        "size": [
-          1.1,
-          0.6610672218138092,
-          0.935
-        ]
-      }
+      ]
     },
     {
       "id": "mini-api-src-telemetry",
       "label": "Telemetry",
       "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-api-src-district",
-      "description": "Starts OpenTelemetry export to the OTEL_EXPORTER_OTLP_ENDPOINT collector.\n\n1 source file under src/.",
+      "archetype": "room",
+      "parentId": "mini-api-src",
+      "description": "1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/telemetry.ts"
         }
-      ],
-      "metrics": {
-        "loc": 9,
-        "complexity": 1
-      },
-      "display": {
-        "size": [
-          1.1,
-          0.6349266182683868,
-          0.935
-        ]
-      }
+      ]
     },
     {
       "id": "mini-api-src-jobs",
       "label": "Jobs",
       "kind": "module",
       "archetype": "worker",
+      "parentId": "mini-api-area",
       "description": "Nightly sweep job.\n\n1 source file under src/jobs/.",
       "sourceRefs": [
         {
@@ -395,65 +404,62 @@
       }
     },
     {
-      "id": "mini-api-src-migrations-district",
+      "id": "mini-api-src-migrations",
       "label": "Migrations",
-      "kind": "scope",
-      "archetype": "district",
-      "description": "Standalone area: src/migrations/."
+      "kind": "module",
+      "archetype": "building",
+      "parentId": "mini-api-area",
+      "description": "Creates the initial tables.\n\n2 source files under src/migrations/.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/migrations"
+        }
+      ],
+      "metrics": {
+        "loc": 10,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6387141303402689,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-api-src-migrations-0001-init",
       "label": "0001 Init",
       "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-api-src-migrations-district",
-      "description": "Creates the initial tables.\n\n1 source file under src/migrations/.",
+      "archetype": "room",
+      "parentId": "mini-api-src-migrations",
+      "description": "1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/migrations/0001_init.ts"
         }
-      ],
-      "metrics": {
-        "loc": 5,
-        "complexity": 1
-      },
-      "display": {
-        "size": [
-          1.1,
-          0.6195931503518967,
-          0.935
-        ]
-      }
+      ]
     },
     {
       "id": "mini-api-src-migrations-0002-greeting",
       "label": "0002 Greeting",
       "kind": "module",
-      "archetype": "worker",
-      "parentId": "mini-api-src-migrations-district",
-      "description": "Adds the greeting column.\n\n1 source file under src/migrations/.",
+      "archetype": "room",
+      "parentId": "mini-api-src-migrations",
+      "description": "1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/migrations/0002_greeting.ts"
         }
-      ],
-      "metrics": {
-        "loc": 5,
-        "complexity": 1
-      },
-      "display": {
-        "size": [
-          1.1,
-          0.6195931503518967,
-          0.935
-        ]
-      }
+      ]
     },
     {
       "id": "mini-api-src-routes",
       "label": "Routes",
       "kind": "module",
       "archetype": "gateway",
+      "parentId": "mini-api-area",
       "description": "Health check route.\n\n1 source file under src/routes/.",
       "sourceRefs": [
         {
@@ -475,7 +481,7 @@
     },
     {
       "id": "mini-edge-area",
-      "label": "@Mini/Edge",
+      "label": "Edge",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/edge, rooted at packages/edge/."
@@ -535,7 +541,7 @@
     },
     {
       "id": "mini-ext-area",
-      "label": "@Mini/Ext",
+      "label": "Ext",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/ext, rooted at packages/ext/."
@@ -596,7 +602,7 @@
     },
     {
       "id": "mini-greeter-area",
-      "label": "@Mini/Greeter",
+      "label": "CLI",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/greeter, rooted at packages/greeter/."
@@ -669,8 +675,68 @@
       ]
     },
     {
+      "id": "mini-plugin-area",
+      "label": "Plugin",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/plugin, rooted at packages/plugin/."
+    },
+    {
+      "id": "mini-plugin-root",
+      "label": "Top-level files",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-plugin-area",
+      "description": "1 source file under the package root.",
+      "sourceRefs": [
+        {
+          "path": "packages/plugin/esbuild.js"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6118138500757483,
+          0.935
+        ]
+      }
+    },
+    {
+      "id": "mini-plugin-src",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-plugin-area",
+      "description": "The plugin's single entry.\n\n1 source file under src/.",
+      "sourceRefs": [
+        {
+          "path": "packages/plugin/src"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6118138500757483,
+          0.935
+        ]
+      },
+      "tags": [
+        "published"
+      ]
+    },
+    {
       "id": "mini-service-area",
-      "label": "@Mini/Service",
+      "label": "Service",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/service, rooted at packages/service/."
@@ -731,10 +797,18 @@
       ]
     },
     {
+      "id": "mini-shared-area",
+      "label": "Shared",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/shared, rooted at packages/shared/."
+    },
+    {
       "id": "mini-shared-src",
       "label": "Src",
       "kind": "module",
       "archetype": "worker",
+      "parentId": "mini-shared-area",
       "description": "Formats a greeting for the given name.\n\n1 source file under src/.",
       "sourceRefs": [
         {
@@ -757,7 +831,7 @@
     },
     {
       "id": "mini-toolkit-2-area",
-      "label": "@Mini/Toolkit",
+      "label": "Toolkit",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/toolkit, rooted at packages/toolkit/."
@@ -818,7 +892,7 @@
     },
     {
       "id": "mini-web-area",
-      "label": "@Mini/Web",
+      "label": "Web",
       "kind": "scope",
       "archetype": "district",
       "description": "Package @mini/web, rooted at packages/web/."
@@ -856,7 +930,7 @@
       "label": "SQLite database",
       "kind": "infra",
       "archetype": "database",
-      "parentId": "host-mini-repo",
+      "parentId": "mini-api-area",
       "description": "Embedded database (better-sqlite3) declared in packages/api/package.json.",
       "sourceRefs": [
         {
@@ -979,13 +1053,29 @@
       ]
     },
     {
-      "id": "mini-api-src-telemetry--host-mini-repo-otel-collector",
-      "from": "mini-api-src-telemetry",
+      "id": "mini-api-src--host-mini-repo-otel-collector",
+      "from": "mini-api-src",
       "to": "host-mini-repo-otel-collector",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.7,
       "label": "OTLP export"
+    },
+    {
+      "id": "mini-api-src--mini-api-src-jobs",
+      "from": "mini-api-src",
+      "to": "mini-api-src-jobs",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src--mini-api-src-routes",
+      "from": "mini-api-src",
+      "to": "mini-api-src-routes",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
     },
     {
       "id": "mini-edge-src--mini-edge-src-api",
@@ -1012,32 +1102,16 @@
       "label": "1 import"
     },
     {
-      "id": "mini-api-src-server--host-mini-repo-api",
-      "from": "mini-api-src-server",
+      "id": "mini-api-src--host-mini-repo-api",
+      "from": "mini-api-src",
       "to": "host-mini-repo-api",
       "kind": "depends_on",
       "evidence": "declared",
-      "label": "3 imports"
-    },
-    {
-      "id": "mini-api-src-server--mini-api-src-jobs",
-      "from": "mini-api-src-server",
-      "to": "mini-api-src-jobs",
-      "kind": "depends_on",
-      "evidence": "declared",
       "label": "1 import"
     },
     {
-      "id": "mini-api-src-server--mini-api-src-routes",
-      "from": "mini-api-src-server",
-      "to": "mini-api-src-routes",
-      "kind": "depends_on",
-      "evidence": "declared",
-      "label": "1 import"
-    },
-    {
-      "id": "host-mini-repo-api--infra-better-sqlite3",
-      "from": "host-mini-repo-api",
+      "id": "mini-api-src--infra-better-sqlite3",
+      "from": "mini-api-src",
       "to": "infra-better-sqlite3",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1050,8 +1124,8 @@
       ]
     },
     {
-      "id": "mini-api-src-ai--external-ollama",
-      "from": "mini-api-src-ai",
+      "id": "mini-api-src--external-ollama",
+      "from": "mini-api-src",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1078,9 +1152,9 @@
       ]
     },
     {
-      "id": "ci-deploy-job--mini-api-src-server",
+      "id": "ci-deploy-job--mini-api-src",
       "from": "ci-deploy-job",
-      "to": "mini-api-src-server",
+      "to": "mini-api-src",
       "kind": "calls",
       "evidence": "declared",
       "label": "runs server.ts",
@@ -1114,8 +1188,8 @@
       "label": "delivers"
     },
     {
-      "id": "mini-api-src-ai--external-ollama-d",
-      "from": "mini-api-src-ai",
+      "id": "mini-api-src--external-ollama-d",
+      "from": "mini-api-src",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",

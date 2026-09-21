@@ -4,8 +4,34 @@
 
 import { basename, dirname, join, sep } from "node:path";
 import type { MapEdge } from "./map-types.ts";
+import type { Package } from "./packages.ts";
 import { readText } from "./read.ts";
 import { titleCase } from "./text.ts";
+
+/**
+ * HC-028: a package district's label is the artefact's role when that role is
+ * unambiguous repo-wide (the one CLI package reads "CLI"), else the
+ * scope-stripped package name ("Plugin Sdk" from @immich/plugin-sdk) — never
+ * the directory name ("Src"), which conveys nothing. A residual package
+ * claimed by one host service whose name starts with its own name takes the
+ * service's role instead ("Immich Server" over the `immich` package reads
+ * "Server").
+ *
+ * @param pkg - The package the district groups.
+ * @param packages - Every discovered package, for the role-uniqueness check.
+ * @param serviceLabel - Title-cased name of the one host service claiming the
+ *   package, when the package is residual with a single claimer.
+ * @returns The display label for the package's district.
+ */
+export function packageDistrictLabel(pkg: Package, packages: readonly Package[], serviceLabel?: string): string {
+    const own = titleCase(pkg.name.split("/").at(-1) ?? pkg.name);
+    const cliCount = packages.filter((candidate) => candidate.artefact?.tag === "cli").length;
+    if (pkg.artefact?.tag === "cli" && cliCount === 1) return "CLI";
+    if (serviceLabel?.startsWith(own) && serviceLabel !== own) {
+        return serviceLabel.slice(own.length).trim();
+    }
+    return own;
+}
 
 /**
  * Appends the edge unless an edge with the same id is already present.

@@ -11,12 +11,14 @@ import {
     footprintFor,
     linesOf,
     mermaidId,
+    packageDistrictLabel,
     roomLabel,
     sdkImportPattern,
     splitEdgeKey,
     uniqueId,
 } from "../../src/lib/assembly-helpers";
 import type { MapEdge } from "../../src/lib/map-types";
+import type { Package } from "../../src/lib/packages";
 
 const edge = (id: string): MapEdge => ({ id, from: "a", to: "b", kind: "depends_on", evidence: "declared" });
 
@@ -161,5 +163,44 @@ describe("escapeRegex", () => {
 
     it("given plain text, when escaped, then it is unchanged", () => {
         expect(escapeRegex("deploy-worker")).toBe("deploy-worker");
+    });
+});
+
+describe("packageDistrictLabel (HC-028)", () => {
+    const pkg = (name: string, tag: "cli" | "published" | "extension" | null): Package =>
+        ({
+            dir: ".",
+            name,
+            deps: {},
+            role: "package",
+            id: name,
+            artefact:
+                tag === null
+                    ? null
+                    : { kind: tag === "cli" ? "cli" : "library", tag, entry: "src/index.ts", types: null },
+        }) as Package;
+
+    it("given a package name with a scope, when labelled, then the scope-stripped name is the district label", () => {
+        expect(
+            packageDistrictLabel(pkg("@immich/plugin-sdk", "published"), [pkg("@immich/plugin-sdk", "published")]),
+        ).toBe("Plugin Sdk");
+    });
+
+    it("given the repo's only CLI package, when labelled, then the artefact role is the district label", () => {
+        expect(packageDistrictLabel(pkg("@mini/greeter", "cli"), [pkg("@mini/greeter", "cli")])).toBe("CLI");
+        expect(
+            packageDistrictLabel(pkg("@immich/cli", "cli"), [
+                pkg("@immich/cli", "cli"),
+                pkg("@immich/plugin-sdk", "cli"),
+            ]),
+        ).toBe("Cli");
+    });
+
+    it("given a residual package claimed by a service ending in its own name, when labelled, then the service role is the label", () => {
+        // immich's server package is named "immich" and claimed by the
+        // "immich-server" service: the district is the service's role, "Server".
+        expect(packageDistrictLabel(pkg("immich", null), [pkg("immich", null)], "Immich Server")).toBe("Server");
+        // A service name that repeats nothing ("Api") leaves the package label.
+        expect(packageDistrictLabel(pkg("@mini/api", null), [pkg("@mini/api", null)], "Api")).toBe("Api");
     });
 });

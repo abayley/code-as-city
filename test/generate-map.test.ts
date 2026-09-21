@@ -191,6 +191,50 @@ describe("generate-map golden master", async () => {
         expect(deployment.nodes.some((node) => node.label === "Routes")).toBe(true);
     });
 
+    // HC-028: a residual (compose-claimed) package keeps ONE package district
+    // holding its rooms and root files, not a district per structured dir with
+    // orphaned district-less nodes.
+    it("given a residual package, when generating, then its rooms and root files share its package district (HC-028)", async () => {
+        const map = await generateMap([]);
+        // packages/api is claimed by the compose service, so it is residual;
+        // its src/jobs/migrations/routes rooms and root files all parent to the
+        // one @Mini/Api district.
+        const area = map.nodes.find((node) => node.id === "mini-api-area");
+        expect(area).toBeDefined();
+        expect(area?.label).toBe("Api");
+        expect(map.nodes.some((node) => node.id === "mini-api-src-district")).toBe(false);
+        const children = map.nodes.filter((node) => node.parentId === "mini-api-area");
+        expect(children.length).toBeGreaterThan(1);
+        // The property HC-028 guarantees: no api-sourced node is district-less.
+        expect(
+            map.nodes.some(
+                (node) =>
+                    (node.sourceRefs ?? []).some((ref) => ref.path?.startsWith("packages/api/")) &&
+                    (node.parentId ?? "") === "",
+            ),
+        ).toBe(false);
+    });
+
+    it("given a published package with a single-file src and loose root files, when generating, then both live in its district (HC-028)", async () => {
+        const map = await generateMap([]);
+        // packages/plugin (published, one src file, an esbuild.js at the root)
+        // is one "Plugin" district holding both, with no district-less stragglers.
+        const area = map.nodes.find((node) => node.id === "mini-plugin-area");
+        expect(area?.label).toBe("Plugin");
+        for (const path of ["packages/plugin/src", "packages/plugin/esbuild.js"]) {
+            const owner = map.nodes.find((node) => (node.sourceRefs ?? []).some((ref) => ref.path === path));
+            expect(owner?.parentId).toBe("mini-plugin-area");
+        }
+    });
+
+    it("given a repo with one CLI package, when generating, then its district takes the artefact role (HC-028)", async () => {
+        const map = await generateMap([]);
+        // @mini/greeter is the fixture's only CLI package; its district reads
+        // "CLI" rather than "Greeter".
+        const area = map.nodes.find((node) => node.id === "mini-greeter-area");
+        expect(area?.label).toBe("CLI");
+    });
+
     it("given a client SDK dependency that is imported, when generating, then it draws an external with a uses edge (D17)", async () => {
         const map = (await generateMap([])) as GeneratedMap & {
             nodes: Array<{ id?: string; kind?: string; label?: string }>;

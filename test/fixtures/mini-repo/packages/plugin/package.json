@@ -1,0 +1,7 @@
+{
+    "name": "@mini/plugin",
+    "main": "src/index.ts",
+    "scripts": {
+        "build": "node esbuild.js"
+    }
+}
