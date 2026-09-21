@@ -398,9 +398,20 @@ export function inferOverviewDataFlows(options: {
     fileText: (file: string) => string;
     dbWritePattern: RegExp;
     dbReadPattern: RegExp;
+    dbClientPattern: RegExp;
+    scriptReachable: ReadonlySet<string>;
 }): void {
-    const { allModules, uniqueInfra, overviewEdges, embeddedDatabases, fileText, dbWritePattern, dbReadPattern } =
-        options;
+    const {
+        allModules,
+        uniqueInfra,
+        overviewEdges,
+        embeddedDatabases,
+        fileText,
+        dbWritePattern,
+        dbReadPattern,
+        dbClientPattern,
+        scriptReachable,
+    } = options;
     // Remaining data-flow edges: OTLP producers into the gateway collector, and
     // database reads/writes.
     const otlpTarget =
@@ -424,6 +435,7 @@ export function inferOverviewDataFlows(options: {
                       databases: [{ id: databaseTarget.id }],
                       writePattern: dbWritePattern,
                       readPattern: dbReadPattern,
+                      clientPattern: dbClientPattern,
                   },
               }
             : {}),
@@ -443,6 +455,8 @@ export function inferOverviewDataFlows(options: {
         entries: allModules,
         edges: overviewEdges,
         fileText,
+        // HC-024 parity with the deployment map: build tooling ships no data.
+        scriptFiles: scriptReachable,
     });
 }
 

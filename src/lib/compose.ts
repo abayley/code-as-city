@@ -10,10 +10,17 @@ export type ComposeService = {
     hasPorts?: boolean | undefined;
     /** HC-024: the service bind-mounts the repo root — a dev environment, not a deployment. */
     devBindMount?: boolean | undefined;
+    /** REVIEW-0010: the service's command runs a known dev server. */
+    devServerCommand?: boolean | undefined;
     volumesIndent?: number | undefined;
     dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
 };
+
+// A dev-server run command (REVIEW-0010): any of these in a service's
+// `command:` marks a dev environment rather than a deployment.
+const DEV_SERVER_PATTERN =
+    /\b(next dev|vite|nodemon|storybook|webpack serve|npm run dev|pnpm dev|yarn dev|bun run dev|tsc --watch)\b/i;
 
 /**
  * Minimal indentation-based parse of a compose file's services block.
@@ -59,6 +66,9 @@ export function parseComposeServices(text: string): ComposeService[] {
         const dockerfile = /^dockerfile:\s*(.+)$/.exec(key)?.[1];
         if (dockerfile !== undefined) current.dockerfile = dockerfile.trim();
         if (/^ports:\s*$/.test(key)) current.hasPorts = true;
+        // REVIEW-0010: a command running a known dev server is a dev
+        // environment, not a deployment.
+        if (/^(command|cmd):/.test(key) && DEV_SERVER_PATTERN.test(key)) current.devServerCommand = true;
         // HC-024: a bind mount of the repo root (`- .:/work`) is how a dev
         // container mounts your checkout — no image would ever ship that way.
         if (/^volumes:\s*$/.test(key)) {

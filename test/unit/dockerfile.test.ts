@@ -78,4 +78,14 @@ describe("parseDockerfile", () => {
         expect(result.copies).toEqual(["machine-learning/immich_ml"]);
         expect(result.entryFile).toBe("machine-learning/immich_ml/__main__.py");
     });
+
+    it("given a CMD running a dev server, when parsed, then the dev-server signal is set (REVIEW-0010)", () => {
+        writeFileSync(join(repo, "Dockerfile"), 'FROM node\nCMD ["npm", "run", "dev"]');
+        expect(parseDockerfile(repo, "Dockerfile", ["src/main.ts"]).devServer).toBe(true);
+    });
+
+    it("given a production CMD, when parsed, then the dev-server signal is unset (REVIEW-0010)", () => {
+        writeFileSync(join(repo, "Dockerfile"), 'FROM node\nCMD ["node", "src/main.ts"]');
+        expect(parseDockerfile(repo, "Dockerfile", ["src/main.ts"]).devServer ?? false).toBe(false);
+    });
 });

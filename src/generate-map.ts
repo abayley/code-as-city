@@ -49,7 +49,7 @@ const DB_READ_PATTERN =
 // pattern alone fires on string literals in browser components (paperclip's
 // UI, supabase's studio components).
 const DB_CLIENT_PATTERN =
-    /(from\s+["'](pg|postgres|mysql|mysql2|sqlite3|better-sqlite3|kysely|typeorm|drizzle|duckdb|@duckdb\/|embedded-postgres|@vercel\/postgres|@libsql\/))|(createPool\s*\(|new\s+Pool\s*\(|createConnection\s*\(|drizzle\s*\()/i;
+    /(from\s+["'](pg|postgres|mysql|mysql2|sqlite3|better-sqlite3|kysely|typeorm|drizzle|duckdb|@duckdb\/|embedded-postgres|@vercel\/postgres|@libsql\/|@prisma\/client|sequelize|mongoose|mongodb|redis|@redis\/))|(createPool\s*\(|new\s+Pool\s*\(|createConnection\s*\(|drizzle\s*\(|prisma\.\w+\.\w+\s*\()/i;
 
 /**
  * Runs the generator pipeline for the given CLI arguments and returns the
@@ -166,9 +166,11 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
             coverageForFiles,
             docForFiles,
             devToolingWarnings,
-            entryDirNames: ENTRY_DIR_NAMES,
             dbWritePattern: DB_WRITE_PATTERN,
             dbReadPattern: DB_READ_PATTERN,
+            dbClientPattern: DB_CLIENT_PATTERN,
+            scriptReachable,
+            entryDirNames: ENTRY_DIR_NAMES,
         });
         return 0;
     }

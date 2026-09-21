@@ -25,9 +25,13 @@ const RUN_SCRIPT = /(^|[:._-])(start|serve)([:._-]|$)/i;
 const FRAMEWORK_RUN = /(^|[\s/])(next|nuxt|astro|svelte-kit)\s+(start|dev|preview|serve)\b/;
 
 // The router dirs a framework app's pages/components live in, in preference
-// order — the framework arm anchors the runnable app's entry to the first
-// inventoried file under one of these.
+// order — the framework arm anchors the runnable app's entry under one of
+// these. REVIEW-0010: within a router dir the framework's entry convention
+// wins over alphabetical order — a page/route file, then a layout/index
+// shell, then anything else.
 const ROUTER_DIRS = ["app", "pages", "src/app", "src/pages"];
+const ROUTER_ENTRY_PATTERN = /(^|\/)(page|route)\.[tj]sx?$/;
+const ROUTER_SHELL_PATTERN = /(^|\/)(layout|index)\.[tj]sx?$/;
 
 // Conventional web SPA entry files, in preference order (the mount entry before
 // the app component).
@@ -100,9 +104,15 @@ export function findRunnableApps(
             FRAMEWORK_RUN.test(command),
         );
         if (frameworkScript !== undefined) {
-            const entry = sourceFiles.find((file) =>
-                ROUTER_DIRS.some((dir) => file.startsWith(`${inPkg(pkg.dir, dir)}/`)),
-            );
+            const routerFiles = (pattern: RegExp) =>
+                sourceFiles.filter(
+                    (file) =>
+                        pattern.test(file) && ROUTER_DIRS.some((dir) => file.startsWith(`${inPkg(pkg.dir, dir)}/`)),
+                );
+            const entry =
+                routerFiles(ROUTER_ENTRY_PATTERN)[0] ??
+                routerFiles(ROUTER_SHELL_PATTERN)[0] ??
+                sourceFiles.find((file) => ROUTER_DIRS.some((dir) => file.startsWith(`${inPkg(pkg.dir, dir)}/`)));
             if (entry !== undefined) {
                 apps.push({ pkgDir: pkg.dir, entry, tag: "server" });
             }

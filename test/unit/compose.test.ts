@@ -59,6 +59,11 @@ describe("parseComposeServices", () => {
         expect(parseComposeServices(text)).toMatchObject([{ name: "dev", devBindMount: true }]);
     });
 
+    it("given a service running a dev-server command, when parsed, then the dev signal is set (REVIEW-0010)", () => {
+        const text = ["services:", "  web:", "    image: node:22", "    command: npm run dev", ""].join("\n");
+        expect(parseComposeServices(text)).toMatchObject([{ name: "web", devServerCommand: true }]);
+    });
+
     it("given the map form of depends_on, when parsed, then service names are collected", () => {
         const text = ["services:", "  api:", "    depends_on:", "      db:", "        condition: service_healthy"].join(
             "\n",

@@ -7,6 +7,8 @@ import { readJsonSafe, readText } from "./read.ts";
 export type DockerfileShape = {
     copies: string[];
     entryFile: string | null;
+    /** REVIEW-0010: the ENTRYPOINT/CMD runs a known dev server. */
+    devServer?: boolean | undefined;
 };
 
 /**
@@ -58,6 +60,10 @@ export function parseDockerfile(
     // (ENTRYPOINT names the interpreter, CMD names the script) and multi-stage
     // builds both put the interesting token on a later line than the first.
     let entryFile: string | null = null;
+    // REVIEW-0010: an image whose ENTRYPOINT/CMD runs a dev server is a dev
+    // environment, not a deployment — token-wise, so the exec form
+    // (["npm", "run", "dev"]) matches the same as the shell form.
+    let devServer: boolean | undefined;
     outer: for (const match of text.matchAll(/^(?:ENTRYPOINT|CMD)\s+(\[.*\]|.+)$/gm)) {
         const entryMatch = match[1];
         if (entryMatch === undefined) continue;
@@ -65,6 +71,9 @@ export function parseDockerfile(
         const tokens = Array.isArray(parsed) ? parsed : [];
         for (const token of tokens) {
             if (typeof token !== "string") continue;
+            if (/^(dev|vite|nodemon|storybook)$/.test(token)) {
+                devServer = true;
+            }
             if (allFiles.includes(token)) {
                 entryFile = token;
                 break outer;
@@ -80,5 +89,5 @@ export function parseDockerfile(
             }
         }
     }
-    return { copies, entryFile };
+    return { copies, entryFile, devServer };
 }

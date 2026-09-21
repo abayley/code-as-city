@@ -52,6 +52,8 @@ export type OverviewContext = {
     entryDirNames: ReadonlySet<string>;
     dbWritePattern: RegExp;
     dbReadPattern: RegExp;
+    dbClientPattern: RegExp;
+    scriptReachable: ReadonlySet<string>;
 };
 
 /**
@@ -98,6 +100,8 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         entryDirNames,
         dbWritePattern,
         dbReadPattern,
+        dbClientPattern,
+        scriptReachable,
     } = context;
     // District/module colours baked into map.json; keep in step with the
     // viewer's colour vocabulary in viewer/lib/palette.ts.
@@ -306,6 +310,8 @@ export async function runOverview(context: OverviewContext): Promise<void> {
         fileText,
         dbWritePattern,
         dbReadPattern,
+        dbClientPattern,
+        scriptReachable,
     });
 
     // Import edges, aggregated per module pair (drawn only on selection).

@@ -78,6 +78,8 @@ export type HostService = ComposeService & {
     entryFile: string | null;
     schedule?: string | undefined;
     imageClass?: string | undefined;
+    /** HC-024/REVIEW-0010: a dev environment (bind-mounted checkout or dev-server command), not a deployment. */
+    devEnvironment?: boolean | undefined;
 };
 
 export type Host = {
@@ -333,6 +335,7 @@ export function buildHosts(
                     dockerfile: built ? dockerfile : undefined,
                     copies: built?.copies ?? [],
                     entryFile: built?.entryFile ?? null,
+                    devEnvironment: Boolean(service.devBindMount || service.devServerCommand || built?.devServer),
                     schedule: schedules.get(service.name)?.schedule,
                     imageClass,
                 };

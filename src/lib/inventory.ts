@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { readJsonSafe, readText } from "./read.ts";
 
 const IGNORED_DIRS = new Set([
     "node_modules",
@@ -26,17 +27,61 @@ const IGNORED_DIRS = new Set([
     "examples",
     "data",
 ]);
-// Content dirs whose ignore can YIELD (HC-022): when one carries its own
-// package.json it is a workspace member package (supabase's apps/docs, a
-// deployed Next.js site), not prose. Build-output and dependency dirs are
-// never yieldable — bundlers write package.json into dist/.
-const YIELDABLE_DIRS = new Set(["docs", "examples", "data"]);
-const yieldChecked = new Map<string, boolean>();
+// HC-022: an ignored dir whose own package.json declares an entry is a
+// workspace member package (supabase's apps/docs, a deployed Next.js site),
+// not prose — its ignore YIELDS. Build-output and dependency dirs are never
+// yieldable: bundlers write package.json into dist/, so the manifest's
+// existence alone proves nothing there.
+const BUILD_OUTPUT_DIRS = new Set([
+    "node_modules",
+    ".git",
+    ".next",
+    "dist",
+    "build",
+    "coverage",
+    ".wrangler",
+    ".turbo",
+    "out",
+    "vendor",
+    ".venv",
+    "__pycache__",
+    ".functionary",
+    ".repo-city",
+    "generated",
+]);
+
+/**
+ * Whether an ignored directory yields its ignore and stays in the inventory
+ * (HC-022): any dir that is not build output and whose own package.json
+ * declares an entry (main/module/exports/bin/types). One home for the
+ * predicate, shared by the walk and the git-path filter.
+ *
+ * @param absDir - Absolute path of the candidate directory.
+ * @returns True when the dir is a member package and should be inventoried.
+ */
+function dirYields(absDir: string): boolean {
+    const manifestPath = join(absDir, "package.json");
+    if (!existsSync(manifestPath)) return false;
+    const manifest = (readJsonSafe(readText(manifestPath)) ?? {}) as {
+        main?: string;
+        module?: string;
+        exports?: unknown;
+        bin?: unknown;
+        types?: string;
+    };
+    return (
+        typeof manifest.main === "string" ||
+        typeof manifest.module === "string" ||
+        manifest.exports !== undefined ||
+        manifest.bin !== undefined ||
+        typeof manifest.types === "string"
+    );
+}
 
 /**
  * Whether a path is excluded by the ignore set, honouring HC-022's yield: a
- * content dir with its own package.json is a member package and stays in the
- * inventory. The yield result is memoised per directory.
+ * non-build-output dir whose manifest declares an entry is a member package
+ * and stays in the inventory.
  *
  * @param file - Repo-relative path.
  * @param root - Absolute path of the repository being mapped.
@@ -47,16 +92,7 @@ function excludedByIgnoredDir(file: string, root: string): boolean {
     for (let depth = 1; depth < parts.length; depth += 1) {
         const seg = parts[depth - 1];
         if (seg === undefined || !IGNORED_DIRS.has(seg)) continue;
-        if (YIELDABLE_DIRS.has(seg)) {
-            const dir = parts.slice(0, depth).join(sep);
-            const absDir = join(root, dir);
-            let yields = yieldChecked.get(absDir);
-            if (yields === undefined) {
-                yields = existsSync(join(absDir, "package.json"));
-                yieldChecked.set(absDir, yields);
-            }
-            if (yields) continue;
-        }
+        if (!BUILD_OUTPUT_DIRS.has(seg) && dirYields(join(root, parts.slice(0, depth).join(sep)))) continue;
         return true;
     }
     return false;
@@ -126,9 +162,9 @@ function walk(root: string): string[] {
             if (entry.name.startsWith(".") && entry.name !== ".github") continue;
             const full = join(dir, entry.name);
             if (entry.isDirectory()) {
-                // HC-022: an ignored content dir with its own package.json is a
-                // member package — walk into it.
-                const yields = YIELDABLE_DIRS.has(entry.name) && existsSync(join(full, "package.json"));
+                // HC-022: an ignored dir that yields (a member package with a
+                // declaring manifest) is walked into like any content dir.
+                const yields = !BUILD_OUTPUT_DIRS.has(entry.name) && dirYields(full);
                 if ((!IGNORED_DIRS.has(entry.name) || yields) && !existsSync(join(full, ".git"))) stack.push(full);
             } else if (entry.isFile()) {
                 files.push(relative(root, full));

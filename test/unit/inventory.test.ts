@@ -75,4 +75,38 @@ describe("inventory (HC-022 member-package yield)", () => {
         expect(files.some((f) => f.startsWith("guides/docs/"))).toBe(false);
         expect(files.some((f) => f.startsWith("packages/x/dist/"))).toBe(false);
     });
+
+    // REVIEW-0010: the yield requires an ENTRY declaration, and generalises
+    // beyond docs/examples/data — any non-build-output ignored dir whose
+    // manifest declares an entry is a member package.
+    it("given a docs dir whose manifest declares no entry, when inventoried, then it stays ignored", () => {
+        mkdirSync(join(root, "notes", "docs"), { recursive: true });
+        writeFileSync(join(root, "notes", "docs", "package.json"), JSON.stringify({ name: "docs-prose" }));
+        writeFileSync(join(root, "notes", "docs", "readme.md"), "prose\n");
+        expect(inventory(root).some((f) => f.startsWith("notes/docs/"))).toBe(false);
+    });
+
+    it("given a generated dir with a declaring manifest, when inventoried, then it stays ignored (build output never yields)", () => {
+        mkdirSync(join(root, "bundles", "generated", "src"), { recursive: true });
+        writeFileSync(
+            join(root, "bundles", "generated", "package.json"),
+            JSON.stringify({ name: "generated-pkg", main: "src/index.ts" }),
+        );
+        writeFileSync(join(root, "bundles", "generated", "src", "index.ts"), "export {};\n");
+        // REVIEW-0010: the yield is implemented as a build-output exclusion
+        // list (durable) rather than a content trio; the ignore set carries no
+        // further non-build names today, so the boundary — not a new yield —
+        // is what this pins.
+        expect(inventory(root).some((f) => f.startsWith("bundles/generated/"))).toBe(false);
+    });
+
+    it("given two repos in one process, when inventoried, then the second is unaffected by the first's yield state", () => {
+        // The yield decision must not be module-level cached across repos.
+        const other = mkdtempSync(join(tmpdir(), "code-as-city-inv3-"));
+        mkdirSync(join(other, "apps", "docs"), { recursive: true });
+        writeFileSync(join(other, "apps", "docs", "package.json"), JSON.stringify({ name: "docs", main: "index.ts" }));
+        writeFileSync(join(other, "apps", "docs", "index.ts"), "export {};\n");
+        expect(inventory(other)).toContain("apps/docs/index.ts");
+        rmSync(other, { recursive: true, force: true });
+    });
 });

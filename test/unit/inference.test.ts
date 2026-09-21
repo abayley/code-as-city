@@ -635,6 +635,24 @@ describe("inferModuleDataFlows (HC-024 browser guard)", () => {
         });
         expect(edges.map((e) => e.id)).toEqual(["svc--infra-pg-w"]);
     });
+
+    it("given a prisma server entry, when the client pattern names prisma, then edges draw (REVIEW-0010)", () => {
+        const edges: MapEdge[] = [];
+        inferModuleDataFlows({
+            entries: [{ id: "svc", files: ["src/repo.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/repo.ts": 'import { PrismaClient } from "@prisma/client";\nawait prisma.user.update({});',
+            }),
+            database: {
+                databases: [{ id: "infra-pg", districtId: undefined }],
+                writePattern: /\bupdate\s+\w+\s+set\b|\.\bupdate\s*\(/,
+                readPattern: /\bselect\(/,
+                clientPattern: /from\s+["']@prisma\/client["']/,
+            },
+        });
+        expect(edges.map((e) => e.id)).toEqual(["svc--infra-pg-w"]);
+    });
 });
 
 describe("inferExternalDelivers (HC-024 precision)", () => {
@@ -673,6 +691,29 @@ describe("inferExternalDelivers (HC-024 precision)", () => {
             }),
         });
         expect(edges).toHaveLength(1);
+    });
+
+    it("given a DECLARED edge over the pair, when delivering, then the inferred edge still draws (REVIEW-0010)", () => {
+        // The dedup suppresses the D17-vs-M10 double inference, not a declared
+        // relationship: a declared edge and the inferred delivers edge are
+        // different claims with different evidence.
+        const edges: MapEdge[] = [
+            {
+                id: "src-agent--external-langfuse",
+                from: "src-agent",
+                to: "external-langfuse",
+                kind: "data_flow",
+                evidence: "declared",
+                label: "pushes scores",
+            },
+        ];
+        inferExternalDelivers({
+            externals,
+            entries: [{ id: "src-agent", files: ["src/agent.ts"] }],
+            edges,
+            fileText: textsOf({ "src/agent.ts": 'import { Langfuse } from "langfuse";' }),
+        });
+        expect(edges.map((e) => e.id)).toEqual(["src-agent--external-langfuse", "src-agent--external-langfuse-d"]);
     });
 
     it("given an operational (non-script) entry referencing the external, when delivering, then the edge still draws (HC-024)", () => {

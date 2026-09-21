@@ -61,7 +61,7 @@ describe("findRunnableApps (HC-022 framework runners)", () => {
         const files = ["studio/package.json", "studio/app/layout.tsx", "studio/app/page.tsx"];
         const packages = discoverPackages(repo, packageDirsOf(files));
         const apps = findRunnableApps(repo, packages, files);
-        expect(apps).toEqual([{ pkgDir: "studio", entry: "studio/app/layout.tsx", tag: "server" }]);
+        expect(apps).toEqual([{ pkgDir: "studio", entry: "studio/app/page.tsx", tag: "server" }]);
     });
 
     it("given a pages-router app, when scanned, then the pages entry anchors the app (D16, HC-022)", () => {
@@ -73,5 +73,18 @@ describe("findRunnableApps (HC-022 framework runners)", () => {
         // framework arm matches the "dev" name too — the router entry anchors.
         const apps = findRunnableApps(repo, packages, files);
         expect(apps).toEqual([{ pkgDir: "docsapp", entry: "docsapp/pages/index.tsx", tag: "server" }]);
+    });
+
+    it("given a router dir whose alphabetically-first file is not an entry, when scanned, then the page route anchors the app (REVIEW-0010)", () => {
+        write("shop/package.json", JSON.stringify({ name: "shop", private: true, scripts: { dev: "next dev" } }));
+        write("shop/app/layout.tsx", "export default function Layout() { return null; }\n");
+        write("shop/app/page.tsx", "export default function Page() { return null; }\n");
+        write("shop/app/api/route.ts", "export function GET() { return null; }\n");
+        const files = ["shop/package.json", "shop/app/layout.tsx", "shop/app/page.tsx", "shop/app/api/route.ts"];
+        const packages = discoverPackages(repo, packageDirsOf(files));
+        // The framework's entry convention is the page/route file, not the
+        // alphabetical layout shell.
+        const apps = findRunnableApps(repo, packages, files);
+        expect(apps).toEqual([{ pkgDir: "shop", entry: "shop/app/page.tsx", tag: "server" }]);
     });
 });

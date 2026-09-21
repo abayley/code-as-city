@@ -695,6 +695,9 @@ export function assembleHostDistricts(
             archetype: "district",
             description: `Deployment host projected from ${host.file}.`,
             display: { flowLayer: hostLayerBase + (hostLayer.get(host.name) ?? 0) },
+            // REVIEW-0010: a host whose topology is a dev environment carries
+            // the tag at the district level as well as on its services.
+            ...((host.services.some((s) => s.devEnvironment) ? { tags: ["dev-environment"] } : {}) as object),
         });
         for (const service of host.services) {
             if (isShadowed(host, service)) continue;
@@ -786,9 +789,9 @@ export function assembleHostDistricts(
                     isScheduled ? "cron" : null,
                     service.hasPorts ? "listens" : null,
                     isAlternative ? "alternative" : null,
-                    // HC-024: a dev container bind-mounts the checkout instead
-                    // of shipping an image — present it as what it is.
-                    service.devBindMount ? "dev-environment" : null,
+                    // HC-024/REVIEW-0010: a dev container (a bind-mounted
+                    // checkout or a dev-server command) — present it as what it is.
+                    service.devEnvironment ? "dev-environment" : null,
                 ].filter((tag): tag is string => tag !== null),
                 display: { flowLayer },
             });

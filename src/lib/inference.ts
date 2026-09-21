@@ -221,13 +221,19 @@ export function inferExternalDelivers(options: {
         const name = (external.label.split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
         if (name.length < 4) continue;
         const referencePattern = externalReferencePattern(name);
+        const scriptFiles = options.scriptFiles;
         for (const entry of options.entries) {
             if (entry.id === external.id || !entry.files.length) continue;
             // HC-024: build scripts reference endpoints without shipping data.
-            if (options.scriptFiles !== undefined && entry.files.every((f) => options.scriptFiles?.has(f))) continue;
+            if (scriptFiles !== undefined && entry.files.every((f) => scriptFiles.has(f))) continue;
             // HC-024: the D17 pass already drew this relationship ("uses");
-            // a second inferred edge for the same pair is double-drawing.
-            if (options.edges.some((edge) => edge.from === entry.id && edge.to === external.id)) continue;
+            // a second inferred edge for the same pair is double-drawing. A
+            // DECLARED edge over the pair is a different claim (REVIEW-0010)
+            // and does not suppress the inference.
+            if (
+                options.edges.some((edge) => edge.from === entry.id && edge.to === external.id && edge.label === "uses")
+            )
+                continue;
             if (!entry.files.some((file) => referencePattern.test(options.fileText(file)))) continue;
             addEdge(options.edges, {
                 id: `${entry.id}--${external.id}-d`,
