@@ -11,9 +11,10 @@ reviews: ee34f6c...HEAD
 
 # Code review of HC-020, HC-027, and HC-028
 
-| Stage    | Timestamp  |
-| -------- | ---------- |
-| Authored | 2026-09-21 |
+| Stage      | Timestamp  |
+| ---------- | ---------- |
+| Authored   | 2026-09-21 |
+| Remediated | 2026-09-21 |
 
 ## Review Scope
 
@@ -117,3 +118,29 @@ comment); worst: the debug output in the committed generator. Spec: 8
 findings (4 partial, 3 creep — one of which is the e41dc89 staging omission,
 1 suspect); worst: e41dc89's tree not standing alone, with the untagged
 HC-020 variants the largest unfinished spec arm.
+
+## Remediation
+
+Every finding addressed, by code change, doc change, or recorded decision:
+
+| Finding | Remediation |
+| --- | --- |
+| S1 debug `console.log` | Removed from `assemble-deployment-phases.ts` |
+| S2 duplicated comment | Collapsed into one comment block covering the whole HC-028 hunk |
+| S3 inline `{name, image}` x4 | Named type `ServiceIdentity` in `hosts.ts` (the rule home); used by `serviceOwnerKey`, `isServiceShadowed`, and both `isShadowed` seams |
+| S4 duplicated key builders | One parameterised `serviceKeys(host, withImage)` builder; the rank branch selects name-only vs name+image keys |
+| S5 comment restating the catalogue | Trimmed to rule-ID citation plus the two non-obvious facts |
+| SP-A1 variant tags | Implemented: each same-named/different-image service node carries an `alternative` tag (TDD: the fixture gained `docker-compose.envoy.yml`; a generate-map assertion pins both nodes tagged); HEURISTICS D1 row updated |
+| SP-A2 dist-cite deferral | Stands as recorded (HC-028's package container is the prerequisite); no change |
+| SP-A3 collapse arm | Decision recorded in HC-028's resolution: attach chosen, collapse declined (R1 classes build scripts operational deliberately — they stay visible) |
+| SP-A4 precedence decision | Recorded in HC-028's resolution: CLI-tag-if-unique (gate justified: aria-tools' twenty CLIs), then service role word (curated table, `media-db` guard), else scope-stripped name; the D14-entry arm subsumed with the revisit condition |
+| SP-B1 I4 exclusion creep | Recorded in HC-020's resolution as a deliberate addition beyond the Direction, with the reason (identity dedup leaks `tests/`/`dev/` composes) |
+| SP-B2 e41dc89 tree | Recorded here: e41dc89's tree does not standalone-typecheck (`src/lib/text.ts` was omitted from its staging list); the function landed with 724c03e. History not rewritten — the note is the remedy |
+| SP-B3 console.log | Same as S1 |
+| SP-C1 dev carve-out | Pinned test noted; the carve-out's breadth recorded as a judgement in HC-020's resolution |
+| SP-C2 prefix-match fragility | Fixed with a curated role-word table (`service-role` words: server/worker/cli/gateway/web/api/agent/daemon/app) — "Immich Server" -> "Server", "Media Db" -> "Media" stands, "Media Api" -> "Api" (TDD: three unit cases) |
+
+Verified after remediation: `bun run check` green (typecheck, lint, knip,
+383+ tests with coverage); all twelve sampled repos schema-valid; immich's
+"Cli"/"Server" labels and supabase's Kong host unchanged.
+

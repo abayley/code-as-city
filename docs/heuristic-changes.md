@@ -820,8 +820,15 @@ that immich's single `Db` does not regress.
   handled deliberately: a dev-ranked variant keeps the name-only dedup (its
   build blocks replace the canonical images wholesale; supabase's
   `docker/dev/` variant and the `tests/` composes would otherwise surface as
-  districts), and test-directory composes are excluded from D1 outright (I4:
-  under `test`/`tests`/`__tests__` or a `*.test.*` filename).
+  districts), and test-directory composes are excluded from D1 outright. Two
+  additions beyond the Direction's literal sentence, both deliberate (REVIEW-0009):
+  the test-compose exclusion (I4 made part of D1's scan — without it the
+  identity dedup leaks `tests/`/`dev/` composes as districts) and a variant
+  tag — the Direction's "tagged as the variants they are" — each
+  same-named/different-image service node carries an `alternative` tag so a
+  reader sees alternatives rather than duplicates. The dev carve-out's
+  breadth (all rank-1 variants, not just supabase's) is a recorded judgement,
+  pinned by the dev-variant dedup unit test.
 
 Verified on live supabase: the Kong host returns with its own api-gw; the
 Dev/Test host districts that briefly surfaced are gone; supabase's other
@@ -1103,6 +1110,21 @@ land with HC-003's residual rather than twice.
   claimed dir (`server` — no `/`) never entered `serviceClaimedDirs`, so the
   `immich` package was not flagged residual; the label search therefore keys
   on the claiming service directly, not on the residual flag.
+- *The Direction's precedence question, decided (REVIEW-0009).* The name
+  source order is: CLI tag when the package is the repo's ONLY cli-tagged
+  artefact ("CLI"; the uniqueness gate exists because aria-tools' twenty CLI
+  districts must not collapse to twenty identical "CLI" labels), then the
+  claiming service's role word when the service is the package's name plus
+  one known role word ("Immich Server" -> "Server"; a curated word table —
+  server/worker/cli/gateway/web/api/agent/daemon/app, the D5/D17 pattern —
+  so `media-db` over the `media` package does not read "Db"), else the
+  scope-stripped package name. The Direction's "D14 entry" arm is subsumed:
+  an entry basename differing from the package name (mermaid's
+  `src/mermaid.ts` vs package `mermaid`) is the same word in the sampled
+  repos, so the package name arm covers it; revisit if a repo contradicts.
+  The Direction's "collapse when they are build scripts" arm is declined in
+  favour of attach: R1 classes build scripts operational deliberately, so
+  they stay visible as the district's support room rather than vanishing.
 - *HC-003's residual (the bare `Src` BUILDING on the normal path) is not
   collapsed here*: a multi-room `src/` building inside its district is
   HC-003's deferred concern (promote files, move the deployable marking to
