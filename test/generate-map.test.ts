@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runGenerator } from "../src/generate-map";
 import { prepareMiniRepo } from "./prepare-mini-repo";
 
@@ -14,10 +14,14 @@ const fixtureRepo = join(repoRoot, "test", "fixtures", "mini-repo");
 const tempDirs: string[] = [];
 
 beforeAll(() => {
+    // The generator prints its `Wrote …` summary on every in-process run;
+    // silence it so the two dozen golden runs do not spam the test report.
+    vi.spyOn(console, "log").mockImplementation(() => {});
     prepareMiniRepo();
 });
 
 afterAll(() => {
+    vi.restoreAllMocks();
     for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
