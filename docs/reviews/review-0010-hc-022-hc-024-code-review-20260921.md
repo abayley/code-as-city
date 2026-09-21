@@ -11,9 +11,10 @@ reviews: beaa8a3...HEAD
 
 # Code review of HC-022 and HC-024
 
-| Stage    | Timestamp  |
-| -------- | ---------- |
-| Authored | 2026-09-21 |
+| Stage      | Timestamp  |
+| ---------- | ---------- |
+| Authored   | 2026-09-21 |
+| Remediated | 2026-09-21 |
 
 ## Review Scope
 
@@ -106,3 +107,30 @@ Standards: 6 findings (1 hard — the module-level mutable cache); worst: the
 cross-repo memo in `inventory.ts`. Spec: 9 findings (5 partial, 2 creep,
 2 wrong); worst: the deployment-only asymmetry of the M8/M10 guards — the
 overview still draws the false positives HC-024 was written to kill.
+
+## Remediation
+
+Every finding addressed, by code change, doc change, or recorded decision:
+
+| Finding | Remediation |
+| --- | --- |
+| S1 module-level mutable cache | Dropped: `dirYields(absDir)` recomputes per call; no module-level state |
+| S2 duplicated yield logic | One `dirYields` home, used by both the walk and the git-path filter |
+| S3 table alignment | `md-table-format` run over both docs |
+| S4 Data Clumps (pattern trio) | Accepted as-is (decision): the trio threads through two existing seams exactly like its HC-024 predecessor; a `DbFlowPatterns` bundle is ceremony for three fields at two call sites. Recorded here |
+| S5 compose indent duplication | Deferred (decision): two hand-rolled indent stacks remain readable; a shared "block children" helper waits for a third (per the finding's own criterion). Recorded here |
+| S6 optional-param re-test | Hoisted to a local `scriptFiles` |
+| SP-A1 overview M8 | `dbClientPattern` threaded into the overview's `inferModuleDataFlows` — verified live: supabase's overview draws zero writes edges |
+| SP-A2 overview M10 | `scriptFiles` (scriptReachable) threaded into the overview's `inferExternalDelivers` |
+| SP-A3 yield "with an entry" | `dirYields` parses the manifest and requires an entry declaration (main/module/exports/bin/types); a prose docs dir with a manifest stays ignored (TDD) |
+| SP-A4 framework entry convention | Route-file preference: `page.*`/`route.*` before `layout.*`/`index.*` before anything else in the router dirs (TDD: an api-route + layout + page case anchors to `page.tsx`) |
+| SP-A5 dev-server arm + host tag | A compose `command:` or Dockerfile CMD/ENTRYPOINT whose tokens run a dev server (dev/vite/nodemon/storybook, token-wise so the exec form matches) sets `devEnvironment`; the tag lands on the host scope AND the service (verified live on mermaid: both tagged) |
+| SP-B1 dedup on any edge | Narrowed to D17's `uses` label: a declared edge over the pair no longer suppresses the inference (TDD: the declared-edge case draws the delivers edge) |
+| SP-C1 client pattern gaps | Prisma, Sequelize, Mongoose, MongoDB, Redis added to `DB_CLIENT_PATTERN` (TDD: a Prisma server module draws its edge) |
+| SP-C2 yield narrowing | The yield is now a build-output exclusion list (`dist`/`build`/`out`/... never yield) rather than a content trio; the ignore set carries no further non-build names today, so the boundary — not a new yield — is what the test pins. The reviewer's `test/fixtures` example is I4 territory (test dirs are a different rule) |
+
+Verified after remediation: `bun run check` green (typecheck, lint, knip,
+403+ tests with coverage); all eleven sampled repos schema-valid; supabase's
+overview draws zero writes edges (the asymmetry closed); mermaid's
+dev-environment tag on host and service.
+

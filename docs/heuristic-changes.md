@@ -63,9 +63,9 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-019 | Client-SDK table misses common SDKs and cannot resolve endpoints                                        | D13, D17, M6    | Done     |
 | HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Done     |
 | HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Proposed |
-| HC-022 | Next.js apps are not runnable; `docs` dirs are not apps     | D16, I3     | Done     |
+| HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Done     |
 | HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
-| HC-024 | Inferred edges over-fire; templates and dev environments present as production | M8, M10, D7, D3 | Done     |
+| HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Done     |
 | HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
 | HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Proposed |
 | HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Done     |
