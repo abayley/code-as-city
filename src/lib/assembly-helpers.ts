@@ -13,9 +13,10 @@ import { titleCase } from "./text.ts";
  * unambiguous repo-wide (the one CLI package reads "CLI"), else the
  * scope-stripped package name ("Plugin Sdk" from @immich/plugin-sdk) — never
  * the directory name ("Src"), which conveys nothing. A residual package
- * claimed by one host service whose name starts with its own name takes the
- * service's role instead ("Immich Server" over the `immich` package reads
- * "Server").
+ * claimed by one host service whose name is the package's name plus a role
+ * word takes that role ("Immich Server" over the `immich` package reads
+ * "Server"); a word boundary guards the match, so a service that merely
+ * starts with the package name ("Media Db" over "media") does not relabel.
  *
  * @param pkg - The package the district groups.
  * @param packages - Every discovered package, for the role-uniqueness check.
@@ -27,11 +28,18 @@ export function packageDistrictLabel(pkg: Package, packages: readonly Package[],
     const own = titleCase(pkg.name.split("/").at(-1) ?? pkg.name);
     const cliCount = packages.filter((candidate) => candidate.artefact?.tag === "cli").length;
     if (pkg.artefact?.tag === "cli" && cliCount === 1) return "CLI";
-    if (serviceLabel?.startsWith(own) && serviceLabel !== own) {
-        return serviceLabel.slice(own.length).trim();
+    if (serviceLabel?.startsWith(`${own} `)) {
+        const role = serviceLabel.slice(own.length).trim();
+        // A curated role-word table, like D5's/D17's: the service's remainder
+        // must BE a role ("Server"), not any single word ("Db" over the media
+        // package's code would mislabel the district as a database).
+        if (role.split(/\s+/).length === 1 && SERVICE_ROLE_WORDS.has(role.toLowerCase())) return role;
     }
     return own;
 }
+
+/** Role words a claiming service's name may contribute as a district label (HC-028). */
+const SERVICE_ROLE_WORDS = new Set(["server", "worker", "cli", "gateway", "web", "api", "agent", "daemon", "app"]);
 
 /**
  * Appends the edge unless an edge with the same id is already present.

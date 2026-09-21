@@ -1114,11 +1114,101 @@
       }
     },
     {
+      "id": "host-envoy",
+      "label": "Envoy host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Envoy host: 4 nodes.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#283B47",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "infra-envoy-api",
+      "label": "Api",
+      "kind": "infra",
+      "archetype": "gateway",
+      "parentId": "host-envoy",
+      "description": "envoy:1.31 on the envoy host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.envoy.yml"
+        }
+      ],
+      "tags": [
+        "host:envoy"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-db",
+      "label": "Db",
+      "kind": "infra",
+      "archetype": "database",
+      "parentId": "host-envoy",
+      "description": "postgres:16 declared in docker-compose.dev.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.dev.yml"
+        }
+      ],
+      "tags": [
+        "host:envoy"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-cache",
+      "label": "Cache",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-envoy",
+      "description": "redis:7 declared in docker-compose.dev.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.dev.yml"
+        }
+      ],
+      "tags": [
+        "host:envoy"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-broker",
+      "label": "Broker",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-envoy",
+      "description": "container declared in docker-compose.dev.yml.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.dev.yml"
+        }
+      ],
+      "tags": [
+        "host:envoy"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
       "id": "host-s3",
       "label": "S3 host",
       "kind": "scope",
       "archetype": "district",
-      "description": "S3 host: 7 nodes.",
+      "description": "S3 host: 4 nodes.",
       "tags": [
         "band:Mini Repo host"
       ],
@@ -1156,63 +1246,6 @@
       "sourceRefs": [
         {
           "path": "docker-compose.s3.yml"
-        }
-      ],
-      "tags": [
-        "host:s3"
-      ],
-      "display": {
-        "color": "#283B47"
-      }
-    },
-    {
-      "id": "infra-db",
-      "label": "Db",
-      "kind": "infra",
-      "archetype": "database",
-      "parentId": "host-s3",
-      "description": "postgres:16 declared in docker-compose.dev.yml.",
-      "sourceRefs": [
-        {
-          "path": "docker-compose.dev.yml"
-        }
-      ],
-      "tags": [
-        "host:s3"
-      ],
-      "display": {
-        "color": "#283B47"
-      }
-    },
-    {
-      "id": "infra-cache",
-      "label": "Cache",
-      "kind": "infra",
-      "archetype": "queue",
-      "parentId": "host-s3",
-      "description": "redis:7 declared in docker-compose.dev.yml.",
-      "sourceRefs": [
-        {
-          "path": "docker-compose.dev.yml"
-        }
-      ],
-      "tags": [
-        "host:s3"
-      ],
-      "display": {
-        "color": "#283B47"
-      }
-    },
-    {
-      "id": "infra-broker",
-      "label": "Broker",
-      "kind": "infra",
-      "archetype": "queue",
-      "parentId": "host-s3",
-      "description": "container declared in docker-compose.dev.yml.",
-      "sourceRefs": [
-        {
-          "path": "docker-compose.dev.yml"
         }
       ],
       "tags": [

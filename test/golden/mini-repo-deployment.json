@@ -6,6 +6,37 @@
   "summary": "Deterministic draft map generated without an agent (prototype).",
   "nodes": [
     {
+      "id": "host-envoy",
+      "label": "Envoy host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Deployment host projected from docker-compose.envoy.yml.",
+      "display": {
+        "flowLayer": 1000
+      }
+    },
+    {
+      "id": "host-envoy-api",
+      "label": "Api",
+      "kind": "infra",
+      "archetype": "gateway",
+      "parentId": "host-envoy",
+      "description": "Container image envoy:1.31.\n\nScheduled job: 0 3 * * *",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.envoy.yml"
+        }
+      ],
+      "tags": [
+        "cron",
+        "alternative"
+      ],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
       "id": "host-s3",
       "label": "S3 host",
       "kind": "scope",
@@ -84,7 +115,8 @@
       },
       "tags": [
         "cron",
-        "listens"
+        "listens",
+        "alternative"
       ],
       "display": {
         "flowLayer": 1,
@@ -233,6 +265,38 @@
       "tags": [],
       "display": {
         "flowLayer": 1
+      }
+    },
+    {
+      "id": "host-envoy-cache",
+      "label": "Cache",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-envoy",
+      "description": "Backing service (image redis:7) declared in a compose variant; the deployed host provides it via configuration.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.envoy.yml"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "host-envoy-broker",
+      "label": "Broker",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-envoy",
+      "description": "Backing service declared in a compose variant; the deployed host provides it via configuration.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.envoy.yml"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
       }
     },
     {
@@ -1015,6 +1079,22 @@
     }
   ],
   "edges": [
+    {
+      "id": "host-envoy-api--host-envoy-cache",
+      "from": "host-envoy-api",
+      "to": "host-envoy-cache",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "compose depends_on"
+    },
+    {
+      "id": "host-envoy-api--host-envoy-broker",
+      "from": "host-envoy-api",
+      "to": "host-envoy-broker",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "compose depends_on"
+    },
     {
       "id": "host-mini-repo-api--host-mini-repo-db",
       "from": "host-mini-repo-api",

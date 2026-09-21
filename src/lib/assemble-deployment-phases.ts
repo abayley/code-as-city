@@ -7,7 +7,7 @@
  * them in order. The 7x markers are that file's own section headings; D12-D17
  * are HEURISTICS.md rule IDs.
  */
-import { basename, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
     deploymentFootprintFor,
@@ -23,7 +23,7 @@ import type { Coupling } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import { layerByLongestPath } from "./flow.ts";
 import type { HostScanResult } from "./host-config.ts";
-import type { Host, HostService } from "./hosts.ts";
+import type { Host, HostService, ServiceIdentity } from "./hosts.ts";
 import type { NodeIndexEntry } from "./inference.ts";
 import {
     classifiedVariantServices,
@@ -88,7 +88,7 @@ export type AssemblyState = {
     /** The emitted node owning a source file (direct mapping, else longest sourceRef). */
     nodeOwningFile: (file: string) => string | null;
     /** Whether a service is shadowed by its canonical topology owner (D1, name+image). */
-    isShadowed: (host: Host, service: { name: string; image?: string | undefined }) => boolean;
+    isShadowed: (host: Host, service: ServiceIdentity) => boolean;
 };
 
 /**
@@ -736,6 +736,12 @@ export function assembleHostDistricts(
             campusFileSets.push({ id: serviceId, files: serviceSourceFiles, entryFile: service.entryFile });
             const isScheduled = Boolean(service.schedule);
             const roomsForService = copiedSegments.length >= 2;
+            // HC-020: a sibling topology in the same directory shipping the same
+            // service name on a different image makes both variants — tag them
+            // so a reader sees the alternatives rather than duplicates.
+            const isAlternative = candidateHosts
+                .filter((variant) => dirname(variant.file) === dirname(host.file))
+                .some((variant) => variant.services.some((s) => s.name === service.name && s.image !== service.image));
             const archetype = roomsForService
                 ? "building"
                 : (service.imageClass ?? (isScheduled ? "worker" : service.hasPorts ? "gateway" : "worker"));
@@ -769,9 +775,11 @@ export function assembleHostDistricts(
                 },
                 sourceRefs: [{ path: service.dockerfile ?? host.file }],
                 ...(serviceSourceFiles.length ? { metrics: { loc: linesOf(repo, serviceSourceFiles) } } : {}),
-                tags: [isScheduled ? "cron" : null, service.hasPorts ? "listens" : null].filter(
-                    (tag): tag is string => tag !== null,
-                ),
+                tags: [
+                    isScheduled ? "cron" : null,
+                    service.hasPorts ? "listens" : null,
+                    isAlternative ? "alternative" : null,
+                ].filter((tag): tag is string => tag !== null),
                 display: { flowLayer },
             });
             // Rooms: one per source directory the image copies in.
@@ -1242,22 +1250,10 @@ export function assemblePackageDistricts(
 
         // A district never wraps a single synthetic building: rooms are promoted to
         // campus structures directly. Every package — residual or not — keeps one
-        // package district (HC-028): the residual special case (a district per
-        // structured dir, district-less flat nodes) orphaned root files and
-        // labelled districts "Src"; the unified path groups the leftover rooms and
-        // the package's loose root files under the one district. A residual
-        // package claimed by one host service takes that service's role label
-        // ("Server" from "Immich Server").
-        console.log(
-            "DBG",
-            pkg.name,
-            "residual:",
-            residual,
-            "claimedDirs:",
-            [...serviceClaimedDirs].filter((d) => owningPackage(d) === pkg).length,
-        );
-        // A package claimed by one host service takes that service's role label
-        // ("Server" from "Immich Server"), residual or not (HC-028).
+        // package district (HC-028): claimed rooms filter out, the leftover rooms
+        // and loose root files group under the one district, and a package claimed
+        // by one host service takes that service's role label ("Server" from
+        // "Immich Server").
         const claimingService = hosts
             .flatMap((h: Host) => h.services)
             .find((s: HostService) => s.copies.some((dir: string) => owningPackage(dir) === pkg));

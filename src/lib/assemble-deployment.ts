@@ -27,7 +27,7 @@ import { fileModuleName, uniqueId } from "./assembly-helpers.ts";
 import { COUPLING_THRESHOLDS, type Coupling, type CouplingAnalysis } from "./coupling.ts";
 import type { SpawnedEntry } from "./daemons.ts";
 import type { HostScanResult } from "./host-config.ts";
-import { type Host, isServiceShadowed } from "./hosts.ts";
+import { type Host, isServiceShadowed, type ServiceIdentity } from "./hosts.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { owningPackage as owningPackageOf, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
@@ -260,7 +260,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // its owner; the same name in another topology file of the directory is
     // shadowed (folded to the owner's single node), so supabase's six `Db`
     // nodes become one.
-    const isShadowed = (host: Host, service: { name: string; image?: string | undefined }): boolean =>
+    const isShadowed = (host: Host, service: ServiceIdentity): boolean =>
         isServiceShadowed(serviceOwner, host, service);
 
     /**

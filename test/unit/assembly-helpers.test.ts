@@ -203,4 +203,15 @@ describe("packageDistrictLabel (HC-028)", () => {
         // A service name that repeats nothing ("Api") leaves the package label.
         expect(packageDistrictLabel(pkg("@mini/api", null), [pkg("@mini/api", null)], "Api")).toBe("Api");
     });
+
+    it("given a claimed package whose name is only a prefix of the service name, when labelled, then the package label stands (REVIEW-0009)", () => {
+        // "Media Db" over the "media" package would mislabel the district as a
+        // database: the service's remainder must be a known role word for the
+        // service-role arm to fire, so the package label stands.
+        expect(packageDistrictLabel(pkg("media", null), [pkg("media", null)], "Media Db")).toBe("Media");
+        // A camel-case service name carries no word boundary to match either.
+        expect(packageDistrictLabel(pkg("media", null), [pkg("media", null)], "Mediaprocessor")).toBe("Media");
+        // But a real role word takes over: "media-api" reads as "Api".
+        expect(packageDistrictLabel(pkg("media", null), [pkg("media", null)], "Media Api")).toBe("Api");
+    });
 });

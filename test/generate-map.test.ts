@@ -235,6 +235,19 @@ describe("generate-map golden master", async () => {
         expect(area?.label).toBe("CLI");
     });
 
+    it("given a same-named service with a different image across composes, when generating, then both are tagged alternative (HC-020)", async () => {
+        const map = await generateMap([]);
+        // The canonical compose builds the api service; docker-compose.envoy.yml
+        // ships an envoy image under the same name. Both are the variants they
+        // are: each keeps its node, tagged "alternative".
+        const api = ["host-mini-repo-api", "host-envoy-api"].map((id) => map.nodes.find((node) => node.id === id));
+        expect(api).toHaveLength(2);
+        for (const node of api) {
+            expect(node).toBeDefined();
+            expect(node?.tags).toContain("alternative");
+        }
+    });
+
     it("given a client SDK dependency that is imported, when generating, then it draws an external with a uses edge (D17)", async () => {
         const map = (await generateMap([])) as GeneratedMap & {
             nodes: Array<{ id?: string; kind?: string; label?: string }>;
