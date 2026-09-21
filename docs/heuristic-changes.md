@@ -61,15 +61,15 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-017 | Compose `build.context` with a default Dockerfile never binds                                           | D3              | Done     |
 | HC-018 | A standalone root Dockerfile declares no deployment                                                     | D1, D3          | Proposed |
 | HC-019 | Client-SDK table misses common SDKs and cannot resolve endpoints                                        | D13, D17, M6    | Done     |
-| HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Proposed |
+| HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Done     |
 | HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Proposed |
 | HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Proposed |
 | HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
 | HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Proposed |
 | HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
 | HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Proposed |
-| HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Proposed |
-| HC-028 | Residual packages fragment and orphan their root files; districts label by directory, not artefact role | M3, S4          | Proposed |
+| HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Done     |
+| HC-028 | Residual packages fragment and orphan their root files; districts label by directory, not artefact role | M3, S4          | Done     |
 
 ## HC-001: No Deployment Category for a Published Package
 
@@ -806,6 +806,30 @@ distinct, tagged as the variants they are. Check the interaction with the
 environment-variant dedup (which compares service-name sets, not images) and
 that immich's single `Db` does not regress.
 
+**Resolution (Done).** Image identity entered D1 at BOTH layers:
+
+- *Ownership key.* `serviceOwnerKey` pairs the directory with the name and
+  image; `isServiceShadowed` takes the service, so a same-named service
+  shipping a different image is never shadowed (supabase's kong and envoy
+  `api-gw` are distinct). D6's carried deps resolve the dep's image from its
+  variant service so the key matches the claim.
+- *Variant dedup.* Landing the key exposed that the kong host was in fact
+  erased one layer earlier — the >=50% environment-variant dedup compared
+  service-NAME sets, so the caddy file "covered" the kong topology. Coverage
+  now counts a service only when name AND image match. Two consequences
+  handled deliberately: a dev-ranked variant keeps the name-only dedup (its
+  build blocks replace the canonical images wholesale; supabase's
+  `docker/dev/` variant and the `tests/` composes would otherwise surface as
+  districts), and test-directory composes are excluded from D1 outright (I4:
+  under `test`/`tests`/`__tests__` or a `*.test.*` filename).
+
+Verified on live supabase: the Kong host returns with its own api-gw; the
+Dev/Test host districts that briefly surfaced are gone; supabase's other
+variant hosts (pg15, pgbouncer, s3, rustfs) are unchanged, and immich's
+single `Db` does not regress. Fixture: alternative-proxy composes (envoy/
+kong/caddy sharing `api-gw`) plus a tests-dir compose and a dev variant;
+hosts.ts unit tests pin all three.
+
 ## HC-021: Every Non-Private Workspace Library Becomes a Published Deployable
 
 **Rules:** D14 (published-artefact classification).
@@ -976,6 +1000,24 @@ back-mapped to source, and an entry that is the dist path itself when no
 source match exists (keep the node, cite the dist file). Worth pairing with
 HC-021 since both reshape D14's deployable set.
 
+**Resolution (Done, chain extended; dist-cite deferred).** The candidate
+chain in `artefactEntryCandidates` gains, in order: `./`-segment
+normalisation of the declared entry (ollama-code's VS Code extension
+declares `./dist/extension.js`; the unnormalised `./src/extension.ts` never
+matched the inventory, so the extension was never a deployable); the
+manifest `types`/`typings` entry recorded on the artefact and mapped
+`dist/x.d.ts` -> `src/x.ts` (mermaid-zenuml's real entry is
+`src/detector.ts`); and package-name-derived `src/<name>.ts` (mermaid's
+headline package enters at `src/mermaid.ts`). Verified live: mermaid's
+`mermaid`, `mermaid-zenuml`, and `mermaid-layout-elk` join the published
+deployables; ollama-code's extension reads as one. The dist-cite fallback
+("keep the node, cite the dist file") is deferred: a package with no source
+rooms at all (@mermaid-js/tiny, no src in the repo) has no node to keep, and
+giving it one is HC-028's package-container work — recorded there-shaped in
+HEURISTICS.md's D14 failure modes. Also worth pairing with HC-021 as the
+Direction noted: the chain now resolves MORE packages into deployables,
+which sharpens the bundled-library question.
+
 ## HC-028: Residual Packages Fragment and Orphan Their Root Files; Districts Label by Directory, Not Artefact Role
 
 **Rules:** M3 (residual-package assembly), S4 (loose-file grouping), the
@@ -1037,6 +1079,46 @@ is already "Immich Server"; the district disagrees).
 Risk: district labels feed the viewer's rail and grouping; relabeling
 "Immich" -> "Server" touches goldens across every sampled repo and should
 land with HC-003's residual rather than twice.
+
+**Resolution (Done, assembly unified; full Src collapse still deferred).**
+
+- *One package district per package, residual or not.* M3's residual special
+  case (a district per structured dir, district-less flat nodes) is retired:
+  every package creates its `${pkg.id}-area` district, claimed rooms filter
+  out as before, and the leftover rooms AND loose root files group under it.
+  The single-synthetic-building guard stays per-package in effect — a
+  package whose content is one room plus root files reads as the district
+  holding a deployable and a support room, not a bare "Src" and orphans.
+  Verified live on immich: zero district-less nodes; plugin-core is the
+  "Plugin Core" district holding its entry and `esbuild.js`; plugin-sdk's
+  root files live under "Plugin Sdk".
+- *Artefact-role labels.* `packageDistrictLabel` labels a package district:
+  the artefact role when unique repo-wide (the one CLI package reads "CLI"),
+  else the claiming host service's role when its name starts with the
+  package's (immich's `immich` package, claimed by the `immich-server`
+  service, reads "Server"), else the scope-stripped package name ("Plugin
+  Sdk", "Server" for @immich/server). The bare "Src" district labels and the
+  "D2 Immich"-style package-name districts are gone across the sample. The
+  claim search found a wrinkle worth recording: a ROOT-level package's
+  claimed dir (`server` — no `/`) never entered `serviceClaimedDirs`, so the
+  `immich` package was not flagged residual; the label search therefore keys
+  on the claiming service directly, not on the residual flag.
+- *HC-003's residual (the bare `Src` BUILDING on the normal path) is not
+  collapsed here*: a multi-room `src/` building inside its district is
+  HC-003's deferred concern (promote files, move the deployable marking to
+  the entry room); landing both label and structure changes in one pass
+  would have made the golden diffs unreviewable. The deferred item stands.
+- *Deferred from the Direction:* the dist-cite fallback (a package with no
+  source rooms at all keeps a node citing its dist entry) — recorded in
+  HC-027's resolution; the unify check (change 3) partially succeeded: the
+  residual and normal branches now share the district-creation and room-
+  parenting code, with `residual` reduced to an R5-flag and the label hint.
+
+Fixture: a `packages/plugin` published package (single-file `src/`, a root
+`esbuild.js` referenced by a build script) pins the package district holding
+both; generate-map assertions pin the api residual unification, the plugin
+district, and the CLI role label; unit tests pin `packageDistrictLabel`'s
+three arms.
 
 ## Repositories Examined
 
