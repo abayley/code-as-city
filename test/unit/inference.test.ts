@@ -599,3 +599,91 @@ describe("isEntryPoint", () => {
         ).toBe(false);
     });
 });
+
+describe("inferModuleDataFlows (HC-024 browser guard)", () => {
+    it("given a browser-only entry whose source matches the write pattern, when inferred, then no database edges are drawn (HC-024)", () => {
+        const edges: MapEdge[] = [];
+        inferModuleDataFlows({
+            entries: [{ id: "ui", files: ["src/pages/Dashboard.tsx"] }],
+            edges,
+            fileText: textsOf({
+                "src/pages/Dashboard.tsx": 'const rows = "insert into metrics"; // mock string in a component',
+            }),
+            database: {
+                databases: [{ id: "infra-pg", districtId: undefined }],
+                writePattern: /insert into/,
+                readPattern: /select from/,
+            },
+        });
+        expect(edges).toEqual([]);
+    });
+
+    it("given a mixed server entry (a .tsx file beside a .ts file), when inferred, then database edges still draw (HC-024)", () => {
+        const edges: MapEdge[] = [];
+        inferModuleDataFlows({
+            entries: [{ id: "svc", files: ["src/pages/Dashboard.tsx", "src/db/store.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/pages/Dashboard.tsx": "export default () => null;",
+                "src/db/store.ts": "await db.insert(rows);",
+            }),
+            database: {
+                databases: [{ id: "infra-pg", districtId: undefined }],
+                writePattern: /\binsert\(/,
+                readPattern: /\bselect\(/,
+            },
+        });
+        expect(edges.map((e) => e.id)).toEqual(["svc--infra-pg-w"]);
+    });
+});
+
+describe("inferExternalDelivers (HC-024 precision)", () => {
+    const externals = [{ id: "external-langfuse", label: "Langfuse" }];
+
+    it("given an entry whose files are all script-reachable, when delivering, then no edge (HC-024)", () => {
+        const edges: MapEdge[] = [];
+        inferExternalDelivers({
+            externals,
+            entries: [{ id: "scripts-env", files: ["scripts/deploy.ts"] }],
+            edges,
+            fileText: textsOf({ "scripts/deploy.ts": "process.env.LANGFUSE_API_KEY;" }),
+            scriptFiles: new Set(["scripts/deploy.ts"]),
+        });
+        expect(edges).toEqual([]);
+    });
+
+    it("given D17 already drew a uses edge from the entry to the external, when delivering, then no second edge (HC-024)", () => {
+        const edges: MapEdge[] = [
+            {
+                id: "src-agent--external-langfuse-u",
+                from: "src-agent",
+                to: "external-langfuse",
+                kind: "data_flow",
+                evidence: "inferred",
+                confidence: 0.7,
+                label: "uses",
+            },
+        ];
+        inferExternalDelivers({
+            externals,
+            entries: [{ id: "src-agent", files: ["src/agent.ts"] }],
+            edges,
+            fileText: textsOf({
+                "src/agent.ts": 'import { Langfuse } from "langfuse";\nprocess.env.LANGFUSE_API_KEY;',
+            }),
+        });
+        expect(edges).toHaveLength(1);
+    });
+
+    it("given an operational (non-script) entry referencing the external, when delivering, then the edge still draws (HC-024)", () => {
+        const edges: MapEdge[] = [];
+        inferExternalDelivers({
+            externals,
+            entries: [{ id: "src-agent", files: ["src/agent.ts"] }],
+            edges,
+            fileText: textsOf({ "src/agent.ts": 'import { Langfuse } from "langfuse";' }),
+            scriptFiles: new Set(["scripts/deploy.ts"]),
+        });
+        expect(edges.map((e) => e.id)).toEqual(["src-agent--external-langfuse-d"]);
+    });
+});

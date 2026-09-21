@@ -26,9 +26,42 @@ const IGNORED_DIRS = new Set([
     "examples",
     "data",
 ]);
-// Codebase/dev utilities are detected by reachability, not by name: code
-// reachable only from package.json scripts and imported by nothing that
-// deploys is excluded from the map (see the reachability section).
+// Content dirs whose ignore can YIELD (HC-022): when one carries its own
+// package.json it is a workspace member package (supabase's apps/docs, a
+// deployed Next.js site), not prose. Build-output and dependency dirs are
+// never yieldable — bundlers write package.json into dist/.
+const YIELDABLE_DIRS = new Set(["docs", "examples", "data"]);
+const yieldChecked = new Map<string, boolean>();
+
+/**
+ * Whether a path is excluded by the ignore set, honouring HC-022's yield: a
+ * content dir with its own package.json is a member package and stays in the
+ * inventory. The yield result is memoised per directory.
+ *
+ * @param file - Repo-relative path.
+ * @param root - Absolute path of the repository being mapped.
+ * @returns True when some parent segment is an ignored dir that does not yield.
+ */
+function excludedByIgnoredDir(file: string, root: string): boolean {
+    const parts = file.split(sep);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+        const seg = parts[depth - 1];
+        if (seg === undefined || !IGNORED_DIRS.has(seg)) continue;
+        if (YIELDABLE_DIRS.has(seg)) {
+            const dir = parts.slice(0, depth).join(sep);
+            const absDir = join(root, dir);
+            let yields = yieldChecked.get(absDir);
+            if (yields === undefined) {
+                yields = existsSync(join(absDir, "package.json"));
+                yieldChecked.set(absDir, yields);
+            }
+            if (yields) continue;
+        }
+        return true;
+    }
+    return false;
+}
+
 // Entry-like file basenames: exactly cli/cmd/main, or the *-cli / *-command
 // suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
 // map modes.
@@ -66,7 +99,7 @@ export function inventory(root: string): string[] {
     }
     return files
         .filter((f) => ![...nestedRepos].some((dir) => f.startsWith(dir + sep)))
-        .filter((f) => !f.split(sep).some((seg) => IGNORED_DIRS.has(seg)))
+        .filter((f) => !excludedByIgnoredDir(f, root))
         .sort();
 }
 
@@ -93,7 +126,10 @@ function walk(root: string): string[] {
             if (entry.name.startsWith(".") && entry.name !== ".github") continue;
             const full = join(dir, entry.name);
             if (entry.isDirectory()) {
-                if (!IGNORED_DIRS.has(entry.name) && !existsSync(join(full, ".git"))) stack.push(full);
+                // HC-022: an ignored content dir with its own package.json is a
+                // member package — walk into it.
+                const yields = YIELDABLE_DIRS.has(entry.name) && existsSync(join(full, "package.json"));
+                if ((!IGNORED_DIRS.has(entry.name) || yields) && !existsSync(join(full, ".git"))) stack.push(full);
             } else if (entry.isFile()) {
                 files.push(relative(root, full));
             }

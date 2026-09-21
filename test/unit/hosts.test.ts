@@ -242,6 +242,29 @@ describe("buildHosts", () => {
         expect(built.hosts.map((h) => h.file)).toEqual(["dcomp/docker-compose.yml"]);
     });
 
+    it("given a compose service bind-mounting the repo root, when built, then the service is tagged a dev environment (HC-024)", () => {
+        writeFile(
+            "devd/docker-compose.yml",
+            [
+                "services:",
+                "  dev:",
+                "    build:",
+                "      context: .",
+                "      dockerfile: Dockerfile",
+                "    volumes:",
+                "      - .:/work",
+            ].join("\n"),
+        );
+        writeFile("devd/Dockerfile", "FROM node\n");
+        const built = buildHosts(
+            repo,
+            ["devd/docker-compose.yml", "devd/Dockerfile"],
+            ["devd/docker-compose.yml"],
+            new Map(),
+        );
+        expect(built.hosts[0]?.services[0]).toMatchObject({ devBindMount: true });
+    });
+
     it("given a build block naming only a context, when bound, then the default <context>/Dockerfile is used (D3, HC-017)", () => {
         writeFile("app/docker-compose.yml", ["services:", "  web:", "    build:", "      context: ."].join("\n"));
         writeFile("app/Dockerfile", "FROM nginx\nCOPY app/src app/src\n");

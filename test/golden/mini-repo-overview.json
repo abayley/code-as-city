@@ -1467,24 +1467,6 @@
       ]
     },
     {
-      "id": "mini-service-src-handler--external-ollama-d",
-      "from": "mini-service-src-handler",
-      "to": "external-ollama",
-      "kind": "data_flow",
-      "evidence": "inferred",
-      "confidence": 0.6,
-      "label": "delivers"
-    },
-    {
-      "id": "mini-api-src-ai--external-ollama-d",
-      "from": "mini-api-src-ai",
-      "to": "external-ollama",
-      "kind": "data_flow",
-      "evidence": "inferred",
-      "confidence": 0.6,
-      "label": "delivers"
-    },
-    {
       "id": "mini-api-src-jobs-sweep--mini-api-src-lib-log-i",
       "from": "mini-api-src-jobs-sweep",
       "to": "mini-api-src-lib-log",

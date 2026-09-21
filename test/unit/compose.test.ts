@@ -45,6 +45,20 @@ describe("parseComposeServices", () => {
         ]);
     });
 
+    it("given a service bind-mounting the repo root, when parsed, then the dev-environment signal is set (HC-024)", () => {
+        const text = [
+            "services:",
+            "  dev:",
+            "    build:",
+            "      context: .",
+            "      dockerfile: Dockerfile",
+            "    volumes:",
+            "      - .:/mermaid",
+            "",
+        ].join("\n");
+        expect(parseComposeServices(text)).toMatchObject([{ name: "dev", devBindMount: true }]);
+    });
+
     it("given the map form of depends_on, when parsed, then service names are collected", () => {
         const text = ["services:", "  api:", "    depends_on:", "      db:", "        condition: service_healthy"].join(
             "\n",

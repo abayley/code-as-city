@@ -8,6 +8,9 @@ export type ComposeService = {
     context?: string | undefined;
     dockerfile?: string | undefined;
     hasPorts?: boolean | undefined;
+    /** HC-024: the service bind-mounts the repo root — a dev environment, not a deployment. */
+    devBindMount?: boolean | undefined;
+    volumesIndent?: number | undefined;
     dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
 };
@@ -56,6 +59,17 @@ export function parseComposeServices(text: string): ComposeService[] {
         const dockerfile = /^dockerfile:\s*(.+)$/.exec(key)?.[1];
         if (dockerfile !== undefined) current.dockerfile = dockerfile.trim();
         if (/^ports:\s*$/.test(key)) current.hasPorts = true;
+        // HC-024: a bind mount of the repo root (`- .:/work`) is how a dev
+        // container mounts your checkout — no image would ever ship that way.
+        if (/^volumes:\s*$/.test(key)) {
+            current.volumesIndent = indent;
+            continue;
+        }
+        if (current.volumesIndent !== undefined && indent > current.volumesIndent) {
+            if (/^-\s*\.\/?\s*:/.test(key)) current.devBindMount = true;
+        } else if (current.volumesIndent !== undefined && indent <= current.volumesIndent) {
+            current.volumesIndent = undefined;
+        }
         if (/^depends_on:\s*$/.test(key)) {
             current.dependsOnIndent = indent;
             current.dependsOn ??= [];

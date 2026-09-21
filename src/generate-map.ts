@@ -44,6 +44,12 @@ const DB_WRITE_PATTERN =
     /insert\s+into\s|delete\s+from\s|\bupdate\s+\w+\s+set\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.(?:insert|update|delete|upsert)\s*\(/i;
 const DB_READ_PATTERN =
     /\bselect\s[\s\S]{0,80}?\bfrom\b|\b(?:db|database|sql|pool|client|store|repository|tx|trx|knex|drizzle)\w*\.select\s*\(/i;
+// HC-024: a module must reference a database client (an SDK import, a pool,
+// a client factory) for its SQL-form matches to draw data-flow edges — the
+// pattern alone fires on string literals in browser components (paperclip's
+// UI, supabase's studio components).
+const DB_CLIENT_PATTERN =
+    /(from\s+["'](pg|postgres|mysql|mysql2|sqlite3|better-sqlite3|kysely|typeorm|drizzle|duckdb|@duckdb\/|embedded-postgres|@vercel\/postgres|@libsql\/))|(createPool\s*\(|new\s+Pool\s*\(|createConnection\s*\(|drizzle\s*\()/i;
 
 /**
  * Runs the generator pipeline for the given CLI arguments and returns the
@@ -204,7 +210,6 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         hostDeployReachable,
         hasHostDeployShape,
         scriptReachable,
-        scriptReferencedFiles,
         spawnedEntries,
         runnableApps,
         devToolingWarnings,
@@ -212,6 +217,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         entryDirNames: ENTRY_DIR_NAMES,
         dbWritePattern: DB_WRITE_PATTERN,
         dbReadPattern: DB_READ_PATTERN,
+        dbClientPattern: DB_CLIENT_PATTERN,
     });
     await emitArtefacts({
         repo,

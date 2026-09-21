@@ -83,6 +83,7 @@ export type DeploymentContext = {
     entryDirNames: ReadonlySet<string>;
     dbWritePattern: RegExp;
     dbReadPattern: RegExp;
+    dbClientPattern: RegExp;
 };
 
 export type AssembledMap = {
@@ -155,6 +156,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         entryDirNames,
         dbWritePattern,
         dbReadPattern,
+        dbClientPattern,
     } = context;
 
     /**
@@ -306,6 +308,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         ensureExternalsDistrict,
         nodeOwningFile,
         isShadowed,
+        scriptReachable,
     };
 
     // 7a / 7a-ii / 7a-iii. Host districts, service wiring, and host-to-host forwarding.
@@ -395,6 +398,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         docForFiles,
         dbWritePattern,
         dbReadPattern,
+        dbClientPattern,
     });
 
     return { nodes, edges, warnings };

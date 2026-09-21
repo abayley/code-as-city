@@ -19,6 +19,16 @@ const SERVER_START = /Bun\.serve|\.listen\s*\(|createServer\s*\(|@fastify|expres
 // command for the package.
 const RUN_SCRIPT = /(^|[:._-])(start|serve)([:._-]|$)/i;
 
+// An app-framework runner command: `next start`, `next dev`, `nuxt dev`,
+// `astro preview`. A package run this way IS the running app even though the
+// command names a binary, not a source file (HC-022).
+const FRAMEWORK_RUN = /(^|[\s/])(next|nuxt|astro|svelte-kit)\s+(start|dev|preview|serve)\b/;
+
+// The router dirs a framework app's pages/components live in, in preference
+// order — the framework arm anchors the runnable app's entry to the first
+// inventoried file under one of these.
+const ROUTER_DIRS = ["app", "pages", "src/app", "src/pages"];
+
 // Conventional web SPA entry files, in preference order (the mount entry before
 // the app component).
 const WEB_ENTRY_NAMES = ["index.tsx", "main.tsx", "index.jsx", "main.jsx", "App.tsx", "app.tsx"];
@@ -73,13 +83,29 @@ export function findRunnableApps(
         }
         const manifest = (readJson(join(repo, pkg.dir === "." ? "" : pkg.dir, "package.json")) ?? {}) as Manifest;
         const runScript = Object.entries(manifest.scripts ?? {}).find(([name]) => RUN_SCRIPT.test(name));
-        if (runScript === undefined) continue;
-        const target = runScript[1]
-            .split(/\s+/)
-            .map((token) => resolveScriptTarget(pkg.dir, token, inventory))
-            .find((resolved): resolved is string => resolved !== null);
-        if (target !== undefined && SERVER_START.test(readText(join(repo, target)))) {
-            apps.push({ pkgDir: pkg.dir, entry: target, tag: "server" });
+        if (runScript !== undefined) {
+            const target = runScript[1]
+                .split(/\s+/)
+                .map((token) => resolveScriptTarget(pkg.dir, token, inventory))
+                .find((resolved): resolved is string => resolved !== null);
+            if (target !== undefined && SERVER_START.test(readText(join(repo, target)))) {
+                apps.push({ pkgDir: pkg.dir, entry: target, tag: "server" });
+                continue;
+            }
+        }
+        // HC-022: an app-framework run command (`next start`, `nuxt dev`) — the
+        // package is the running app even though the command names a binary.
+        // The entry anchors to the router dir's first inventoried file.
+        const frameworkScript = Object.entries(manifest.scripts ?? {}).find(([, command]) =>
+            FRAMEWORK_RUN.test(command),
+        );
+        if (frameworkScript !== undefined) {
+            const entry = sourceFiles.find((file) =>
+                ROUTER_DIRS.some((dir) => file.startsWith(`${inPkg(pkg.dir, dir)}/`)),
+            );
+            if (entry !== undefined) {
+                apps.push({ pkgDir: pkg.dir, entry, tag: "server" });
+            }
         }
     }
     return apps;

@@ -49,3 +49,29 @@ describe("findRunnableApps", () => {
         expect(findRunnableApps(repo, packages, files)).toEqual([]);
     });
 });
+
+describe("findRunnableApps (HC-022 framework runners)", () => {
+    it("given a start script running a framework command, when scanned, then the app anchors to its router entry (D16, HC-022)", () => {
+        write(
+            "studio/package.json",
+            JSON.stringify({ name: "studio", private: true, scripts: { start: "next start" } }),
+        );
+        write("studio/app/layout.tsx", "export default function Layout() { return null; }\n");
+        write("studio/app/page.tsx", "export default function Page() { return null; }\n");
+        const files = ["studio/package.json", "studio/app/layout.tsx", "studio/app/page.tsx"];
+        const packages = discoverPackages(repo, packageDirsOf(files));
+        const apps = findRunnableApps(repo, packages, files);
+        expect(apps).toEqual([{ pkgDir: "studio", entry: "studio/app/layout.tsx", tag: "server" }]);
+    });
+
+    it("given a pages-router app, when scanned, then the pages entry anchors the app (D16, HC-022)", () => {
+        write("docsapp/package.json", JSON.stringify({ name: "docsapp", scripts: { dev: "next dev" } }));
+        write("docsapp/pages/index.tsx", "export default function Page() { return null; }\n");
+        const files = ["docsapp/package.json", "docsapp/pages/index.tsx"];
+        const packages = discoverPackages(repo, packageDirsOf(files));
+        // A dev-only script name is QA/operational split territory; the
+        // framework arm matches the "dev" name too — the router entry anchors.
+        const apps = findRunnableApps(repo, packages, files);
+        expect(apps).toEqual([{ pkgDir: "docsapp", entry: "docsapp/pages/index.tsx", tag: "server" }]);
+    });
+});

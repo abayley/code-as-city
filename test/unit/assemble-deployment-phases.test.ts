@@ -46,6 +46,7 @@ function makeState(overrides: Partial<AssemblyState> = {}): AssemblyState {
         ensureExternalsDistrict: () => "external-systems",
         nodeOwningFile: () => null,
         isShadowed: () => false,
+        scriptReachable: new Set<string>(),
         ...overrides,
     };
 }

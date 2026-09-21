@@ -48,3 +48,31 @@ describe("inventory (fs-walk fallback)", () => {
         expect(inventory(root)).toEqual([".github/workflows/ci.yml", "src/a.ts", "src/b.ts"]);
     });
 });
+
+describe("inventory (HC-022 member-package yield)", () => {
+    const root = mkdtempSync(join(tmpdir(), "code-as-city-inv2-"));
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    it("given a docs dir that is its own workspace package, when inventoried, then the member package is kept", () => {
+        // supabase's apps/docs: a deployed Next.js site swallowed by the
+        // "docs" ignore segment. A member package yields.
+        mkdirSync(join(root, "apps", "docs", "src"), { recursive: true });
+        writeFileSync(
+            join(root, "apps", "docs", "package.json"),
+            JSON.stringify({ name: "docs", main: "src/index.ts" }),
+        );
+        writeFileSync(join(root, "apps", "docs", "src", "index.ts"), "export const x = 1;\n");
+        expect(inventory(root)).toContain("apps/docs/src/index.ts");
+    });
+
+    it("given a plain docs dir and a dist with a package.json, when inventoried, then both stay ignored", () => {
+        mkdirSync(join(root, "guides", "docs"), { recursive: true });
+        writeFileSync(join(root, "guides", "docs", "intro.md"), "# intro\n");
+        mkdirSync(join(root, "packages", "x", "dist"), { recursive: true });
+        writeFileSync(join(root, "packages", "x", "dist", "package.json"), "{}");
+        writeFileSync(join(root, "packages", "x", "dist", "index.js"), "export {};\n");
+        const files = inventory(root);
+        expect(files.some((f) => f.startsWith("guides/docs/"))).toBe(false);
+        expect(files.some((f) => f.startsWith("packages/x/dist/"))).toBe(false);
+    });
+});

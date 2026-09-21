@@ -31,8 +31,12 @@ type WranglerConfig = { main?: string; name?: string; d1_databases?: unknown[] }
  *   bindings), or null when the repo has no wrangler config.
  */
 export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHost | null {
-    const wranglerFile = allFiles.find((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));
-    if (wranglerFile === undefined) return null;
+    // HC-024: a wrangler config under a template dir is copied into USER
+    // projects (paperclip's cloudflare bridge-template) — this repo deploys
+    // nothing with it.
+    const candidates = allFiles.filter((f) => /(^|\/)wrangler\.(toml|json|jsonc)$/.test(f));
+    const wranglerFile = candidates.find((f) => !/(^|\/)[^/]*template[^/]*\//i.test(f)) ?? null;
+    if (wranglerFile === null) return null;
     const text = readText(join(repo, wranglerFile))
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "");

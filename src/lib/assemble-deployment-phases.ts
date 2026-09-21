@@ -89,6 +89,8 @@ export type AssemblyState = {
     nodeOwningFile: (file: string) => string | null;
     /** Whether a service is shadowed by its canonical topology owner (D1, name+image). */
     isShadowed: (host: Host, service: ServiceIdentity) => boolean;
+    /** The script-reachable file set (R1): build/operational tooling, not the running system. */
+    scriptReachable: ReadonlySet<string>;
 };
 
 /**
@@ -526,9 +528,10 @@ export function assembleStaticClassification(
         docForFiles: (files: readonly string[]) => string | null;
         dbWritePattern: RegExp;
         dbReadPattern: RegExp;
+        dbClientPattern?: RegExp | undefined;
     },
 ): void {
-    const { repo, nodes, edges, fileText } = state;
+    const { repo, nodes, edges, fileText, scriptReachable } = state;
     const {
         campusFileSets,
         promotedNodes,
@@ -538,6 +541,7 @@ export function assembleStaticClassification(
         docForFiles,
         dbWritePattern,
         dbReadPattern,
+        dbClientPattern,
     } = options;
     const classificationSets: ClassificationSet[] = [
         ...campusFileSets,
@@ -558,6 +562,8 @@ export function assembleStaticClassification(
         entries: classificationSets,
         edges,
         fileText,
+        // HC-024: build tooling reachable only from scripts ships no data.
+        scriptFiles: scriptReachable,
     });
 
     for (const { id, files, entryFile } of classificationSets) {
@@ -613,6 +619,7 @@ export function assembleStaticClassification(
             databases: databaseNodes.map((db) => ({ id: db.id, districtId: districtLookup.get(db.id) })),
             writePattern: dbWritePattern,
             readPattern: dbReadPattern,
+            clientPattern: dbClientPattern,
         },
     });
 }
@@ -779,6 +786,9 @@ export function assembleHostDistricts(
                     isScheduled ? "cron" : null,
                     service.hasPorts ? "listens" : null,
                     isAlternative ? "alternative" : null,
+                    // HC-024: a dev container bind-mounts the checkout instead
+                    // of shipping an image — present it as what it is.
+                    service.devBindMount ? "dev-environment" : null,
                 ].filter((tag): tag is string => tag !== null),
                 display: { flowLayer },
             });

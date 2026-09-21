@@ -194,18 +194,24 @@ export function inferExternalServiceUse(options: {
 /**
  * M10/O8: entries referencing an external system by SDK import or env-var
  * prefix deliver data to it. Entries that are the external itself or carry
- * no files are skipped in both modes.
+ * no files are skipped in both modes. Two precision guards (HC-024): an
+ * entry whose files are ALL script-reachable (build tooling, not the running
+ * system) is skipped when the caller passes `scriptFiles`; and an entry the
+ * D17 pass already connected to the external draws no second edge.
  *
  * @param options - The pass inputs: `externals` — the external-system nodes
  *   (M6/D11/D12), matched by their label's identifying first word; `entries` —
  *   the node-shaped records to test; `edges` — the accumulating edge list,
- *   mutated in place; `fileText` — reads a repo-relative file's text.
+ *   mutated in place; `fileText` — reads a repo-relative file's text;
+ *   `scriptFiles` — the script-reachable file set (R1); an entry whose files
+ *   all sit in it draws nothing.
  */
 export function inferExternalDelivers(options: {
     externals: readonly { id: string; label: string }[];
     entries: readonly NodeIndexEntry[];
     edges: MapEdge[];
     fileText: (file: string) => string;
+    scriptFiles?: ReadonlySet<string> | undefined;
 }): void {
     for (const external of options.externals) {
         // Match on the label's identifying FIRST word, not the whole label
@@ -217,6 +223,11 @@ export function inferExternalDelivers(options: {
         const referencePattern = externalReferencePattern(name);
         for (const entry of options.entries) {
             if (entry.id === external.id || !entry.files.length) continue;
+            // HC-024: build scripts reference endpoints without shipping data.
+            if (options.scriptFiles !== undefined && entry.files.every((f) => options.scriptFiles?.has(f))) continue;
+            // HC-024: the D17 pass already drew this relationship ("uses");
+            // a second inferred edge for the same pair is double-drawing.
+            if (options.edges.some((edge) => edge.from === entry.id && edge.to === external.id)) continue;
             if (!entry.files.some((file) => referencePattern.test(options.fileText(file)))) continue;
             addEdge(options.edges, {
                 id: `${entry.id}--${external.id}-d`,
@@ -257,6 +268,8 @@ export function inferModuleDataFlows(options: {
               databases: readonly { id: string; districtId?: string | undefined }[];
               writePattern: RegExp;
               readPattern: RegExp;
+              /** HC-024: a module must also reference a db client (SDK import, pool) for its SQL forms to count. */
+              clientPattern?: RegExp | undefined;
           }
         | undefined;
 }): void {
@@ -276,6 +289,17 @@ export function inferModuleDataFlows(options: {
         }
         const database = options.database;
         if (!database) continue;
+        // HC-024: a browser-only module (every file .tsx/.jsx) cannot open a
+        // SQL connection — a write/read pattern match there is a string
+        // literal in component code, not a query. And without a database
+        // client reference anywhere in the module, a pattern match is a
+        // string literal too.
+        const browserOnly =
+            entry.files.length > 0 && entry.files.every((f) => f.endsWith(".tsx") || f.endsWith(".jsx"));
+        const hasClient =
+            database.clientPattern === undefined ||
+            entry.files.some((f) => database.clientPattern?.test(options.fileText(f)));
+        if (browserOnly || !hasClient) continue;
         const target = (database.databases.find((db) => db.districtId === entry.districtId) ?? database.databases[0])
             ?.id;
         if (target === undefined || target === entry.id) continue;
