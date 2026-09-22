@@ -315,3 +315,62 @@ describe("buildHosts", () => {
         expect(api?.copies).toEqual([]);
     });
 });
+
+describe("standalone Dockerfiles (HC-018)", () => {
+    it("given a Dockerfile with no compose owner, when built, then it becomes a single-service image host", () => {
+        writeFile("lone/Dockerfile", 'FROM node:20-slim\nCOPY lone/src lone/src\nCMD ["node", "lone/src/main.ts"]');
+        const built = buildHosts(repo, ["lone/Dockerfile", "lone/src/main.ts"], [], new Map());
+        expect(built.hosts).toHaveLength(1);
+        expect(built.hosts[0]).toMatchObject({ file: "lone/Dockerfile" });
+        expect(built.hosts[0]?.services).toHaveLength(1);
+        expect(built.hosts[0]?.services[0]).toMatchObject({
+            name: "app",
+            dockerfile: "lone/Dockerfile",
+            copies: ["lone/src"],
+            entryFile: "lone/src/main.ts",
+        });
+    });
+
+    it("given a Dockerfile a compose service builds, when built, then it is not drawn twice", () => {
+        writeFile("owned/docker-compose.yml", ["services:", "  web:", "    build:", "      context: ."].join("\n"));
+        writeFile("owned/Dockerfile", "FROM nginx\n");
+        const built = buildHosts(
+            repo,
+            ["owned/docker-compose.yml", "owned/Dockerfile"],
+            ["owned/docker-compose.yml"],
+            new Map(),
+        );
+        expect(built.hosts).toHaveLength(1);
+        expect(built.hosts[0]?.file).toBe("owned/docker-compose.yml");
+    });
+
+    it("given a Dockerfile under a test path, when built, then it is a fixture, not a host", () => {
+        writeFile("tests/fixture/Dockerfile", "FROM node\n");
+        const built = buildHosts(repo, ["tests/fixture/Dockerfile"], [], new Map());
+        expect(built.hosts).toHaveLength(0);
+    });
+
+    it("given Dockerfile name variants, when built, then dash, dot, and lowercase forms all bind (HC-018)", () => {
+        writeFile("variants/Dockerfile-prod", 'FROM node\nCMD ["node", "variants/a.ts"]');
+        writeFile("variants/dockerfile", 'FROM node\nCMD ["node", "variants/b.ts"]');
+        const built = buildHosts(
+            repo,
+            ["variants/Dockerfile-prod", "variants/dockerfile", "variants/a.ts", "variants/b.ts"],
+            [],
+            new Map(),
+        );
+        expect(built.hosts).toHaveLength(2);
+    });
+
+    it("given a dev-qualified Dockerfile with a plain CMD, when built, then the service is tagged dev-environment (HC-018)", () => {
+        writeFile("devimg/Dockerfile.dev", 'FROM node\nCMD ["node", "devimg/a.ts"]');
+        const built = buildHosts(repo, ["devimg/Dockerfile.dev", "devimg/a.ts"], [], new Map());
+        expect(built.hosts[0]?.services[0]).toMatchObject({ devEnvironment: true });
+    });
+
+    it("given a latest-qualified Dockerfile, when built, then the test-substring does not mark it dev (HC-018)", () => {
+        writeFile("latest/Dockerfile-latest", 'FROM node\nCMD ["node", "latest/a.ts"]');
+        const built = buildHosts(repo, ["latest/Dockerfile-latest", "latest/a.ts"], [], new Map());
+        expect(built.hosts[0]?.services[0]).toMatchObject({ devEnvironment: false });
+    });
+});

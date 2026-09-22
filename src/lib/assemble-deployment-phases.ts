@@ -100,19 +100,31 @@ export type AssemblyState = {
  * dist->src convention, and the owning node becomes the deployable — a CLI or
  * extension reads as a gateway, a library as a building (only when it holds the
  * two rooms the validator requires; otherwise a gateway). A runnable app (D16)
- * takes precedence, so its package is skipped here. Mutates matched nodes in
- * place.
+ * takes precedence, so its package is skipped here. A workspace library whose
+ * files land in a host image (HC-021: a D3 COPY claims its directory, so it is
+ * a component of that deployment, not an artefact of its own) keeps its node
+ * with a `bundled` tag instead of a deployable marking — paperclip's bundled
+ * adapters read as bundled, and the `published` tag keeps meaning "ships to
+ * users". The claim reads two ways (SP-C2): a claimed directory owned by the
+ * package, or a claimed file of the package — a coarse COPY of a parent dir
+ * (owned by the root) still bundles the files it lands in the image. Mutates
+ * matched nodes in place.
  *
- * @param state - The assembly state (`nodes` reclassified in place, plus
- *   `fileExists`/`nodeOwningFile`).
- * @param options - `packages` to scan; `runnableByDir` to yield D16 precedence.
+ * @param state - The assembly state (`nodes`/`warnings` reclassified in place,
+ *   plus `fileExists`/`fileNodeOwner`/`nodeOwningFile`/`owningPackage`).
+ * @param options - `packages` to scan; `runnableByDir` to yield D16 precedence;
+ *   `serviceClaimedDirs` the D3-claimed dirs a bundled package is read from.
  */
 export function reclassifyPublishedArtefacts(
     state: AssemblyState,
-    options: { packages: readonly Package[]; runnableByDir: ReadonlyMap<string, RunnableApp> },
+    options: {
+        packages: readonly Package[];
+        runnableByDir: ReadonlyMap<string, RunnableApp>;
+        serviceClaimedDirs: ReadonlySet<string>;
+    },
 ): void {
-    const { nodes, fileExists, nodeOwningFile } = state;
-    const { packages, runnableByDir } = options;
+    const { nodes, warnings, fileExists, fileNodeOwner, nodeOwningFile, owningPackage } = state;
+    const { packages, runnableByDir, serviceClaimedDirs } = options;
     for (const pkg of packages) {
         const artefact = pkg.artefact;
         // A runnable app (D16) is shown as the app it runs, not as a published
@@ -123,6 +135,15 @@ export function reclassifyPublishedArtefacts(
         const node = nodeId ? nodes.find((n) => n.id === nodeId) : undefined;
         // Only reclassify a package room; never a hosted service's node.
         if (node === undefined || node.kind !== "module" || (node.parentId ?? "").startsWith("host-")) continue;
+        const claimedDir = [...serviceClaimedDirs].some((dir) => owningPackage(dir) === pkg);
+        const claimedFile = [...fileNodeOwner].some(
+            ([file, owner]) => owner.startsWith("host-") && owningPackage(file) === pkg,
+        );
+        if (claimedDir || claimedFile) {
+            node.tags = [...new Set([...(node.tags ?? []), "bundled"])];
+            warnings.push(`Published package bundled into a host image, not a deployable of its own: ${pkg.name}.`);
+            continue;
+        }
         node.kind = "deployable";
         // A library reads as a building, but the validator requires a building to
         // hold at least two rooms; a single-room entry (and every CLI/extension)

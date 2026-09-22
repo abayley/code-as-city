@@ -74,6 +74,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         reclassifyPublishedArtefacts(state, {
             packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js", types: null } })],
             runnableByDir: new Map(),
+            serviceClaimedDirs: new Set(),
         });
         expect(nodes[0]).toMatchObject({ kind: "deployable", archetype: "building", tags: ["published"] });
     });
@@ -84,6 +85,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         reclassifyPublishedArtefacts(state, {
             packages: [pkg({ artefact: { kind: "library", tag: "published", entry: "dist/index.js", types: null } })],
             runnableByDir: new Map(),
+            serviceClaimedDirs: new Set(),
         });
         expect(nodes[0]).toMatchObject({ kind: "deployable", archetype: "gateway" });
     });
@@ -96,6 +98,7 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
             runnableByDir: new Map([
                 ["packages/p", { pkgDir: "packages/p", entry: "packages/p/src/main.ts", tag: "server" }],
             ]),
+            serviceClaimedDirs: new Set(),
         });
         expect(nodes[0]).toMatchObject({ kind: "module", archetype: "worker" });
     });
@@ -106,8 +109,48 @@ describe("reclassifyPublishedArtefacts (D14)", () => {
         reclassifyPublishedArtefacts(state, {
             packages: [pkg({ artefact: { kind: "cli", tag: "cli", entry: "cli.js", types: null } })],
             runnableByDir: new Map(),
+            serviceClaimedDirs: new Set(),
         });
         expect(nodes[0]?.kind).toBe("module");
+    });
+
+    it("given a published package claimed by a host image, when reclassified, then it is bundled, not a deployable (HC-021)", () => {
+        const nodes = [moduleNode("x-p-src")];
+        const target = pkg({ artefact: { kind: "library", tag: "published", entry: "src/index.ts", types: null } });
+        const state = makeState({
+            nodes,
+            nodeOwningFile: () => "x-p-src",
+            fileExists: () => true,
+            owningPackage: () => target,
+        });
+        reclassifyPublishedArtefacts(state, {
+            packages: [target],
+            runnableByDir: new Map(),
+            serviceClaimedDirs: new Set(["packages/p/lib"]),
+        });
+        expect(nodes[0]).toMatchObject({ kind: "module", tags: ["bundled"] });
+        expect(state.warnings.some((w) => w.includes("@x/p"))).toBe(true);
+    });
+
+    it("given a published package whose files a coarse COPY lands in the image, when reclassified, then file membership bundles it (HC-021)", () => {
+        const nodes = [moduleNode("x-p-src")];
+        const target = pkg({ artefact: { kind: "library", tag: "published", entry: "src/index.ts", types: null } });
+        const state = makeState({
+            nodes,
+            fileNodeOwner: new Map([["packages/p/src/other.ts", "host-x-svc"]]),
+            nodeOwningFile: () => "x-p-src",
+            fileExists: () => true,
+            // The coarse parent dir belongs to no package here (the root in a
+            // real repo); only the landed file attributes to the target.
+            owningPackage: (file: string) => (file.startsWith("packages/p") ? target : null),
+        });
+        reclassifyPublishedArtefacts(state, {
+            packages: [target],
+            runnableByDir: new Map(),
+            // A coarse COPY of the parent: owned by the root, not the package.
+            serviceClaimedDirs: new Set(["packages"]),
+        });
+        expect(nodes[0]).toMatchObject({ kind: "module", tags: ["bundled"] });
     });
 });
 

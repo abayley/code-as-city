@@ -1019,8 +1019,85 @@
       }
     },
     {
+      "id": "mini-bundled-district",
+      "label": "@Mini/Bundled",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: packages/bundled/ — 2 modules — deploys to mini-repo.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "mini-bundled-lib-util",
+      "label": "Util",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-bundled-district",
+      "description": "Shared helper baked into the api image.",
+      "sourceRefs": [
+        {
+          "path": "packages/bundled/lib/util.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer",
+        "host:mini-repo"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-bundled-src-index",
+      "label": "Src",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-bundled-district",
+      "description": "Bundled helper re-exported through the package entry.",
+      "sourceRefs": [
+        {
+          "path": "packages/bundled/src/index.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 1
+      }
+    },
+    {
       "id": "mini-ml-district",
-      "label": "@Mini/Ml",
+      "label": "Mini Ml",
       "kind": "scope",
       "archetype": "district",
       "description": "Function area: packages/ml/ — 1 module — deploys to mini-repo.",
@@ -1040,11 +1117,57 @@
       "parentId": "mini-ml-district",
       "description": "Serves the ml model over HTTP.",
       "attributes": {
-        "entry-point": "packages/ml/src/main.ts"
+        "entry-point": "packages/ml/src/main.py"
       },
       "sourceRefs": [
         {
-          "path": "packages/ml/src/main.ts"
+          "path": "packages/ml/src/main.py"
+        }
+      ],
+      "metrics": {
+        "loc": 6,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer",
+        "host:mini-repo"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 0
+      }
+    },
+    {
+      "id": "mini-repo-district",
+      "label": "Mini Repo",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Function area: repository root — 1 module — deploys to mini-repo image.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#C77740",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "mini-repo-scripts-serve",
+      "label": "Serve",
+      "kind": "module",
+      "archetype": "worker",
+      "parentId": "mini-repo-district",
+      "description": "Serves the standalone image's health endpoint.",
+      "sourceRefs": [
+        {
+          "path": "scripts/serve.ts"
         }
       ],
       "metrics": {
@@ -1054,7 +1177,7 @@
       },
       "tags": [
         "composer",
-        "host:mini-repo"
+        "host:mini-repo image"
       ],
       "display": {
         "size": [
@@ -1573,7 +1696,7 @@
   ],
   "warnings": [
     "Overview mode: orphan exclusion is intentionally skipped; QA-only dev tooling is stripped as in the deployment map.",
-    "Dev tooling excluded (reachable only from QA package.json scripts): scripts (1 files).",
+    "Dev tooling stripped from scripts: 1 QA-script file (kept 1 operational).",
     "Only data-flow edges are shown; import dependencies are omitted by design.",
     "Shared-code districts (>=60% high fan-in / low fan-out modules) are coloured differently.",
     "Complexity is the module's worst single function (McCabe-style decision-point count), not a module-wide sum."

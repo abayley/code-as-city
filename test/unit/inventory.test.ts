@@ -15,6 +15,12 @@ describe("isTestPath", () => {
         expect(isTestPath("src/thing_test.go")).toBe(true);
     });
 
+    it("given pytest conventions, when classified, then test modules and conftest are test paths (HC-026)", () => {
+        expect(isTestPath("services/ml/src/test_inference.py")).toBe(true);
+        expect(isTestPath("services/ml/conftest.py")).toBe(true);
+        expect(isTestPath("services/ml/src/main.py")).toBe(false);
+    });
+
     it("given ordinary source, when classified, then it is not a test path", () => {
         expect(isTestPath("src/server.ts")).toBe(false);
         expect(isTestPath("src/latest/x.ts")).toBe(false);

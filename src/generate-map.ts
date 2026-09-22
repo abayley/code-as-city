@@ -21,7 +21,7 @@ import { layerHosts, scanHostConfigs } from "./lib/host-config.ts";
 import { buildHosts } from "./lib/hosts.ts";
 import { scanImports } from "./lib/imports.ts";
 import { extensionOf, inventory, isTestPath, SOURCE_EXTENSIONS } from "./lib/inventory.ts";
-import { discoverPackages, packageDirsOf } from "./lib/packages.ts";
+import { discoverPackages, discoverPythonPackages, packageDirsOf, pythonPackageDirsOf } from "./lib/packages.ts";
 import { findPathReassignments } from "./lib/path-references.ts";
 import { analyseReachability, stripDevTooling } from "./lib/reachability.ts";
 import { readText } from "./lib/read.ts";
@@ -83,7 +83,13 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
 
     // 2. Packages
     const packageDirs = packageDirsOf(allFiles);
-    const packages = discoverPackages(repo, packageDirs);
+    const usedIds = new Set<string>();
+    const packages = discoverPackages(repo, packageDirs, usedIds);
+    // HC-026: directories with a pyproject.toml/uv.lock/requirements.txt are
+    // Python packages (immich's machine-learning/). A directory that already
+    // has a package.json keeps its Node identity.
+    const pythonDirs = pythonPackageDirsOf(allFiles).filter((dir) => !packageDirs.includes(dir));
+    packages.push(...discoverPythonPackages(repo, pythonDirs, usedIds));
 
     // 3. Rooms
     const rooms = buildRooms(repo, packages, sourceFiles);

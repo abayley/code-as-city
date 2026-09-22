@@ -377,7 +377,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
 
     // 7c-iv / 7c-iv-b. D14 published artefacts and D16 runnable apps: reclassify
     // the owning package room into a tagged deployable (D14 yields to D16).
-    reclassifyPublishedArtefacts(state, { packages, runnableByDir });
+    reclassifyPublishedArtefacts(state, { packages, runnableByDir, serviceClaimedDirs });
     reclassifyRunnableApps(state, { runnableApps });
 
     // 7c-v. D15: runtime-supervised processes spawned from deploy-reachable code.

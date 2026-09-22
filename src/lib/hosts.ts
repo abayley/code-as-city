@@ -3,9 +3,11 @@
 // rules D1/D2/D3/D5/D6).
 
 import { basename, dirname, join, sep } from "node:path";
+import { uniqueId } from "./assembly-helpers.ts";
 import { type ComposeService, parseComposeServices } from "./compose.ts";
 import type { CrontabSchedule } from "./crontab.ts";
 import { parseDockerfile } from "./dockerfile.ts";
+import { isTestPath } from "./inventory.ts";
 import { readText } from "./read.ts";
 import { kebab } from "./text.ts";
 
@@ -138,7 +140,7 @@ function envRank(file: string): number {
  * @param file - Repo-relative path of the compose file.
  * @returns True when the filename carries no qualifier.
  */
-function isCanonicalComposeFile(file: string): boolean {
+export function isCanonicalComposeFile(file: string): boolean {
     return /^(docker-)?compose\.ya?ml$/.test(basename(file));
 }
 
@@ -286,8 +288,10 @@ export type HostShape = {
  * or name. Environment variants are deduped — a host covered >=50% by a
  * higher-ranked variant (prod > uat > example > unqualified > dev), or by
  * an equally-ranked variant with the lower filename, is
- * dropped — while service-level depends_on is harvested across ALL variants
- * so wiring declared only in a deduped variant still informs edges.
+ *   dropped — while service-level depends_on is harvested across ALL variants
+ *   so wiring declared only in a deduped variant still informs edges. A
+ *   Dockerfile no compose service builds becomes its own single-service host
+ *   (HC-018: the image a user pulls and runs directly).
  *
  * @param repo - Absolute path of the repository being mapped.
  * @param allFiles - The full repo inventory, used to resolve Dockerfile
@@ -390,6 +394,54 @@ export function buildHosts(
     }
     const serviceOwner = new Map<string, string>();
     for (const [key, claim] of claims) serviceOwner.set(key, claim.hostId);
+
+    // HC-018: a standalone Dockerfile with no compose owner declares a
+    // deployment of its own (ollama-code's root image, pulled and run
+    // directly): one single-service host per unowned Dockerfile. Guarded
+    // twice — a Dockerfile a compose service already builds (including via a
+    // context-default Dockerfile, HC-017) is not drawn again, and a Dockerfile
+    // under a test path (I4) is a fixture, not a deployment. The image is
+    // whatever the Dockerfile runs, so there is no D5 classification; a
+    // dev/test/local filename qualifier (Dockerfile.dev) tags the service
+    // dev-environment like a dev-server command does, rather than excluding
+    // it. The `image` qualifier keeps a repo's Dockerfile host distinct from
+    // its compose host of the same basename.
+    const boundDockerfiles = new Set(
+        candidateHosts.flatMap((host) => host.services.map((service) => service.dockerfile)),
+    );
+    const takenIds = new Set(hosts.map((host) => host.id));
+    for (const file of allFiles) {
+        if (!/^[Dd]ockerfile([-_.].+)?$/.test(basename(file))) continue;
+        if (boundDockerfiles.has(file) || isTestPath(file)) continue;
+        const dir = dirname(file);
+        const parsed = parseDockerfile(repo, file, allFiles, dir === "." ? undefined : dir);
+        const name = `${basename(repo)} image`;
+        const id = uniqueId(kebab(`host-${name}`), (candidate) => takenIds.has(candidate));
+        takenIds.add(id);
+        // A dev/test/local filename qualifier names a non-production image
+        // (Dockerfile.dev); segment-wise, so Dockerfile-latest stays a host.
+        const qualifier = basename(file)
+            .replace(/^[Dd]ockerfile/, "")
+            .split(/[-_.]/);
+        const devVariant = qualifier.some((segment) => /^(dev|test|local)$/i.test(segment));
+        const standalone: Host = {
+            file,
+            name,
+            id,
+            services: [
+                {
+                    name: "app",
+                    dockerfile: file,
+                    copies: parsed.copies,
+                    entryFile: parsed.entryFile,
+                    devEnvironment: Boolean(parsed.devServer || devVariant),
+                },
+            ],
+            rank: envRank(file),
+        };
+        candidateHosts.push(standalone);
+        hosts.push(standalone);
+    }
 
     return { hosts, candidateHosts, serviceDependsOn, serviceOwner };
 }

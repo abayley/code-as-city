@@ -20,7 +20,7 @@ import { isExcludedCopyDir, normaliseCopyDir } from "./copy-attribution.ts";
 import type { Coupling } from "./coupling.ts";
 import { emitMap } from "./emit.ts";
 import type { HostScanResult } from "./host-config.ts";
-import type { Host } from "./hosts.ts";
+import { type Host, isCanonicalComposeFile } from "./hosts.ts";
 import type { FileEdge, MapEdge, MapNode } from "./map-types.ts";
 import { readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
@@ -186,7 +186,21 @@ export async function runOverview(context: OverviewContext): Promise<void> {
     const hostBand = (name: string) => 2 + (hostLayer.get(name) ?? 0);
     const maxHostBand = 2 + Math.max(0, ...hostLayer.values());
     const EXTERNALS_BAND = maxHostBand + 1;
-    const hostNameForBand = new Map([...hostLayer.entries()].map(([name, layer]) => [2 + layer, name]));
+    // First host wins a shared band, preferring the canonical topology: a
+    // Dockerfile-only image host (HC-018) layers alongside the compose host
+    // without joining its forwarding chain, and the band keeps the primary
+    // topology's name rather than whichever host the layer map lists last.
+    // The canonical set is built once (S3/S4): the comparator below must not
+    // reach back into the host list per comparison.
+    const canonicalNames = new Set(hosts.filter((host) => isCanonicalComposeFile(host.file)).map((host) => host.name));
+    const bandNames = [...hostLayer.keys()].sort(
+        (a, b) => Number(!canonicalNames.has(a)) - Number(!canonicalNames.has(b)),
+    );
+    const hostNameForBand = new Map<number, string>();
+    for (const name of bandNames) {
+        const band = 2 + (hostLayer.get(name) ?? 0);
+        if (!hostNameForBand.has(band)) hostNameForBand.set(band, name);
+    }
     /**
      * Human-readable name for a band, used in the band: tags on districts.
      *

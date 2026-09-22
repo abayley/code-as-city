@@ -5,9 +5,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
     artefactEntryCandidates,
     discoverPackages,
+    discoverPythonPackages,
     owningPackage,
     type Package,
     packageDirsOf,
+    pythonPackageDirsOf,
 } from "../../src/lib/packages";
 
 const repo = mkdtempSync(join(tmpdir(), "code-as-city-pkg-"));
@@ -148,6 +150,58 @@ describe("packages", () => {
         expect(tools).toHaveLength(2);
         expect(tools[0]?.id).toBe("x-tool");
         expect(tools[1]?.id).toBe("x-tool-2");
+    });
+});
+
+describe("python packages (HC-026)", () => {
+    function writePyProject(dir: string, content: string): void {
+        mkdirSync(join(repo, dir), { recursive: true });
+        writeFileSync(join(repo, dir, "pyproject.toml"), content);
+    }
+    writePyProject("services/ml", '[project]\nname = "x-ml"\nversion = "0.1.0"\n');
+    mkdirSync(join(repo, "services/legacy"), { recursive: true });
+    writeFileSync(join(repo, "services/legacy/requirements.txt"), "transformers\n");
+
+    it("given marker files, when dirs are listed, then one dir per marker", () => {
+        expect(pythonPackageDirsOf(["services/ml/pyproject.toml", "services/legacy/requirements.txt"])).toEqual([
+            "services/legacy",
+            "services/ml",
+        ]);
+    });
+
+    it("given a pyproject name, when discovered, then the package takes that name with no artefact", () => {
+        const found = discoverPythonPackages(repo, ["services/ml"], new Set<string>());
+        expect(found[0]).toMatchObject({ dir: "services/ml", name: "x-ml", role: "package", id: "x-ml" });
+        expect(found[0]?.artefact).toBeNull();
+    });
+
+    it("given a taken id, when discovered, then the python package id is suffixed like a node package (HC-015)", () => {
+        const found = discoverPythonPackages(repo, ["services/ml"], new Set(["x-ml"]));
+        expect(found[0]?.id).toBe("x-ml-2");
+    });
+
+    it("given a name under a later section, when discovered, then the [project] section bounds the match (HC-026)", () => {
+        mkdirSync(join(repo, "services/confused"), { recursive: true });
+        writeFileSync(
+            join(repo, "services/confused/pyproject.toml"),
+            [
+                "[project]",
+                'version = "0.1.0"',
+                "",
+                "[project.urls]",
+                'Homepage = "https://x"',
+                "",
+                "[tool.setup]",
+                'name = "wrong"',
+            ].join("\n"),
+        );
+        const found = discoverPythonPackages(repo, ["services/confused"]);
+        expect(found[0]).toMatchObject({ name: "confused" });
+    });
+
+    it("given a requirements-only dir, when discovered, then the directory basename names the package", () => {
+        const found = discoverPythonPackages(repo, ["services/legacy"]);
+        expect(found[0]).toMatchObject({ dir: "services/legacy", name: "legacy" });
     });
 });
 

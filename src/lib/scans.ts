@@ -91,7 +91,8 @@ export type DocScanner = {
 /**
  * TSDoc extraction: the first slash-star-star block that is file-level (only
  * comments or whitespace before it) or attached to an export becomes the
- * node's prose. First paragraph only, tags dropped, capped at 280 characters.
+ * node's prose. A Python module's leading `"""` docstring (HC-026) reads the
+ * same way. First paragraph only, tags dropped, capped at 280 characters.
  * For a multi-file node, the entry-like file's doc is preferred.
  *
  * @param repo - Absolute path of the repository being mapped.
@@ -101,7 +102,26 @@ export type DocScanner = {
 export function createDocScanner(repo: string): DocScanner {
     const docCache = new Map<string, string | null>();
     /**
-     * M13 for one file: the first qualifying TSDoc block's first paragraph,
+     * Trims a doc body to its first paragraph, capped at 280 characters.
+     *
+     * @param lines - The doc body split into lines.
+     * @param stripStars - Whether to strip leading `*` continuations (TSDoc).
+     * @returns The first paragraph, or null when empty.
+     */
+    const firstParagraph = (lines: readonly string[], stripStars: boolean): string | null => {
+        const paragraph: string[] = [];
+        for (const raw of lines) {
+            const line = stripStars ? raw.replace(/^\s*\*? ?/, "") : raw.trim();
+            if (/^@\w/.test(line)) break;
+            if (!line.trim() && paragraph.length) break;
+            if (line.trim()) paragraph.push(line.trim());
+        }
+        const joined = paragraph.join(" ").trim();
+        if (!joined) return null;
+        return joined.length > 280 ? `${joined.slice(0, 277)}...` : joined;
+    };
+    /**
+     * M13 for one file: the first qualifying doc block's first paragraph,
      * tags dropped, capped at 280 characters.
      *
      * @param file - Repo-relative path of the source file.
@@ -112,22 +132,19 @@ export function createDocScanner(repo: string): DocScanner {
         if (cached !== undefined) return cached;
         const text = readText(join(repo, file));
         let summary: string | null = null;
-        const match = /\/\*\*([\s\S]*?)\*\//.exec(text.slice(0, 4000));
-        if (match) {
-            const body = match[1] ?? "";
-            const before = text.slice(0, match.index);
-            const fileLevel = /^\s*(?:\/\/[^\n]*\n|\s)*$/.test(before);
-            const onExport = /^\s*export\b/.test(text.slice(match.index + match[0].length));
-            if (fileLevel || onExport) {
-                const paragraph: string[] = [];
-                for (const raw of body.split("\n")) {
-                    const line = raw.replace(/^\s*\*? ?/, "");
-                    if (/^@\w/.test(line)) break;
-                    if (!line.trim() && paragraph.length) break;
-                    if (line.trim()) paragraph.push(line.trim());
-                }
-                const joined = paragraph.join(" ").trim();
-                if (joined) summary = joined.length > 280 ? `${joined.slice(0, 277)}...` : joined;
+        // HC-026: a Python module's leading triple-quoted docstring is its
+        // file-level prose, as TSDoc is for TypeScript.
+        const pyMatch = file.endsWith(".py") ? /^"""([\s\S]*?)"""/.exec(text) : null;
+        if (pyMatch) {
+            summary = firstParagraph((pyMatch[1] ?? "").split("\n"), false);
+        } else {
+            const match = /\/\*\*([\s\S]*?)\*\//.exec(text.slice(0, 4000));
+            if (match) {
+                const body = match[1] ?? "";
+                const before = text.slice(0, match.index);
+                const fileLevel = /^\s*(?:\/\/[^\n]*\n|\s)*$/.test(before);
+                const onExport = /^\s*export\b/.test(text.slice(match.index + match[0].length));
+                if (fileLevel || onExport) summary = firstParagraph(body.split("\n"), true);
             }
         }
         docCache.set(file, summary);

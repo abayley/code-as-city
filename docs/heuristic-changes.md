@@ -5,7 +5,7 @@ status: Open
 owners:
     - alistairbayley
 created: 2026-08-26
-updated: 2026-09-21
+updated: 2026-09-22
 ---
 
 # Candidate Heuristic Changes
@@ -59,15 +59,15 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-015 | Same-named packages merge silently at the room level                                                    | S, rooms        | Done     |
 | HC-016 | Overview gold means both shared-district and .tsx module                                                | O4; viewer      | Done     |
 | HC-017 | Compose `build.context` with a default Dockerfile never binds                                           | D3              | Done     |
-| HC-018 | A standalone root Dockerfile declares no deployment                                                     | D1, D3          | Proposed |
+| HC-018 | A standalone root Dockerfile declares no deployment                                                     | D1, D3          | Done     |
 | HC-019 | Client-SDK table misses common SDKs and cannot resolve endpoints                                        | D13, D17, M6    | Done     |
 | HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Done     |
-| HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Proposed |
+| HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Done     |
 | HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Done     |
 | HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
 | HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Done     |
 | HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
-| HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Proposed |
+| HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Done     |
 | HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Done     |
 | HC-028 | Residual packages fragment and orphan their root files; districts label by directory, not artefact role | M3, S4          | Done     |
 
@@ -716,6 +716,31 @@ classification from nothing (it is whatever the image runs). Needs a guard
 against double-counting when compose *also* builds the same Dockerfile, and
 a stance on Dockerfiles that are clearly dev or test images.
 
+**Resolution (Done).** `buildHosts` emits one single-service host per
+inventoried `Dockerfile*` no compose service builds (the context-default
+Dockerfile, HC-017, counts as built, so excalidraw's root image is not drawn
+twice). The host name is the repo basename with an `image` qualifier — a
+repo with both a root compose and a root Dockerfile would otherwise hold two
+identically named hosts — with one `app` service; COPYs resolve against the
+Dockerfile's own directory (HC-017 semantics), the entry resolves per D3,
+and there is deliberately no D5 classification. Stance on dev/test images: a
+Dockerfile under a test path (I4) is a fixture and draws nothing; a
+dev-server ENTRYPOINT/CMD tags the service `dev-environment` (HC-024) rather
+than excluding it. The host joins `hosts` and `candidateHosts` alike, so R5
+host roots, O9 attribution, and the deploy shape all see it; the overview's
+O7 skips Dockerfile-built services already, and a band shared with the
+compose host keeps the canonical topology's name (first canonical host wins).
+Verified on the fixture: a root `Dockerfile` (single-file COPY,
+`ENTRYPOINT node scripts/serve.ts`) yields a `Mini Repo Image` host with an
+`App` deployable carrying `service-source`/`entry-point` attributes; a
+`hosts.ts` unit test pins the double-count and test-path guards.
+
+**Remediation (REVIEW-0011).** The name pattern widened to
+`/^[Dd]ockerfile([-_.].+)?$/` (lowercase and `-`/`_` qualifiers bind), and a
+dev/test/local filename qualifier tags the service `dev-environment`
+(segment-wise, so `Dockerfile-latest` stays a host) — the filename stance,
+as a tag rather than an exclusion, per HC-024.
+
 ## HC-019: Client-SDK Table Misses Common SDKs and Cannot Resolve Endpoints
 
 **Rules:** D17 (service client SDKs), D13 (embedded databases), M6 (env-token
@@ -858,6 +883,24 @@ release-evidence signal (a publish workflow or `files`/`publishConfig`
 content) as a second gate; or a milder `bundled` tag keeping the node but
 demoting the deployable status. Care needed where a package is *both*
 bundled and genuinely published (paperclip's adapters may be exactly that).
+
+**Resolution (Done, the milder middle path).** `reclassifyPublishedArtefacts`
+skips a published package whose directory a host image COPYs (the same
+D3-claim signal the residual path reads): its node keeps a `bundled` tag
+instead of a deployable marking, with a map warning, so a package that is
+genuinely published *and* bundled still reads as such. This catches the case
+the entry-level guard misses — a COPY the C2/`lib` filter drops from
+attribution still claims the directory, so the entry would otherwise take a
+`published` deployable slot. The release-evidence second gate is deferred
+(HEURISTICS.md records it). Verified on the fixture: a `@mini/bundled`
+library whose `lib/` the api image COPYs (basename `lib`, so attribution
+drops it while the claim stands) is a tagged module, not a deployable; a
+`generate-map` assertion and a phase unit test pin the discount.
+
+**Remediation (REVIEW-0011).** The claim reads two ways: a claimed directory
+owned by the package, or a claimed *file* of the package — a coarse parent
+COPY (owned by the root) still bundles the files it lands in the image. A
+phase unit test pins the file-membership arm.
 
 ## HC-022: Next.js Apps Are Not Runnable; `docs` Dirs Are Not Apps
 
@@ -1038,6 +1081,29 @@ from its layout (`immich_ml/...`). Scope the first cut to making the
 Dockerfile CMD); the import-graph interior and a pyproject D17 scan are
 follow-ups. A language-family decision is implied: how far past
 TypeScript/JavaScript is the generator willing to go?
+
+**Resolution (Done, first cut).** A directory with a Python marker is a
+package (S1 home, `packages.ts`): name from pyproject `[project] name`, else
+the directory basename; a directory that already has a `package.json` keeps
+its Node identity, and both families share the HC-015 id namespace. `.py`
+joins the inventoried source extensions — Python's unquoted imports match no
+TS import pattern, so no spurious edges — and rooms, reachability, and the
+overview treat the files like any other source. A Python module's leading
+`"""` docstring reads as its M13 prose, as TSDoc does for TypeScript.
+Language-family decision, recorded: the generator inventories Python
+*sources* for shape, but does not resolve Python imports or scan pyproject
+dependencies — the import-graph interior and the `huggingface-hub`/
+`transformers` model-download flow stay follow-ups (HEURISTICS.md records
+both). Verified on the fixture: `packages/ml` is now a pyproject package
+(`src/main.py`), the ml service binds with the context-resolved entry and
+carries real source (loc, entry-point attribute), and the overview shows the
+module; `packages.ts` unit tests pin discovery and id-sharing.
+
+**Remediation (REVIEW-0011).** Two tightenings: the `[project]` name match
+is bounded to its own section (a later `[project.urls]`/`[tool.*]` name no
+longer misnames the package), and pytest `test_*.py`/`conftest.py` are test
+paths (I4) whatever directory they sit in — pinned by a fixture
+`test_helpers.py` and an `inventory.ts` unit test.
 
 ## HC-027: D14 Entry Resolution Misses Conventional Entries
 

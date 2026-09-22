@@ -2,7 +2,8 @@
 // (HEURISTICS.md rule S1).
 
 import { basename, dirname, join, sep } from "node:path";
-import { readJson } from "./read.ts";
+import { uniqueId } from "./assembly-helpers.ts";
+import { readJson, readText } from "./read.ts";
 import { kebab } from "./text.ts";
 
 type PackageRole = "cli" | "web" | "package";
@@ -31,6 +32,14 @@ export type Package = {
     /** D14 published-artefact classification, or null when the package publishes nothing. */
     artefact: PublishedArtefact | null;
 };
+
+/**
+ * HC-026: the manifest markers that make a directory a Python package — a
+ * real deployed service (immich's machine-learning/) can be built in Python,
+ * so the inventory cannot be Node-shaped alone. A directory carrying any of
+ * these is a package whose rooms come from its layout.
+ */
+const PYTHON_PACKAGE_MARKERS = new Set(["pyproject.toml", "uv.lock", "requirements.txt"]);
 
 type PackageManifest = {
     name?: string;
@@ -149,6 +158,23 @@ export function artefactEntryCandidates(pkg: Package): string[] {
 }
 
 /**
+ * The directories (repo-relative, "." for the root) containing a Python
+ * package marker (HC-026): a `pyproject.toml`, `uv.lock`, or
+ * `requirements.txt`. A directory that is already a Node package keeps its
+ * Node identity; the caller filters those out.
+ *
+ * @param allFiles - The full repo inventory.
+ * @returns The Python package directories in inventory order.
+ */
+export function pythonPackageDirsOf(allFiles: readonly string[]): string[] {
+    const dirs = new Set<string>();
+    for (const file of allFiles) {
+        if (PYTHON_PACKAGE_MARKERS.has(basename(file))) dirs.add(dirname(file));
+    }
+    return [...dirs].sort();
+}
+
+/**
  * The directories (repo-relative, "." for the root) containing a package.json.
  *
  * @param allFiles - The full repo inventory.
@@ -165,16 +191,21 @@ export function packageDirsOf(allFiles: readonly string[]): string[] {
  *
  * @param repo - Absolute path of the repository being mapped.
  * @param packageDirs - Repo-relative directories containing a package.json.
+ * @param usedIds - Package ids already taken (HC-015/HC-026): Python packages
+ *   discovered afterwards share the namespace, so the set is threaded through.
  * @returns One Package per directory: name (falling back to the directory
  *   or repo basename), merged dependencies, role, and kebab-cased id.
  */
-export function discoverPackages(repo: string, packageDirs: readonly string[]): Package[] {
+export function discoverPackages(
+    repo: string,
+    packageDirs: readonly string[],
+    usedIds: Set<string> = new Set<string>(),
+): Package[] {
     // Two packages can share a name (a repo root and a workspace package both
     // named @scope/pkg, as in ollama-code), which would give them the same id
     // and collide their room and district ids — silently merging their code.
     // Suffix later collisions so every package id is unique (HC-015). Iterating
     // the stable packageDirs order keeps the assignment deterministic.
-    const usedIds = new Set<string>();
     return packageDirs.map((dir) => {
         const json = (readJson(join(repo, dir === "." ? "" : dir, "package.json")) ?? {}) as PackageManifest;
         const deps = { ...json.dependencies, ...json.devDependencies };
@@ -182,8 +213,7 @@ export function discoverPackages(repo: string, packageDirs: readonly string[]): 
         const hasBin = binCount > 0;
         const isWebApp = ["react", "next", "vinext", "vue", "svelte"].some((d) => deps[d]);
         const baseId = kebab(json.name ?? basename(dir === "." ? repo : dir));
-        let id = baseId;
-        for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}-${suffix}`;
+        const id = uniqueId(baseId, (candidate) => usedIds.has(candidate));
         usedIds.add(id);
         return {
             dir,
@@ -196,6 +226,64 @@ export function discoverPackages(repo: string, packageDirs: readonly string[]): 
     });
 }
 
+/**
+ * Reads a Python package's display name from its `pyproject.toml`
+ * (`[project] name`), or null when there is no pyproject or no name in it
+ * (a `requirements.txt`-only directory takes the directory basename).
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param dir - Repo-relative directory of the Python package.
+ * @returns The declared project name, or null.
+ */
+function pythonProjectName(repo: string, dir: string): string | null {
+    // readText is forgiving ("" when unreadable), so a requirements-only
+    // directory without a pyproject simply yields no name here. The match is
+    // bounded to the [project] section itself (SP-C1): a `name` under a later
+    // [project.urls] or [tool.*] table must not misname the package.
+    const text = readText(join(repo, dir === "." ? "" : dir, "pyproject.toml"));
+    const projectSection = text.search(/^\[project\]/m);
+    if (projectSection === -1) return null;
+    const afterHeader = text.slice(projectSection).split("\n").slice(1).join("\n");
+    const sectionBody = afterHeader.split(/^\[.*\]$/m)[0] ?? "";
+    return /^\s*name\s*=\s*["']([^"']+)["']/m.exec(sectionBody)?.[1] ?? null;
+}
+
+/**
+ * Discovers the repo's Python packages (HC-026): one per directory carrying
+ * a `pyproject.toml`, `uv.lock`, or `requirements.txt` that is not already a
+ * Node package. A Python package has no npm-published artefact and no
+ * dependency map yet (a pyproject scan for client-SDK externals is a
+ * follow-up) — its purpose in this cut is to give non-Node services (immich's
+ * machine-learning/) a package container, so their rooms form from the layout
+ * and their Dockerfile-bound deployment node carries real source.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param pythonDirs - Repo-relative Python package directories.
+ * @param usedIds - Package ids already taken by Node packages; shared so no
+ *   two packages collide on an id.
+ * @returns One Package per directory, role `package`, artefact null.
+ */
+export function discoverPythonPackages(
+    repo: string,
+    pythonDirs: readonly string[],
+    usedIds: Set<string> = new Set<string>(),
+): Package[] {
+    return pythonDirs.map((dir) => {
+        // The manifest is parsed once per directory (S2): the name feeds both
+        // the display name and the id.
+        const projectName = pythonProjectName(repo, dir) ?? (dir === "." ? basename(repo) : basename(dir));
+        const id = uniqueId(kebab(projectName), (candidate) => usedIds.has(candidate));
+        usedIds.add(id);
+        return {
+            dir,
+            name: projectName,
+            deps: {},
+            role: "package" as const,
+            id,
+            artefact: null,
+        };
+    });
+}
 /**
  * The deepest package whose directory contains the file (the root package matches everything).
  *

@@ -91,7 +91,17 @@ describe("generate-map golden master", async () => {
         const scriptNodes = map.nodes.filter((node) =>
             (node.sourceRefs ?? []).some((ref) => ref.path?.startsWith("scripts/")),
         );
-        expect(scriptNodes).toEqual([]);
+        // scripts/coverage-report.ts is QA-only (the `check:coverage` script)
+        // and stays out; scripts/serve.ts is the standalone image's entry, so
+        // it stays in.
+        expect(scriptNodes.some((node) => (node.sourceRefs ?? []).some((ref) => ref.path === "scripts/serve.ts"))).toBe(
+            true,
+        );
+        expect(
+            scriptNodes.some((node) =>
+                (node.sourceRefs ?? []).some((ref) => ref.path === "scripts/coverage-report.ts"),
+            ),
+        ).toBe(false);
     });
 
     it("given CI workflows, when generating the deployment map, then only one invoking deploying source is a deployable (D9)", async () => {
@@ -271,14 +281,66 @@ describe("generate-map golden master", async () => {
         // The ml service builds `context: packages/ml` with no dockerfile key,
         // so the default <context>/Dockerfile binds and its COPY sources
         // resolve against that context: the service lands on the host with the
-        // context-resolved entry point.
+        // context-resolved entry point (a Python file: packages/ml is a
+        // pyproject package, HC-026).
         const ml = map.nodes.find(
             (node) =>
                 (node.parentId ?? "").startsWith("host-") &&
-                node.attributes?.["entry-point"] === "packages/ml/src/main.ts",
+                node.attributes?.["entry-point"] === "packages/ml/src/main.py",
         );
         expect(ml).toBeDefined();
         expect(ml?.attributes?.["service-source"]).toBe("packages/ml/Dockerfile");
+    });
+
+    it("given a standalone Dockerfile with no compose owner, when generating, then it is a single-service image host (HC-018)", async () => {
+        const map = await generateMap([]);
+        // The fixture-root Dockerfile is built by no compose service, so it
+        // declares its own host: one `app` service bound to the Dockerfile
+        // with the ENTRYPOINT-resolved entry.
+        const app = map.nodes.find((node) => node.attributes?.["service-source"] === "Dockerfile");
+        expect(app).toMatchObject({
+            kind: "deployable",
+            attributes: { "service-source": "Dockerfile", "entry-point": "scripts/serve.ts" },
+        });
+        const host = map.nodes.find((node) => node.id === app?.parentId);
+        expect(host).toMatchObject({ kind: "scope", archetype: "district" });
+    });
+
+    it("given a published package bundled into a host image, when generating, then it is bundled, not a deployable (HC-021)", async () => {
+        const map = (await generateMap([])) as GeneratedMap & {
+            nodes: Array<{ id?: string; kind?: string; tags?: string[]; sourceRefs?: Array<{ path?: string }> }>;
+        };
+        // @mini/bundled declares a library entry, but the api image COPYs its
+        // lib directory: it is a component of that deployment, so its entry
+        // node keeps a `bundled` tag instead of a deployable marking.
+        const entry = map.nodes.find((node) =>
+            (node.sourceRefs ?? []).some((ref) => ref.path === "packages/bundled/src"),
+        );
+        expect(entry).toBeDefined();
+        expect(entry?.kind).not.toBe("deployable");
+        expect(entry?.tags).toContain("bundled");
+    });
+
+    it("given a Python package bound to a compose service, when generating, then its files form rooms behind the service (HC-026)", async () => {
+        const deployment = await generateMap([]);
+        const overview = await generateMap(["--overview"]);
+        // packages/ml is a pyproject package (no package.json): its main.py
+        // is inventoried, so the ml service's building carries real source.
+        const ml = deployment.nodes.find((node) => (node.parentId ?? "").startsWith("host-") && node.label === "Ml");
+        expect(ml?.attributes?.["entry-point"]).toBe("packages/ml/src/main.py");
+        const module = overview.nodes.find((node) =>
+            (node.sourceRefs ?? []).some((ref) => ref.path === "packages/ml/src/main.py"),
+        );
+        expect(module).toBeDefined();
+        // Pytest helpers are test files whatever directory they sit in, so
+        // test_helpers.py draws no node in either mode.
+        for (const map of [deployment, overview]) {
+            expect(
+                map.nodes.some((node) =>
+                    (node.sourceRefs ?? []).some((ref) => ref.path === "packages/ml/src/test_helpers.py"),
+                ),
+            ).toBe(false);
+        }
     });
 
     it("given a wrangler entry-dir room, when generating the deployment map, then it deploys to the edge worker (7c-i)", async () => {

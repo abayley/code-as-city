@@ -102,7 +102,12 @@ function excludedByIgnoredDir(file: string, root: string): boolean {
 // suffix convention (redeploy-cli.ts, delivery-command.ts). Shared by both
 // map modes.
 export const ENTRY_FILE_PATTERN = /(^|[-_.])(cli|cmd|command|main)$/;
-export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+// HC-026: Python is inventoried as source too — a deployed service can be
+// built in Python (immich's machine-learning/), and without its files no
+// rooms form behind the service node. The TypeScript import pattern only
+// matches quoted specifiers, so Python's unquoted imports draw no spurious
+// edges; per-file complexity falls back to the decision-point regex.
+export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"]);
 const TEST_DIRS = new Set(["test", "tests", "__tests__", "test-database", "testing"]);
 const TEST_FILE_PATTERN = /\.(test|spec)\.[a-z]+$|_test\.[a-z]+$/;
 
@@ -176,13 +181,18 @@ function walk(root: string): string[] {
 
 /**
  * True when the file sits in a test directory or matches the test-file
- * naming convention (I4).
+ * naming convention (I4) — including the pytest conventions (SP-A3): a
+ * `test_*.py` module or a `conftest.py` is a test file whatever directory it
+ * sits in.
  *
  * @param file - Repo-relative path of the file.
  * @returns Whether the file is excluded from source analysis as a test.
  */
 export function isTestPath(file: string): boolean {
-    return file.split(sep).some((seg) => TEST_DIRS.has(seg)) || TEST_FILE_PATTERN.test(file);
+    const segments = file.split(sep);
+    const base = segments.at(-1) ?? file;
+    const pytest = base.endsWith(".py") && (/^test_/.test(base) || base === "conftest.py");
+    return segments.some((seg) => TEST_DIRS.has(seg)) || TEST_FILE_PATTERN.test(file) || pytest;
 }
 
 /**
