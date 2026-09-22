@@ -99,6 +99,19 @@ nodes=64 edges=19 hosts=3 scheduled=1 eliminated=1
 Valid Functionary City map: Mini Repo (64 nodes, 19 edges)
 ```
 
+Golden diff (generator changes only): when the work intentionally changes
+generator output, the golden maps in `test/golden/` must be regenerated
+(commands in the README) — but never before the fresh `map.json` is diffed
+against the golden (`repository` normalised to `<fixture>`,
+`generatedAt` dropped) and every hunk explained: added/removed node and
+edge ids, changed parents/kinds/metrics/descriptions, and added or reworded
+warning lines. Per-room sizing after a structural change legitimately shifts
+metrics and descriptions; anything else needs a cause. The rule from
+experience: an unexplained hunk is a bug until proven otherwise — this
+review has caught phantom hosts, mislabeled bands, and undeclared metric
+shifts. Regenerate only after the review, re-run the full suite, and record
+the explanation with the evidence.
+
 Viewer via the dev API (server must be yours, per Launch):
 
 ```bash
