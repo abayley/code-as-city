@@ -109,20 +109,21 @@
         }
       ],
       "metrics": {
-        "loc": 83,
+        "loc": 89,
         "complexity": 2,
         "coverage": 62.5
       },
       "tags": [
         "cron",
         "listens",
-        "alternative"
+        "alternative",
+        "http-client"
       ],
       "display": {
         "flowLayer": 1,
         "size": [
           1.2035533905932738,
-          0.8754411291814367,
+          0.8920882209992749,
           1.0230203820042827
         ]
       }
@@ -256,6 +257,24 @@
       "archetype": "cloud",
       "parentId": "host-mini-repo",
       "description": "Container image otel/opentelemetry-collector:latest.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
+      "id": "host-mini-repo-prometheus",
+      "label": "Prometheus",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini-repo",
+      "description": "Container image prom/prometheus:latest.",
       "attributes": {},
       "sourceRefs": [
         {
@@ -425,51 +444,36 @@
       "description": "Package @mini/api, rooted at packages/api/."
     },
     {
-      "id": "mini-api-src",
-      "label": "Src",
-      "kind": "module",
-      "archetype": "building",
-      "parentId": "mini-api-area",
-      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.\n\n5 source files under src/.",
-      "sourceRefs": [
-        {
-          "path": "packages/api/src"
-        }
-      ],
-      "metrics": {
-        "loc": 49,
-        "complexity": 2,
-        "coverage": 50
-      },
-      "display": {
-        "flowLayer": 0,
-        "size": [
-          1.2035533905932738,
-          0.7738801582613459,
-          1.0230203820042827
-        ]
-      }
-    },
-    {
       "id": "mini-api-src-ai",
       "label": "Ai",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-api-src",
-      "description": "1 source file.",
+      "parentId": "mini-api-area",
+      "description": "Talks to an OpenAI-compatible endpoint to summarise a message.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/ai.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 12,
+        "complexity": 2
+      },
+      "display": {
+        "size": [
+          1.2035533905932738,
+          0.646235345633661,
+          1.0230203820042827
+        ]
+      }
     },
     {
       "id": "mini-api-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-api-src",
-      "description": "2 source files.",
+      "parentId": "mini-api-area",
+      "description": "Loads server configuration.\n\n2 source files.",
       "sourceRefs": [
         {
           "path": "packages/api/src/config.ts"
@@ -477,19 +481,45 @@
         {
           "path": "packages/api/src/store.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 12,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.646235345633661,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-api-src-server",
       "label": "Server",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-api-src",
-      "description": "1 source file.",
+      "parentId": "mini-api-area",
+      "description": "Starts the HTTP server.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/server.ts"
         }
+      ],
+      "metrics": {
+        "loc": 22,
+        "complexity": 1,
+        "coverage": 50
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6828078221164597,
+          0.935
+        ]
+      },
+      "tags": [
+        "http-client"
       ]
     },
     {
@@ -497,13 +527,24 @@
       "label": "Telemetry",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-api-src",
-      "description": "1 source file.",
+      "parentId": "mini-api-area",
+      "description": "Starts OpenTelemetry export to the OTEL_EXPORTER_OTLP_ENDPOINT collector.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/api/src/telemetry.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 9,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6349266182683868,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-api-src-jobs",
@@ -709,58 +750,55 @@
       "description": "Package @mini/ext, rooted at packages/ext/."
     },
     {
-      "id": "mini-ext-src",
-      "label": "Src",
-      "kind": "deployable",
-      "archetype": "gateway",
-      "parentId": "mini-ext-area",
-      "description": "Registers the extension's commands.\n\n2 source files under src/.",
-      "sourceRefs": [
-        {
-          "path": "packages/ext/src"
-        }
-      ],
-      "metrics": {
-        "loc": 12,
-        "complexity": 1
-      },
-      "display": {
-        "flowLayer": 0,
-        "size": [
-          1.1,
-          0.646235345633661,
-          0.935
-        ]
-      },
-      "tags": [
-        "extension"
-      ]
-    },
-    {
       "id": "mini-ext-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-ext-src",
-      "description": "1 source file.",
+      "parentId": "mini-ext-area",
+      "description": "Registers the extension's commands.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/ext/src/commands.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-ext-src-extension",
       "label": "Extension",
-      "kind": "module",
-      "archetype": "room",
-      "parentId": "mini-ext-src",
-      "description": "1 source file.",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-ext-area",
+      "description": "VS Code extension activation entry.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/ext/src/extension.ts"
         }
-      ]
+      ],
+      "tags": [
+        "extension"
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6272969222485302,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-greeter-area",
@@ -770,71 +808,79 @@
       "description": "Package @mini/greeter, rooted at packages/greeter/."
     },
     {
-      "id": "mini-greeter-src",
-      "label": "Src",
+      "id": "mini-greeter-src-cli",
+      "label": "Cli",
       "kind": "deployable",
       "archetype": "gateway",
       "parentId": "mini-greeter-area",
-      "description": "Greeter CLI entry point: starts a worker daemon, then greets.\n\n3 source files under src/.",
-      "sourceRefs": [
-        {
-          "path": "packages/greeter/src"
-        }
-      ],
-      "metrics": {
-        "loc": 25,
-        "complexity": 2
-      },
-      "display": {
-        "flowLayer": 0,
-        "size": [
-          1.2035533905932738,
-          0.6934587507932718,
-          1.0230203820042827
-        ]
-      },
-      "tags": [
-        "cli"
-      ]
-    },
-    {
-      "id": "mini-greeter-src-cli",
-      "label": "Cli",
-      "kind": "module",
-      "archetype": "room",
-      "parentId": "mini-greeter-src",
-      "description": "1 source file.",
+      "description": "Greeter CLI entry point: starts a worker daemon, then greets.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/greeter/src/cli.ts"
         }
-      ]
+      ],
+      "tags": [
+        "cli"
+      ],
+      "metrics": {
+        "loc": 13,
+        "complexity": 2
+      },
+      "display": {
+        "size": [
+          1.2035533905932738,
+          0.6499693867481124,
+          1.0230203820042827
+        ]
+      }
     },
     {
       "id": "mini-greeter-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-greeter-src",
-      "description": "1 source file.",
+      "parentId": "mini-greeter-area",
+      "description": "Formats a greeting for the given name.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/greeter/src/format.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-greeter-src-worker",
       "label": "Worker",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-greeter-src",
-      "description": "1 source file.",
+      "parentId": "mini-greeter-area",
+      "description": "Background worker the greeter CLI starts at runtime.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/greeter/src/worker.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 7,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6272969222485302,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-plugin-area",
@@ -904,59 +950,56 @@
       "description": "Package @mini/service, rooted at packages/service/."
     },
     {
-      "id": "mini-service-src",
-      "label": "Src",
-      "kind": "deployable",
-      "archetype": "gateway",
-      "parentId": "mini-service-area",
-      "description": "A standalone service: run directly via `bun start`, it serves HTTP.\n\n2 source files under src/.",
-      "sourceRefs": [
-        {
-          "path": "packages/service/src"
-        }
-      ],
-      "metrics": {
-        "loc": 19,
-        "complexity": 1
-      },
-      "display": {
-        "flowLayer": 0,
-        "size": [
-          1.1,
-          0.6720119784045467,
-          0.935
-        ]
-      },
-      "tags": [
-        "server",
-        "listens"
-      ]
-    },
-    {
       "id": "mini-service-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-service-src",
-      "description": "1 source file.",
+      "parentId": "mini-service-area",
+      "description": "Request handler for the standalone service; summarises the body via Ollama.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/service/src/handler.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 11,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6424836494128532,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-service-src-main",
       "label": "Main",
-      "kind": "module",
-      "archetype": "room",
-      "parentId": "mini-service-src",
-      "description": "1 source file.",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-service-area",
+      "description": "A standalone service: run directly via `bun start`, it serves HTTP.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/service/src/main.ts"
         }
-      ]
+      ],
+      "tags": [
+        "server",
+        "listens"
+      ],
+      "metrics": {
+        "loc": 8,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6311209406015021,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-shared-area",
@@ -1031,58 +1074,55 @@
       "description": "Package @mini/toolkit, rooted at packages/toolkit/."
     },
     {
-      "id": "mini-toolkit-2-src",
-      "label": "Src",
-      "kind": "deployable",
-      "archetype": "building",
-      "parentId": "mini-toolkit-2-area",
-      "description": "Clamps a value to the inclusive range [low, high].\n\n2 source files under src/.",
-      "sourceRefs": [
-        {
-          "path": "packages/toolkit/src"
-        }
-      ],
-      "metrics": {
-        "loc": 8,
-        "complexity": 1
-      },
-      "display": {
-        "flowLayer": 0,
-        "size": [
-          1.1,
-          0.6311209406015021,
-          0.935
-        ]
-      },
-      "tags": [
-        "published"
-      ]
-    },
-    {
       "id": "mini-toolkit-2-src-files",
       "label": "Top-level files",
       "kind": "module",
       "archetype": "room",
-      "parentId": "mini-toolkit-2-src",
-      "description": "1 source file.",
+      "parentId": "mini-toolkit-2-area",
+      "description": "Clamps a value to the inclusive range [low, high].\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/toolkit/src/clamp.ts"
         }
-      ]
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-toolkit-2-src-index",
-      "label": "Index",
-      "kind": "module",
-      "archetype": "room",
-      "parentId": "mini-toolkit-2-src",
-      "description": "1 source file.",
+      "label": "Src",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "mini-toolkit-2-area",
+      "description": "Public entry of the toolkit library.\n\n1 source file.",
       "sourceRefs": [
         {
           "path": "packages/toolkit/src/index.ts"
         }
-      ]
+      ],
+      "tags": [
+        "published"
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6118138500757483,
+          0.935
+        ]
+      }
     },
     {
       "id": "mini-web-area",
@@ -1325,29 +1365,13 @@
       ]
     },
     {
-      "id": "mini-api-src--host-mini-repo-otel-collector",
-      "from": "mini-api-src",
+      "id": "mini-api-src-telemetry--host-mini-repo-otel-collector",
+      "from": "mini-api-src-telemetry",
       "to": "host-mini-repo-otel-collector",
       "kind": "data_flow",
       "evidence": "inferred",
       "confidence": 0.7,
       "label": "OTLP export"
-    },
-    {
-      "id": "mini-api-src--mini-api-src-jobs",
-      "from": "mini-api-src",
-      "to": "mini-api-src-jobs",
-      "kind": "depends_on",
-      "evidence": "declared",
-      "label": "1 import"
-    },
-    {
-      "id": "mini-api-src--mini-api-src-routes",
-      "from": "mini-api-src",
-      "to": "mini-api-src-routes",
-      "kind": "depends_on",
-      "evidence": "declared",
-      "label": "1 import"
     },
     {
       "id": "mini-edge-src--mini-edge-src-api",
@@ -1374,16 +1398,72 @@
       "label": "1 import"
     },
     {
-      "id": "mini-api-src--host-mini-repo-api",
-      "from": "mini-api-src",
+      "id": "mini-api-src-server--mini-api-src-files",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-files",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "2 imports"
+    },
+    {
+      "id": "mini-api-src-server--mini-api-src-jobs",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-jobs",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-server--host-mini-repo-api",
+      "from": "mini-api-src-server",
       "to": "host-mini-repo-api",
       "kind": "depends_on",
       "evidence": "declared",
       "label": "1 import"
     },
     {
-      "id": "mini-api-src--infra-better-sqlite3",
-      "from": "mini-api-src",
+      "id": "mini-api-src-server--mini-api-src-routes",
+      "from": "mini-api-src-server",
+      "to": "mini-api-src-routes",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-ext-src-extension--mini-ext-src-files",
+      "from": "mini-ext-src-extension",
+      "to": "mini-ext-src-files",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-greeter-src-cli--mini-greeter-src-files",
+      "from": "mini-greeter-src-cli",
+      "to": "mini-greeter-src-files",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-service-src-main--mini-service-src-files",
+      "from": "mini-service-src-main",
+      "to": "mini-service-src-files",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-toolkit-2-src-index--mini-toolkit-2-src-files",
+      "from": "mini-toolkit-2-src-index",
+      "to": "mini-toolkit-2-src-files",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "1 import"
+    },
+    {
+      "id": "mini-api-src-files--infra-better-sqlite3",
+      "from": "mini-api-src-files",
       "to": "infra-better-sqlite3",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1396,8 +1476,8 @@
       ]
     },
     {
-      "id": "mini-api-src--external-ollama",
-      "from": "mini-api-src",
+      "id": "mini-api-src-ai--external-ollama",
+      "from": "mini-api-src-ai",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1410,8 +1490,8 @@
       ]
     },
     {
-      "id": "mini-service-src--external-ollama",
-      "from": "mini-service-src",
+      "id": "mini-service-src-files--external-ollama",
+      "from": "mini-service-src-files",
       "to": "external-ollama",
       "kind": "data_flow",
       "evidence": "inferred",
@@ -1424,9 +1504,9 @@
       ]
     },
     {
-      "id": "ci-deploy-job--mini-api-src",
+      "id": "ci-deploy-job--mini-api-src-server",
       "from": "ci-deploy-job",
-      "to": "mini-api-src",
+      "to": "mini-api-src-server",
       "kind": "calls",
       "evidence": "declared",
       "label": "runs server.ts",
@@ -1437,8 +1517,8 @@
       ]
     },
     {
-      "id": "mini-greeter-src--daemon-packages-greeter-src-worker-ts",
-      "from": "mini-greeter-src",
+      "id": "mini-greeter-src-cli--daemon-packages-greeter-src-worker-ts",
+      "from": "mini-greeter-src-cli",
       "to": "daemon-packages-greeter-src-worker-ts",
       "kind": "calls",
       "evidence": "inferred",
@@ -1473,6 +1553,32 @@
       "sourceRefs": [
         {
           "path": "packages/web/vercel.json"
+        }
+      ]
+    },
+    {
+      "id": "mini-api-src-server--host-mini-repo-ml-http",
+      "from": "mini-api-src-server",
+      "to": "host-mini-repo-ml",
+      "kind": "data_flow",
+      "evidence": "declared",
+      "label": "http",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/server.ts"
+        }
+      ]
+    },
+    {
+      "id": "host-mini-repo-prometheus--host-mini-repo-api-scrape",
+      "from": "host-mini-repo-prometheus",
+      "to": "host-mini-repo-api",
+      "kind": "data_flow",
+      "evidence": "declared",
+      "label": "scrapes",
+      "sourceRefs": [
+        {
+          "path": "prometheus.yml"
         }
       ]
     },

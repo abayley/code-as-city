@@ -18,3 +18,5 @@ services:
     image: supabase/postgres-meta:v0.80.0
   otel-collector:
     image: otel/opentelemetry-collector:latest
+  prometheus:
+    image: prom/prometheus:latest

@@ -19,6 +19,7 @@ import {
     assembleHostDistricts,
     assembleImportEdges,
     assemblePackageDistricts,
+    assembleServiceEdges,
     assembleSiteDistricts,
     assembleStaticClassification,
     reclassifyPublishedArtefacts,
@@ -393,6 +394,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
 
     // 7c-vi. D18: platform site deployments (vercel.json, netlify.toml).
     assembleSiteDistricts(state, { siteHosts, runnableApps, rooms, entryDirNames });
+
+    // 7c-vii. D19/D20: service-to-service HTTP calls and monitoring scrapes.
+    assembleServiceEdges(state, { hosts, allFiles, sourceFiles, deployReachable });
 
     // 7e-iii. Config-declared external services (D12).
     assembleConfigExternals(state, { packages });

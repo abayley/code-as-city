@@ -10,6 +10,7 @@
 import { basename, dirname, join, relative, sep } from "node:path";
 import {
     addEdge,
+    barrelAwareName,
     deploymentFootprintFor,
     escapeRegex,
     fileModuleName,
@@ -39,6 +40,7 @@ import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
+import { findHttpCalls, findScrapeTargets, resolveServiceEndpoint, type ServiceTarget } from "./service-calls.ts";
 import { type SiteHost, siteShortName } from "./sites.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
@@ -411,6 +413,84 @@ export function assembleSiteDistricts(
                 sourceRefs: [{ path: site.file }],
             });
         }
+    }
+}
+
+/**
+ * 7c-vii / D19-D20: draws service-to-service edges. D19 turns a static
+ * `fetch`/axios/request URL in deploy-reachable source into a declared
+ * `data_flow` edge when its host or port resolves to exactly one declared
+ * service (HC-023's immich server -> ML shape); D20 turns a prometheus
+ * `scrape_configs` target into a `scrapes` edge from the prometheus service
+ * to the scraped one. Both stay silent on ambiguity rather than guessing.
+ *
+ * @param state - The assembly state (`repo`, `nodes`/`edges`, `fileText`,
+ *   `nodeOwningFile`).
+ * @param options - `hosts` the surviving deployment shape (only services
+ *   with emitted nodes resolve); `allFiles` for the prometheus scan;
+ *   `sourceFiles`/`deployReachable` bounding the call-site scan to deployed
+ *   code.
+ */
+export function assembleServiceEdges(
+    state: AssemblyState,
+    options: {
+        hosts: readonly Host[];
+        allFiles: readonly string[];
+        sourceFiles: readonly string[];
+        deployReachable: ReadonlySet<string>;
+    },
+): void {
+    const { repo, nodes, edges, fileText, nodeOwningFile } = state;
+    const { hosts, allFiles, sourceFiles, deployReachable } = options;
+    const declared: ServiceTarget[] = [];
+    for (const host of hosts) {
+        for (const service of host.services) {
+            if (nodes.some((node) => node.id === kebab(`${host.id}-${service.name}`))) {
+                declared.push({ host, service });
+            }
+        }
+    }
+    if (!declared.length) return;
+    const hostOfNode = new Map(
+        nodes.filter((node) => (node.parentId ?? "").startsWith("host-")).map((node) => [node.id, node.parentId ?? ""]),
+    );
+    const targetId = (target: ServiceTarget): string => kebab(`${target.host.id}-${target.service.name}`);
+    // D19: static call URLs in deployed code.
+    for (const file of sourceFiles) {
+        if (!deployReachable.has(file)) continue;
+        const caller = nodeOwningFile(file);
+        if (!caller) continue;
+        for (const call of findHttpCalls(fileText(file))) {
+            const target = resolveServiceEndpoint(declared, call.hostname, call.port, hostOfNode.get(caller) ?? null);
+            if (!target || targetId(target) === caller) continue;
+            addEdge(edges, {
+                id: `${caller}--${targetId(target)}-http`,
+                from: caller,
+                to: targetId(target),
+                kind: "data_flow",
+                evidence: "declared",
+                label: "http",
+                sourceRefs: [{ path: file }],
+            });
+        }
+    }
+    // D20: prometheus scrape targets, from the prometheus service itself.
+    const scraper = declared.find(
+        (target) => /prometheus/i.test(target.service.name) || /prometheus/i.test(target.service.image ?? ""),
+    );
+    if (!scraper) return;
+    for (const scrape of findScrapeTargets(repo, allFiles)) {
+        const target = resolveServiceEndpoint(declared, scrape.hostname, scrape.port, null);
+        if (!target) continue;
+        addEdge(edges, {
+            id: `${targetId(scraper)}--${targetId(target)}-scrape`,
+            from: targetId(scraper),
+            to: targetId(target),
+            kind: "data_flow",
+            evidence: "declared",
+            label: "scrapes",
+            sourceRefs: [{ path: scrape.config }],
+        });
     }
 }
 
@@ -1395,6 +1475,12 @@ export function assemblePackageDistricts(
         for (const room of pkgRooms) {
             const expandable = hasInteriorStructure(room);
             const children = expandable ? childRoomsOf(room) : [];
+            // HC-003: a bare `src/` room wraps nothing — its loose files are
+            // the package's top level, so the children promote to the
+            // district and the room itself is not emitted. The deployable
+            // marking then lands on the entry room (Cli, not Src) through the
+            // usual file-to-node mapping below.
+            const collapsed = room.segment === "src" && expandable;
             const label = roomLabel(room.segment);
             let parentId: string | undefined;
             const reassigned = pathReassignments.get(room.id);
@@ -1412,10 +1498,13 @@ export function assemblePackageDistricts(
                 }
                 const fromRoom = fileToRoom.get(reassigned.fromFile);
                 if (fromRoom) {
+                    // A collapsed room emits no node: the reference lands on
+                    // the district its children promote to.
+                    const target = collapsed ? (parentId ?? room.id) : room.id;
                     addEdge(edges, {
-                        id: `${fromRoom.id}--${room.id}`,
+                        id: `${fromRoom.id}--${target}`,
                         from: fromRoom.id,
-                        to: room.id,
+                        to: target,
                         kind: "depends_on",
                         evidence: "declared",
                         label: "path reference",
@@ -1433,35 +1522,52 @@ export function assemblePackageDistricts(
             // change archetypes here, so the two stay separate by design.
             const isEntry = entryDirNames.has(basename(room.segment));
             const leafAsBuilding = modulesAsBuildings && !expandable && room.files.length >= 2;
-            nodes.push({
-                id: room.id,
-                label,
-                kind: "module",
-                archetype: expandable || leafAsBuilding ? "building" : isEntry ? "gateway" : "worker",
-                ...(parentId ? { parentId } : {}),
-                description: `${room.files.length} source file${room.files.length === 1 ? "" : "s"} under ${room.segment === "(root)" ? "the package root" : `${room.segment}/`}.`,
-                sourceRefs:
-                    room.segment === "(root)"
-                        ? room.files.slice(0, 5).map((path) => ({ path }))
-                        : [{ path: roomDir(room) }],
-                metrics: { loc: room.loc },
-                display: { flowLayer: layers.get(room.id) ?? 0 },
-            });
-            for (const f of room.files) fileNodeOwner.set(f, room.id);
-            promotedNodes.push({ id: room.id, files: room.files });
-            if (leafAsBuilding) pushFileRooms(room.id, room.files);
+            if (!collapsed) {
+                nodes.push({
+                    id: room.id,
+                    label,
+                    kind: "module",
+                    archetype: expandable || leafAsBuilding ? "building" : isEntry ? "gateway" : "worker",
+                    ...(parentId ? { parentId } : {}),
+                    description: `${room.files.length} source file${room.files.length === 1 ? "" : "s"} under ${room.segment === "(root)" ? "the package root" : `${room.segment}/`}.`,
+                    sourceRefs:
+                        room.segment === "(root)"
+                            ? room.files.slice(0, 5).map((path) => ({ path }))
+                            : [{ path: roomDir(room) }],
+                    metrics: { loc: room.loc },
+                    display: { flowLayer: layers.get(room.id) ?? 0 },
+                });
+                for (const f of room.files) fileNodeOwner.set(f, room.id);
+                promotedNodes.push({ id: room.id, files: room.files });
+                if (leafAsBuilding) pushFileRooms(room.id, room.files);
+            }
             if (expandable) {
                 for (const child of children) {
                     if (child.seg === "lib") continue; // shared plumbing, not shape
+                    const childId = uniqueNodeId(kebab(`${room.id}-${child.seg}`));
+                    // A single loose file names its own room; a barrel names
+                    // it for the directory it indexes (HC-004), as in the
+                    // overview, so no collapsed entry reads "Index".
+                    const only = child.files.length === 1 ? child.files[0] : undefined;
+                    const childLabel =
+                        child.seg === "(files)"
+                            ? "Top-level files"
+                            : only !== undefined && child.seg === fileModuleName(only)
+                              ? titleCase(barrelAwareName(only))
+                              : titleCase(child.seg);
                     nodes.push({
-                        id: uniqueNodeId(kebab(`${room.id}-${child.seg}`)),
-                        label: child.seg === "(files)" ? "Top-level files" : titleCase(child.seg),
+                        id: childId,
+                        label: childLabel,
                         kind: "module",
                         archetype: "room",
-                        parentId: room.id,
+                        ...(collapsed ? { ...(parentId ? { parentId } : {}) } : { parentId: room.id }),
                         description: `${child.files.length} source file${child.files.length === 1 ? "" : "s"}.`,
                         sourceRefs: childSourceRefs(room, child),
                     });
+                    if (collapsed) {
+                        for (const f of child.files) fileNodeOwner.set(f, childId);
+                        promotedNodes.push({ id: childId, files: child.files });
+                    }
                 }
             }
         }

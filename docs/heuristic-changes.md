@@ -64,7 +64,7 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-020 | D1 folds distinct services that merely share a name                                                     | D1              | Done     |
 | HC-021 | Every non-private workspace library becomes a published deployable                                      | D14             | Done     |
 | HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Done     |
-| HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Proposed |
+| HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Done     |
 | HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Done     |
 | HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
 | HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Done     |
@@ -185,6 +185,17 @@ and moving the deployable marking to the entry room, e.g. "Cli") would improve
 the shape further, but it needs the dominant-segment signal threaded into
 assembly and a decision on where the deployable node lands, so it is left as a
 follow-up rather than folded in here.
+
+**Resolution (Done).** The collapse is structural, so no dominant-segment
+threading was needed after all: any room with segment `src` that would emit
+as a building (loose files grouping into several rooms — subdir files live
+in their own rooms by construction) promotes its children to the district
+and emits no wrapper. The deployable marking follows the entry file to its
+own room (`Cli`, not `Src`) through the usual file-to-node mapping, and a
+barrel child takes its directory's name (HC-004's helper, shared), so no
+collapsed entry reads "Index". Verified on the fixture: five bare `Src`
+wrappers gone (greeter, service, ext, api, toolkit fork), each deployable
+now its entry room; a `generate-map` assertion pins the greeter shape.
 
 ## HC-004: Disambiguate Colliding Module Labels Across Packages
 
@@ -970,6 +981,24 @@ or port draw a scrape edge prometheus -> service. Both need the resolved
 host topology from D1/D3 as input, so they sit downstream of it. Risk:
 HTTP-target matching is where guesses start — hold to targets that resolve
 to a *declared* service.
+
+**Resolution (Done, D19/D20; two follow-ups recorded).** `service-calls.ts`
+hosts both rules, running downstream of D1/D3 over services with emitted
+nodes. D19 reads static `http(s)` URLs from `fetch`/axios/request call
+arguments in deploy-reachable source (comments stripped; template literals
+never static): a non-loopback hostname must match a service name — a
+declared port corroborates same-named HC-020 alternatives, the caller's
+same-host sibling wins — while a loopback hostname resolves by declared
+container port (`ports:` values are now parsed, ranges excluded). D20 reads
+quoted `host:port` tokens from a `prometheus.yml` `scrape_configs:` block
+into a `scrapes` edge from the declared prometheus service. Both stay silent
+on ambiguity. Verified on the fixture: an `http` edge from the api entry
+room to the ml service, a `scrapes` edge prometheus -> api (the port
+corroboration is what disambiguates the envoy `api` alternative); unit tests
+pin parsing, resolution, and the guards. Follow-ups, recorded in
+HEURISTICS.md: env-var-indirected base URLs, SDK-signature calls, and a
+`serves` edge for a server shipping a UI bundle (paperclip's `SERVE_UI`,
+which neither rule covers).
 
 ## HC-024: Inferred Edges Over-Fire; Templates and Dev Environments Present as Production
 

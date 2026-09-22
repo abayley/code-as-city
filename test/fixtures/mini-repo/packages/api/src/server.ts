@@ -13,3 +13,9 @@ export function startServer(): string {
     log(sweep());
     return formatGreeting(config.name);
 }
+
+/** Asks the ml service for a prediction over HTTP. */
+export async function predict(input: string): Promise<string> {
+    const response = await fetch("http://ml:8000/predict", { method: "POST", body: input });
+    return response.text();
+}

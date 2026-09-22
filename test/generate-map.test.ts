@@ -129,10 +129,18 @@ describe("generate-map golden master", async () => {
             map.nodes.find(
                 (node) => node.kind === "deployable" && (node.sourceRefs ?? []).some((ref) => ref.path === path),
             );
-        // @mini/greeter (bin) -> CLI gateway; @mini/toolkit (main) -> library building; @mini/ext (vscode) -> extension.
-        expect(deployableAt("packages/greeter/src")).toMatchObject({ archetype: "gateway", tags: ["cli"] });
-        expect(deployableAt("packages/toolkit/src")).toMatchObject({ archetype: "building", tags: ["published"] });
-        expect(deployableAt("packages/ext/src")).toMatchObject({ archetype: "gateway", tags: ["extension"] });
+        // @mini/greeter (bin) -> CLI gateway; @mini/toolkit (main) -> library
+        // entry room; @mini/ext (vscode) -> extension. Bare `src/` rooms
+        // collapse (HC-003), so each deployable is the entry's own room.
+        expect(deployableAt("packages/greeter/src/cli.ts")).toMatchObject({ archetype: "gateway", tags: ["cli"] });
+        expect(deployableAt("packages/toolkit/src/index.ts")).toMatchObject({
+            archetype: "gateway",
+            tags: ["published"],
+        });
+        expect(deployableAt("packages/ext/src/extension.ts")).toMatchObject({
+            archetype: "gateway",
+            tags: ["extension"],
+        });
     });
 
     it("given a spawned inventoried entry, when generating, then it is a daemon with a starts edge and variable/test spawns draw nothing (D15)", async () => {
@@ -147,7 +155,7 @@ describe("generate-map golden master", async () => {
         const daemon = daemons[0];
         expect(daemon?.sourceRefs?.[0]?.path).toBe("packages/greeter/src/worker.ts");
         const startsEdge = map.edges.find((edge) => edge.label === "starts" && edge.to === daemon?.id);
-        expect(startsEdge?.from).toBe("mini-greeter-src");
+        expect(startsEdge?.from).toBe("mini-greeter-src-cli");
     });
 
     it("given two packages sharing a name, when generating the overview, then district ids stay unique", async () => {
@@ -179,8 +187,9 @@ describe("generate-map golden master", async () => {
                 (node) => node.kind === "deployable" && (node.sourceRefs ?? []).some((ref) => ref.path === path),
             );
         // @mini/service starts a server via its `start` script; @mini/web is a
-        // web-role package rooted at src/app.tsx.
-        expect(deployableAt("packages/service/src")).toMatchObject({
+        // web-role package rooted at src/app.tsx. Bare `src/` rooms collapse
+        // (HC-003), so the server deployable is its entry room.
+        expect(deployableAt("packages/service/src/main.ts")).toMatchObject({
             archetype: "gateway",
             tags: ["server", "listens"],
         });
@@ -373,6 +382,49 @@ describe("generate-map golden master", async () => {
             const deploys = map.edges.find((edge) => edge.to === site?.id && edge.kind === "deploys");
             expect(deploys?.label).toBe(`${platform} deploy`);
         }
+    });
+
+    it("given service calls and scrape targets, when generating, then http and scrape edges are drawn (D19/D20)", async () => {
+        const map = (await generateMap([])) as GeneratedMap & {
+            edges: Array<{
+                from?: string;
+                to?: string;
+                kind?: string;
+                evidence?: string;
+                label?: string;
+                sourceRefs?: Array<{ path?: string }>;
+            }>;
+        };
+        // packages/api posts to the ml service over HTTP (immich shape);
+        // prometheus.yml scrapes the api service (declared port corroborates
+        // the name against the envoy alternative).
+        const http = map.edges.find((edge) => edge.label === "http");
+        expect(http).toMatchObject({
+            from: "mini-api-src-server",
+            to: "host-mini-repo-ml",
+            kind: "data_flow",
+            evidence: "declared",
+        });
+        expect(http?.sourceRefs?.[0]?.path).toBe("packages/api/src/server.ts");
+        expect(map.edges.find((edge) => edge.label === "scrapes")).toMatchObject({
+            from: "host-mini-repo-prometheus",
+            to: "host-mini-repo-api",
+            kind: "data_flow",
+            evidence: "declared",
+        });
+    });
+
+    it("given a bare src room, when generating, then its children promote to the district and the entry takes the deployable (HC-003)", async () => {
+        const map = await generateMap([]);
+        // @mini/greeter's loose src/ files read as district rooms directly —
+        // no `Src` wrapper between the district and the `Cli` entry, which is
+        // itself the CLI deployable.
+        expect(map.nodes.some((node) => node.id === "mini-greeter-src")).toBe(false);
+        const children = map.nodes.filter(
+            (node) => node.parentId === "mini-greeter-area" && !(node.tags ?? []).includes("daemon"),
+        );
+        expect(children.map((node) => node.label).sort()).toEqual(["Cli", "Top-level files", "Worker"]);
+        expect(children.find((node) => node.label === "Cli")?.kind).toBe("deployable");
     });
 
     it("given a wrangler entry-dir room, when generating the deployment map, then it deploys to the edge worker (7c-i)", async () => {

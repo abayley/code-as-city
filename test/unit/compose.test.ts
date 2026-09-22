@@ -24,6 +24,7 @@ describe("parseComposeServices", () => {
                 context: ".",
                 dockerfile: "packages/api/Dockerfile",
                 hasPorts: true,
+                ports: ["3000:3000"],
                 dependsOn: ["db", "cache"],
                 dependsOnIndent: 4,
             },

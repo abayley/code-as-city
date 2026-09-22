@@ -858,7 +858,7 @@
         }
       ],
       "metrics": {
-        "loc": 16,
+        "loc": 22,
         "complexity": 1,
         "files": 1,
         "coverage": 50
@@ -869,7 +869,7 @@
       "display": {
         "size": [
           1.1,
-          0.6000000000000001,
+          0.61875,
           0.935
         ],
         "color": "#C77740",
@@ -1469,7 +1469,7 @@
       "label": "Mini Repo host",
       "kind": "scope",
       "archetype": "district",
-      "description": "Mini Repo host: 4 nodes.",
+      "description": "Mini Repo host: 5 nodes.",
       "tags": [
         "band:Mini Repo host"
       ],
@@ -1542,6 +1542,25 @@
       "archetype": "cloud",
       "parentId": "host-mini-repo",
       "description": "otel/opentelemetry-collector:latest on the mini-repo host.",
+      "sourceRefs": [
+        {
+          "path": "docker-compose.yml"
+        }
+      ],
+      "tags": [
+        "host:mini-repo"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-mini-repo-prometheus",
+      "label": "Prometheus",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini-repo",
+      "description": "prom/prometheus:latest on the mini-repo host.",
       "sourceRefs": [
         {
           "path": "docker-compose.yml"

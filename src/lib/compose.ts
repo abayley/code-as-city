@@ -8,6 +8,8 @@ export type ComposeService = {
     context?: string | undefined;
     dockerfile?: string | undefined;
     hasPorts?: boolean | undefined;
+    /** HC-023: the raw `ports:` entries (`"3000:3000"`, `"9090"`), for service-call and scrape matching. */
+    ports?: string[] | undefined;
     /** HC-024: the service bind-mounts the repo root — a dev environment, not a deployment. */
     devBindMount?: boolean | undefined;
     /** REVIEW-0010: the service's command runs a known dev server. */
@@ -15,7 +17,22 @@ export type ComposeService = {
     volumesIndent?: number | undefined;
     dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
+    portsIndent?: number | undefined;
 };
+
+/**
+ * HC-023: the container port a `ports:` entry exposes — the trailing segment
+ * (`"3000:3000"` and `"127.0.0.1:3000:3000"` expose 3000, bare `"9090"`
+ * exposes 9090). Ranges (`3000-3005:...`) and protocols are not resolved and
+ * yield null, so scrape/call matching never fires on a half-parsed range.
+ *
+ * @param mapping - A raw `ports:` entry as parsed above.
+ * @returns The container port, or null when the entry names none exactly.
+ */
+export function containerPort(mapping: string): string | null {
+    const port = (mapping.split(":").at(-1) ?? "").split("/")[0] ?? "";
+    return /^\d+$/.test(port) ? port : null;
+}
 
 // A dev-server run command (REVIEW-0010): any of these in a service's
 // `command:` marks a dev environment rather than a deployment.
@@ -65,7 +82,18 @@ export function parseComposeServices(text: string): ComposeService[] {
         if (context !== undefined) current.context = context.trim();
         const dockerfile = /^dockerfile:\s*(.+)$/.exec(key)?.[1];
         if (dockerfile !== undefined) current.dockerfile = dockerfile.trim();
-        if (/^ports:\s*$/.test(key)) current.hasPorts = true;
+        if (/^ports:\s*$/.test(key)) {
+            current.hasPorts = true;
+            current.portsIndent = indent;
+            current.ports ??= [];
+            continue;
+        }
+        if (current.portsIndent !== undefined && indent > current.portsIndent) {
+            const mapping = /^-\s*["']?([^"'#\s]+)["']?\s*(?:#.*)?$/.exec(key)?.[1];
+            if (mapping !== undefined) current.ports?.push(mapping);
+        } else if (current.portsIndent !== undefined && indent <= current.portsIndent) {
+            current.portsIndent = undefined;
+        }
         // REVIEW-0010: a command running a known dev server is a dev
         // environment, not a deployment.
         if (/^(command|cmd):/.test(key) && DEV_SERVER_PATTERN.test(key)) current.devServerCommand = true;
