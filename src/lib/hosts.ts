@@ -8,7 +8,7 @@ import { type ComposeService, parseComposeServices } from "./compose.ts";
 import type { CrontabSchedule } from "./crontab.ts";
 import { parseDockerfile } from "./dockerfile.ts";
 import { isTestPath } from "./inventory.ts";
-import { readJsonSafe, readText } from "./read.ts";
+import { parseDotEnv, readJsonSafe, readText } from "./read.ts";
 import { kebab } from "./text.ts";
 
 // Known container images -> infra classification. Databases are matched
@@ -424,8 +424,22 @@ export function buildHosts(
                         ? parseDockerfile(repo, dockerfile, allFiles, contextDir)
                         : null;
                 const imageClass = classifyService(service.image, service.name);
+                // HC-023: `env_file:` entries merge under explicit
+                // `environment:` values (compose precedence), resolved against
+                // the compose dir — the project-root approximation the
+                // Dockerfile binding already uses.
+                const fileEnv: Record<string, string> = {};
+                for (const envPath of service.envFile ?? []) {
+                    const candidate = fileExists(envPath)
+                        ? envPath
+                        : fileExists(join(dir, envPath))
+                          ? join(dir, envPath)
+                          : null;
+                    if (candidate) Object.assign(fileEnv, parseDotEnv(readText(join(repo, candidate))));
+                }
                 return {
                     ...service,
+                    environment: { ...fileEnv, ...(service.environment ?? {}) },
                     dockerfile: built ? dockerfile : undefined,
                     copies: built?.copies ?? [],
                     entryFile: built?.entryFile ?? null,
@@ -453,14 +467,14 @@ export function buildHosts(
     };
     for (const file of allFiles) {
         if (!/task-definition\.json$/i.test(basename(file))) continue;
-        if (/(^|\/)(test|tests|__tests__)\//.test(file) || /\.test\.json$/.test(basename(file))) continue;
+        if (isTestPath(file)) continue;
         const ecs = parseEcsHost(repo, file);
         if (ecs) claimPlatformHost(ecs);
     }
     const quadletDirs = new Map<string, string[]>();
     for (const file of allFiles) {
         if (!/\.container$/.test(file)) continue;
-        if (/(^|\/)(test|tests|__tests__)\//.test(file)) continue;
+        if (isTestPath(file)) continue;
         const dir = dirname(file);
         quadletDirs.set(dir, [...(quadletDirs.get(dir) ?? []), file]);
     }

@@ -2,7 +2,7 @@
 // (HEURISTICS.md rules D7/D8).
 
 import { dirname, join } from "node:path";
-import { readJsonSafe, readText } from "./read.ts";
+import { readJsonSafe, readText, tomlValue } from "./read.ts";
 
 export type EdgeHost = {
     file: string;
@@ -41,7 +41,7 @@ export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHos
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "");
     const config = (readJsonSafe(text) ?? {}) as WranglerConfig;
-    const mainMatch = config.main ?? /^\s*main\s*=\s*["']([^"']+)["']/m.exec(text)?.[1];
+    const mainMatch = config.main ?? tomlValue(text, "main");
     let main: string | null = null;
     if (mainMatch) {
         main = mainMatch.replace(/^\.\//, "");
@@ -52,7 +52,7 @@ export function findEdgeHost(repo: string, allFiles: readonly string[]): EdgeHos
     }
     return {
         file: wranglerFile,
-        name: config.name ?? /^\s*name\s*=\s*["']([^"']+)["']/m.exec(text)?.[1] ?? "worker",
+        name: config.name ?? tomlValue(text, "name") ?? "worker",
         main,
         d1: config.d1_databases ?? [],
     };

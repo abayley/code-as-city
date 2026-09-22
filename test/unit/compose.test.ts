@@ -95,4 +95,21 @@ describe("parseComposeServices", () => {
         ].join("\n");
         expect(parseComposeServices(text)[0]?.environment).toEqual({ ML_URL: "http://ml:8000", OTHER: "plain" });
     });
+
+    it("given env_file entries, when parsed, then single and list forms are kept (D19)", () => {
+        const text = [
+            "services:",
+            "  api:",
+            "    image: x",
+            "    env_file: single.env",
+            "  db:",
+            "    image: y",
+            "    env_file:",
+            "      - a.env",
+            "      - b.env",
+        ].join("\n");
+        const [api, db] = parseComposeServices(text);
+        expect(api?.envFile).toEqual(["single.env"]);
+        expect(db?.envFile).toEqual(["a.env", "b.env"]);
+    });
 });

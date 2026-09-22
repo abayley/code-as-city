@@ -3,7 +3,7 @@
 
 import { basename, dirname, join, sep } from "node:path";
 import { uniqueId } from "./assembly-helpers.ts";
-import { readJson, readText } from "./read.ts";
+import { readJson, readText, tomlSection, tomlValue } from "./read.ts";
 import { kebab } from "./text.ts";
 
 type PackageRole = "cli" | "web" | "package";
@@ -241,11 +241,8 @@ function pythonProjectName(repo: string, dir: string): string | null {
     // bounded to the [project] section itself (SP-C1): a `name` under a later
     // [project.urls] or [tool.*] table must not misname the package.
     const text = readText(join(repo, dir === "." ? "" : dir, "pyproject.toml"));
-    const projectSection = text.search(/^\[project\]/m);
-    if (projectSection === -1) return null;
-    const afterHeader = text.slice(projectSection).split("\n").slice(1).join("\n");
-    const sectionBody = afterHeader.split(/^\[.*\]$/m)[0] ?? "";
-    return /^\s*name\s*=\s*["']([^"']+)["']/m.exec(sectionBody)?.[1] ?? null;
+    const section = tomlSection(text, "project");
+    return section === null ? null : (tomlValue(section, "name") ?? null);
 }
 
 /**

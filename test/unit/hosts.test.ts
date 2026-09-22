@@ -379,6 +379,29 @@ describe("standalone Dockerfiles (HC-018)", () => {
         const built = buildHosts(repo, ["src/lib/dockerfile.ts"], [], new Map());
         expect(built.hosts).toHaveLength(0);
     });
+
+    it("given env_file entries, when built, then they merge under explicit environment (D19)", () => {
+        writeFile(
+            "envd/docker-compose.yml",
+            [
+                "services:",
+                "  api:",
+                "    image: x",
+                "    env_file:",
+                "      - vars.env",
+                "    environment:",
+                "      - SHARED=explicit",
+            ].join("\n"),
+        );
+        writeFile("envd/vars.env", ["SHARED=file", "EXTRA=http://x:1"].join("\n"));
+        const built = buildHosts(
+            repo,
+            ["envd/docker-compose.yml", "envd/vars.env"],
+            ["envd/docker-compose.yml"],
+            new Map(),
+        );
+        expect(built.hosts[0]?.services[0]?.environment).toEqual({ SHARED: "explicit", EXTRA: "http://x:1" });
+    });
 });
 
 describe("platform container deployments (HC-025, D22/D23)", () => {

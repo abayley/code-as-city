@@ -16,11 +16,14 @@ export type ComposeService = {
     devServerCommand?: boolean | undefined;
     /** HC-023: literal `environment:` entries, for env-indirected URL resolution. */
     environment?: Record<string, string> | undefined;
+    /** HC-023: `env_file:` entries, resolved against dotenv files at host build. */
+    envFile?: string[] | undefined;
     volumesIndent?: number | undefined;
     dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
     portsIndent?: number | undefined;
     envIndent?: number | undefined;
+    envFileIndent?: number | undefined;
 };
 
 /**
@@ -141,6 +144,25 @@ export function parseComposeServices(text: string): ComposeService[] {
             }
         } else if (current.envIndent !== undefined && indent <= current.envIndent) {
             current.envIndent = undefined;
+        }
+        // HC-023: `env_file:` entries, resolved against dotenv files when the
+        // host is built — single-string and list forms alike.
+        const envFileSingle = /^env_file:\s*(.+?)\s*$/.exec(key)?.[1];
+        if (envFileSingle !== undefined) {
+            current.envFile ??= [];
+            current.envFile.push(envFileSingle.replace(/^["']|["']$/g, ""));
+            continue;
+        }
+        if (/^env_file:\s*$/.test(key)) {
+            current.envFileIndent = indent;
+            current.envFile ??= [];
+            continue;
+        }
+        if (current.envFileIndent !== undefined && indent > current.envFileIndent) {
+            const envFile = /^-\s*["']?([^"'#\s]+)["']?\s*(?:#.*)?$/.exec(key)?.[1];
+            if (envFile !== undefined) current.envFile?.push(envFile);
+        } else if (current.envFileIndent !== undefined && indent <= current.envFileIndent) {
+            current.envFileIndent = undefined;
         }
     }
     return services;

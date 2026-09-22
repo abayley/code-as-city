@@ -36,18 +36,22 @@ import {
 import type { FileEdge, MapEdge, MapNode, SourceRef } from "./map-types.ts";
 import { artefactEntryCandidates, type Package } from "./packages.ts";
 import type { PathReassignment } from "./path-references.ts";
-import { readJson, readText } from "./read.ts";
+import { parseDotEnv, readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
 import {
+    type Endpoint,
+    type EndpointService,
     findEnvRefs,
     findHttpCalls,
     findScrapeTargets,
     findServePaths,
+    indexEndpointServices,
+    mergeEnvScopes,
     parseEndpoint,
+    resolveEnvValue,
     resolveServiceEndpoint,
-    type ServiceTarget,
 } from "./service-calls.ts";
 import { type SiteHost, siteShortName } from "./sites.ts";
 import { kebab, titleCase } from "./text.ts";
@@ -451,36 +455,23 @@ export function assembleServiceEdges(
 ): void {
     const { repo, nodes, edges, fileText, nodeOwningFile, owningPackage } = state;
     const { hosts, allFiles, sourceFiles, deployReachable, runnableApps } = options;
-    const declared: ServiceTarget[] = [];
-    for (const host of hosts) {
-        for (const service of host.services) {
-            if (nodes.some((node) => node.id === kebab(`${host.id}-${service.name}`))) {
-                declared.push({ host, service });
-            }
-        }
-    }
+    const indexed = indexEndpointServices(hosts);
+    const declared = indexed.filter((entry) =>
+        nodes.some((node) => node.id === kebab(`${entry.host.id}-${entry.name}`)),
+    );
     if (!declared.length) return;
     const hostOfNode = new Map(
         nodes.filter((node) => (node.parentId ?? "").startsWith("host-")).map((node) => [node.id, node.parentId ?? ""]),
     );
-    const targetId = (target: ServiceTarget): string => kebab(`${target.host.id}-${target.service.name}`);
+    const targetId = (target: EndpointService): string => kebab(`${target.host.id}-${target.name}`);
     /**
      * Draws one endpoint edge when it resolves to exactly one declared
      * service, sharing the literal-URL edge id so one relationship draws one
      * edge however it is written.
      */
-    const drawEndpoint = (
-        caller: string,
-        file: string,
-        endpoint: { hostname: string; port: string | null } | null,
-    ): void => {
+    const drawEndpoint = (caller: string, file: string, endpoint: Endpoint | null): void => {
         if (!endpoint) return;
-        const target = resolveServiceEndpoint(
-            declared,
-            endpoint.hostname,
-            endpoint.port,
-            hostOfNode.get(caller) ?? null,
-        );
+        const target = resolveServiceEndpoint(declared, endpoint, hostOfNode.get(caller) ?? null);
         if (!target || targetId(target) === caller) return;
         addEdge(edges, {
             id: `${caller}--${targetId(target)}-http`,
@@ -494,16 +485,13 @@ export function assembleServiceEdges(
     };
     // D19: static call URLs in deployed code, plus env-indirected ones — an
     // env var read in the file resolves through the `environment:` entries of
-    // the services whose images copy the file in. One agreed value draws;
-    // conflicting values stay silent.
-    const shippingServices = (file: string): HostService[] =>
-        hosts
-            .flatMap((host) => host.services)
-            .filter((service) =>
-                (service.copies ?? []).some(
-                    (copy) => file === normaliseCopyDir(copy) || file.startsWith(`${normaliseCopyDir(copy)}/`),
-                ),
-            );
+    // the services whose images copy the file in, falling back to the repo
+    // `.env`. Conflicting values stay silent.
+    const rootEnv = parseDotEnv(allFiles.includes(".env") ? readText(join(repo, ".env")) : "");
+    const shippingScopes = (file: string): Record<string, string>[] =>
+        indexed
+            .filter((entry) => entry.copies.some((dir) => file === dir || file.startsWith(`${dir}/`)))
+            .map((entry) => entry.env);
     for (const file of sourceFiles) {
         if (!deployReachable.has(file)) continue;
         const caller = nodeOwningFile(file);
@@ -513,13 +501,10 @@ export function assembleServiceEdges(
             drawEndpoint(caller, file, call);
         }
         for (const ref of findEnvRefs(text)) {
-            const values = new Set(
-                shippingServices(file)
-                    .map((service) => service.environment?.[ref])
-                    .filter((value): value is string => value !== undefined),
-            );
-            if (values.size !== 1) continue;
-            drawEndpoint(caller, file, parseEndpoint([...values][0] ?? ""));
+            const scope = mergeEnvScopes([...shippingScopes(file), rootEnv]);
+            const raw = scope[ref];
+            if (raw === undefined) continue;
+            drawEndpoint(caller, file, parseEndpoint(resolveEnvValue(raw, scope) ?? ""));
         }
         // D21: a server shipping a UI bundle — a served dir names the app it
         // belongs to (usually build output, never inventoried), so the edge
@@ -544,11 +529,11 @@ export function assembleServiceEdges(
     }
     // D20: prometheus scrape targets, from the prometheus service itself.
     const scraper = declared.find(
-        (target) => /prometheus/i.test(target.service.name) || /prometheus/i.test(target.service.image ?? ""),
+        (target) => /prometheus/i.test(target.name) || /prometheus/i.test(target.image ?? ""),
     );
     if (!scraper) return;
     for (const scrape of findScrapeTargets(repo, allFiles)) {
-        const target = resolveServiceEndpoint(declared, scrape.hostname, scrape.port, null);
+        const target = resolveServiceEndpoint(declared, { hostname: scrape.hostname, port: scrape.port }, null);
         if (!target) continue;
         addEdge(edges, {
             id: `${targetId(scraper)}--${targetId(target)}-scrape`,
@@ -1616,12 +1601,12 @@ export function assemblePackageDistricts(
                     // A single loose file names its own room; a barrel names
                     // it for the directory it indexes (HC-004), as in the
                     // overview, so no collapsed entry reads "Index".
-                    const only = child.files.length === 1 ? child.files[0] : undefined;
+                    const singleFile = child.files.length === 1 ? child.files[0] : undefined;
                     const childLabel =
                         child.seg === "(files)"
                             ? "Top-level files"
-                            : only !== undefined && child.seg === fileModuleName(only)
-                              ? titleCase(barrelAwareName(only))
+                            : singleFile !== undefined && child.seg === fileModuleName(singleFile)
+                              ? titleCase(barrelAwareName(singleFile))
                               : titleCase(child.seg);
                     nodes.push({
                         id: childId,

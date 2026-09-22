@@ -6,8 +6,9 @@
 // its publish/output dir.
 
 import { basename, join } from "node:path";
+import { isTestPath } from "./inventory.ts";
 import { owningPackage, type Package } from "./packages.ts";
-import { readJsonSafe, readText } from "./read.ts";
+import { readJsonSafe, readText, tomlValue } from "./read.ts";
 
 type SitePlatform = "vercel" | "netlify";
 
@@ -21,18 +22,6 @@ export type SiteHost = {
 };
 
 type VercelConfig = { buildCommand?: string; outputDirectory?: string };
-
-/**
- * Reads a `[build]`-table string key from a netlify.toml's text. Line-anchored
- * like the wrangler TOML reader, so similarly table-blind by decision.
- *
- * @param text - The netlify.toml contents.
- * @param key - The key to read (`command` or `publish`).
- * @returns The quoted value, or null.
- */
-function netlifyBuildKey(text: string, key: "command" | "publish"): string | null {
-    return new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, "m").exec(text)?.[1] ?? null;
-}
 
 /**
  * D18: finds the repo's platform site deployments. Each `vercel.json` or
@@ -52,7 +41,7 @@ export function findSiteHosts(repo: string, allFiles: readonly string[], package
         const platform: SitePlatform | null =
             base === "vercel.json" ? "vercel" : base === "netlify.toml" ? "netlify" : null;
         if (platform === null) continue;
-        if (/(^|\/)(test|tests|__tests__)\//.test(file) || /\.test\.(json|toml)$/.test(base)) continue;
+        if (isTestPath(file)) continue;
         if (/(^|\/)[^/]*template[^/]*\//i.test(file)) continue;
         const owner = owningPackage(packages, file);
         if (!owner) continue;
@@ -64,8 +53,8 @@ export function findSiteHosts(repo: string, allFiles: readonly string[], package
             buildCommand = config.buildCommand ?? null;
             publishDir = config.outputDirectory ?? null;
         } else {
-            buildCommand = netlifyBuildKey(text, "command");
-            publishDir = netlifyBuildKey(text, "publish");
+            buildCommand = tomlValue(text, "command");
+            publishDir = tomlValue(text, "publish");
         }
         sites.push({ file, platform, buildCommand, publishDir, pkgDir: owner.dir });
     }

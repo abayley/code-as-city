@@ -984,18 +984,22 @@ to a *declared* service.
 
 **Resolution (Done, D19/D20/D21; no open follow-ups).** `service-calls.ts`
 hosts the rules, running downstream of D1/D3 over services with emitted
-nodes. D19 reads static `http(s)` URLs from `fetch`/axios/request call
-arguments, SDK/client-config properties (`baseURL`, `endpoint`, ...), and
-compose-`environment:` values read via `process.env`/`os.environ` (one
-agreed value across the services copying the file draws; conflicts stay
-silent) into a declared `http` edge, resolved as before. D20 reads
+nodes. D19 reads static `http(s)` URLs passed to any call, set on
+SDK/client-config properties (`baseURL`, `endpoint`, ...), and read from
+the environment (`process.env`/`os.environ` through service `environment:`,
+`env_file:` dotenv files, and the repo-root `.env`, with one `${}` pass;
+conflicts and shell pass-throughs stay silent) into a declared `http` edge,
+resolved as before. D20 reads
 quoted `host:port` tokens from a `prometheus.yml` `scrape_configs:` block
 into a `scrapes` edge from the declared prometheus service. D21 reads
 `express.static` / `StaticFiles(directory=)` into a `serves` edge from the
 server's node to the owning package's runnable entry (the served dir is
 usually build output, so the edge targets the app). All three stay silent
-on ambiguity. Verified on the fixture: literal and env-indirected `http`
-edges api -> ml, `serves` api -> web client, `scrapes` prometheus -> api;
+on ambiguity — the spec's own risk directive, which also answers the
+bare-name-alternative case: drawing to every same-named alternative would
+reintroduce the duplication HC-020 just removed. Verified on the fixture:
+literal and env-indirected `http` edges api -> ml, `serves` api -> web
+client, `scrapes` prometheus -> api;
 unit tests pin parsing, resolution, and every guard.
 
 ## HC-024: Inferred Edges Over-Fire; Templates and Dev Environments Present as Production
