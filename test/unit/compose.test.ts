@@ -81,4 +81,18 @@ describe("parseComposeServices", () => {
         const text = ["services:", "    api:", "        image: x"].join("\n");
         expect(parseComposeServices(text)).toEqual([]);
     });
+
+    it("given an environment block, when parsed, then literal entries are kept and the rest skipped (D19)", () => {
+        const text = [
+            "services:",
+            "  api:",
+            "    image: x",
+            "    environment:",
+            "      - ML_URL=http://ml:8000",
+            "      - DEBUG",
+            "      - FROM_ENV=$" + "{SHARED}",
+            "      OTHER: plain",
+        ].join("\n");
+        expect(parseComposeServices(text)[0]?.environment).toEqual({ ML_URL: "http://ml:8000", OTHER: "plain" });
+    });
 });

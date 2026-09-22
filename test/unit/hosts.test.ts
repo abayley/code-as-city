@@ -380,3 +380,65 @@ describe("standalone Dockerfiles (HC-018)", () => {
         expect(built.hosts).toHaveLength(0);
     });
 });
+
+describe("platform container deployments (HC-025, D22/D23)", () => {
+    it("given an ECS task definition, when built, then its containers are a host with ports and dependencies", () => {
+        writeFile(
+            "docker/ecs-task-definition.json",
+            JSON.stringify({
+                family: "shop",
+                containerDefinitions: [
+                    {
+                        name: "web",
+                        image: "shop/web:latest",
+                        portMappings: [{ containerPort: 3000, hostPort: 80 }],
+                        dependsOn: [{ containerName: "db", condition: "HEALTHY" }],
+                    },
+                ],
+            }),
+        );
+        const built = buildHosts(repo, ["docker/ecs-task-definition.json"], [], new Map());
+        expect(built.hosts).toHaveLength(1);
+        expect(built.hosts[0]).toMatchObject({ name: "shop" });
+        expect(built.hosts[0]?.services[0]).toMatchObject({
+            name: "web",
+            image: "shop/web:latest",
+            ports: ["80:3000"],
+            hasPorts: true,
+        });
+        expect(built.serviceDependsOn.get("web")).toEqual(new Set(["db"]));
+    });
+
+    it("given a task-definition file with no containers, when built, then it is not a topology", () => {
+        writeFile("docker/empty-task-definition.json", JSON.stringify({ family: "empty" }));
+        const built = buildHosts(repo, ["docker/empty-task-definition.json"], [], new Map());
+        expect(built.hosts).toHaveLength(0);
+    });
+
+    it("given quadlet units, when built, then one host holds the containers with scoped dependencies", () => {
+        writeFile(
+            "docker/quadlet/cache.container",
+            ["[Unit]", "After=network-online.target", "", "[Container]", "Image=redis:7", "PublishPort=6379:6379"].join(
+                "\n",
+            ),
+        );
+        writeFile(
+            "docker/quadlet/app.container",
+            ["[Unit]", "After=cache.service", "", "[Container]", "Image=shop/app:latest"].join("\n"),
+        );
+        const built = buildHosts(
+            repo,
+            ["docker/quadlet/cache.container", "docker/quadlet/app.container"],
+            [],
+            new Map(),
+        );
+        expect(built.hosts).toHaveLength(1);
+        const services = built.hosts[0]?.services ?? [];
+        expect(services.map((s) => s.name).sort()).toEqual(["app", "cache"]);
+        expect(services.find((s) => s.name === "cache")?.imageClass).toBe("queue");
+        // cache orders after a systemd target (not a container): no dependency.
+        // app orders after the cache container: a dependency.
+        expect(built.serviceDependsOn.get("cache")).toBeUndefined();
+        expect(built.serviceDependsOn.get("app")).toEqual(new Set(["cache"]));
+    });
+});

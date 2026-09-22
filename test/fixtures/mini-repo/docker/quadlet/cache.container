@@ -1,0 +1,7 @@
+[Unit]
+Description=Cache
+After=network-online.target
+
+[Container]
+Image=redis:7
+PublishPort=6379:6379

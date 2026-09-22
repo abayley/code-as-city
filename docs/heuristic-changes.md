@@ -66,7 +66,7 @@ diagrams make a useful contrast: a semantic reading of the same manifests.
 | HC-022 | Next.js apps are not runnable; `docs` dirs are not apps                                                 | D16, I3         | Done     |
 | HC-023 | In-host service calls and monitoring scrapes draw no edges                                              | new; D, M       | Done     |
 | HC-024 | Inferred edges over-fire; templates and dev environments present as production                          | M8, M10, D7, D3 | Done     |
-| HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Proposed |
+| HC-025 | Platform deploy configs (Netlify, Vercel, ECS, quadlet) go unseen                                       | new; D          | Done     |
 | HC-026 | Non-Node services (Python) are never inventoried                                                        | I1, D17         | Done     |
 | HC-027 | D14 entry resolution misses conventional entries                                                        | D14             | Done     |
 | HC-028 | Residual packages fragment and orphan their root files; districts label by directory, not artefact role | M3, S4          | Done     |
@@ -982,23 +982,21 @@ host topology from D1/D3 as input, so they sit downstream of it. Risk:
 HTTP-target matching is where guesses start — hold to targets that resolve
 to a *declared* service.
 
-**Resolution (Done, D19/D20; two follow-ups recorded).** `service-calls.ts`
-hosts both rules, running downstream of D1/D3 over services with emitted
+**Resolution (Done, D19/D20/D21; no open follow-ups).** `service-calls.ts`
+hosts the rules, running downstream of D1/D3 over services with emitted
 nodes. D19 reads static `http(s)` URLs from `fetch`/axios/request call
-arguments in deploy-reachable source (comments stripped; template literals
-never static): a non-loopback hostname must match a service name — a
-declared port corroborates same-named HC-020 alternatives, the caller's
-same-host sibling wins — while a loopback hostname resolves by declared
-container port (`ports:` values are now parsed, ranges excluded). D20 reads
+arguments, SDK/client-config properties (`baseURL`, `endpoint`, ...), and
+compose-`environment:` values read via `process.env`/`os.environ` (one
+agreed value across the services copying the file draws; conflicts stay
+silent) into a declared `http` edge, resolved as before. D20 reads
 quoted `host:port` tokens from a `prometheus.yml` `scrape_configs:` block
-into a `scrapes` edge from the declared prometheus service. Both stay silent
-on ambiguity. Verified on the fixture: an `http` edge from the api entry
-room to the ml service, a `scrapes` edge prometheus -> api (the port
-corroboration is what disambiguates the envoy `api` alternative); unit tests
-pin parsing, resolution, and the guards. Follow-ups, recorded in
-HEURISTICS.md: env-var-indirected base URLs, SDK-signature calls, and a
-`serves` edge for a server shipping a UI bundle (paperclip's `SERVE_UI`,
-which neither rule covers).
+into a `scrapes` edge from the declared prometheus service. D21 reads
+`express.static` / `StaticFiles(directory=)` into a `serves` edge from the
+server's node to the owning package's runnable entry (the served dir is
+usually build output, so the edge targets the app). All three stay silent
+on ambiguity. Verified on the fixture: literal and env-indirected `http`
+edges api -> ml, `serves` api -> web client, `scrapes` prometheus -> api;
+unit tests pin parsing, resolution, and every guard.
 
 ## HC-024: Inferred Edges Over-Fire; Templates and Dev Environments Present as Production
 
@@ -1099,8 +1097,19 @@ owner's entry carries a declared `deploys` edge mirroring the wrangler one.
 Deployment-view only. Verified on the fixture: a `@mini/site` docs site via
 `netlify.toml` (edge from its `app/` entry room) and the `@mini/web` app via
 `vercel.json` (edge from its D16 entry); `sites.ts` unit tests pin parsing,
-ownership, and the template/test guards. ECS task definitions and quadlet
-units are still open — the second slice.
+ownership, and the template/test guards.
+
+**Second slice (Done, D22/D23).** ECS task definitions parse into one host
+district per file (family names it; containers carry image, port mappings,
+and container dependencies into the D6 harvest); quadlet `.container` units
+parse into one host district per directory (filename names the container;
+`Image:`, `PublishPort:`, and `After`/`Requires`/`Wants` scoped to sibling
+containers). Both join the candidate hosts, so variant dedup and name+image
+ownership folding treat them as topologies like any other — a platform file
+restating the compose shape folds away, platform-only services surface.
+Verified on the fixture: an ECS `worker` with a carried `db` dependency and
+a quadlet `scheduler` -> `cache` ordering; `hosts.ts` unit tests pin parsing
+(including the systemd-target exclusion) and the empty-topology guard.
 
 ## HC-026: Non-Node Services (Python) Are Never Inventoried
 

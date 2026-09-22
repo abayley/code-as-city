@@ -398,9 +398,8 @@ describe("generate-map golden master", async () => {
         // packages/api posts to the ml service over HTTP (immich shape);
         // prometheus.yml scrapes the api service (declared port corroborates
         // the name against the envoy alternative).
-        const http = map.edges.find((edge) => edge.label === "http");
+        const http = map.edges.find((edge) => edge.label === "http" && edge.from === "mini-api-src-server");
         expect(http).toMatchObject({
-            from: "mini-api-src-server",
             to: "host-mini-repo-ml",
             kind: "data_flow",
             evidence: "declared",
@@ -412,6 +411,34 @@ describe("generate-map golden master", async () => {
             kind: "data_flow",
             evidence: "declared",
         });
+    });
+
+    it("given an env-indirected URL and a served bundle, when generating, then http and serves edges are drawn (D19/D21)", async () => {
+        const map = (await generateMap([])) as GeneratedMap & {
+            edges: Array<{ from?: string; to?: string; kind?: string; label?: string }>;
+        };
+        // The sweep job reads its ml base URL from the compose environment;
+        // the api server serves the web client's built bundle.
+        expect(map.edges.find((edge) => edge.label === "http" && edge.from === "mini-api-src-jobs")).toMatchObject({
+            to: "host-mini-repo-ml",
+        });
+        expect(map.edges.find((edge) => edge.label === "serves")).toMatchObject({
+            from: "mini-api-src-static",
+            to: "mini-web-src",
+            kind: "data_flow",
+        });
+    });
+
+    it("given ECS and quadlet declarations, when generating, then platform-only services surface under their own hosts (D22/D23)", async () => {
+        const map = await generateMap([]);
+        const byId = (id: string) => map.nodes.find((node) => node.id === id);
+        // The ECS worker and the quadlet cache/scheduler exist on no compose
+        // topology, so each platform host keeps its district; the ECS worker
+        // leans on the compose database via a carried dependency.
+        expect(byId("host-mini")).toMatchObject({ kind: "scope", archetype: "district" });
+        expect(byId("host-mini-worker")).toMatchObject({ kind: "infra", parentId: "host-mini" });
+        expect(byId("host-quadlet")).toMatchObject({ kind: "scope", archetype: "district" });
+        expect(byId("host-quadlet-cache")).toMatchObject({ kind: "infra", parentId: "host-quadlet" });
     });
 
     it("given a bare src room, when generating, then its children promote to the district and the entry takes the deployable (HC-003)", async () => {

@@ -1,0 +1,11 @@
+{
+    "family": "mini",
+    "containerDefinitions": [
+        {
+            "name": "worker",
+            "image": "mini/worker:latest",
+            "portMappings": [{ "containerPort": 9000, "hostPort": 9000 }],
+            "dependsOn": [{ "containerName": "db", "condition": "HEALTHY" }]
+        }
+    ]
+}

@@ -79,28 +79,111 @@ export function resolveServiceEndpoint(
 const CALL_URL_PATTERN =
     /(?:\bfetch\s*\(|\baxios(?:\.\w+)?\s*\(|\.(?:get|post|put|delete|patch|head|options)\s*\(\s*|\brequest\s*\(\s*)['"](https?:\/\/[^'"\s$]+)['"]/g;
 
+// A static http(s) URL in an SDK/client-config property: baseURL, endpoint,
+// and their dash-spelled siblings, in JS/TS (`baseURL: "..."`) or Python
+// (`base_url = "..."`) spelling.
+const CONFIG_URL_PATTERN =
+    /\b(?:base-?url|endpoint|api-?url|server-?url|service-?url|url|uri)\s*[:=]\s*['"](https?:\/\/[^'"\s$]+)['"]/gi;
+
+/**
+ * Parses a raw endpoint string into a hostname/port pair: a bare
+ * `host:port` (an env value without a scheme) is read as http.
+ *
+ * @param raw - The endpoint string as written.
+ * @returns The hostname/port pair, or null when it parses as no http URL.
+ */
+export function parseEndpoint(raw: string): { hostname: string; port: string | null } | null {
+    for (const candidate of [raw, `http://${raw}`]) {
+        let url: URL;
+        try {
+            url = new URL(candidate);
+        } catch {
+            continue;
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+        return { hostname: url.hostname.replace(/^\[|\]$/g, ""), port: url.port || null };
+    }
+    return null;
+}
+
+// Environment-variable reads: `process.env.X` (JS/TS), `os.environ["X"]` /
+// `.get("X")` / `.X` and `os.getenv("X")` (Python). The value resolves
+// through the deploying services' compose `environment:` entries.
+const ENV_REF_PATTERNS = [
+    /process\.env\.([A-Za-z0-9_]+)/g,
+    /os\.environ(?:\[["']([A-Za-z0-9_]+)["']\]|\.get\(["']([A-Za-z0-9_]+)["']\)|\.([A-Za-z0-9_]+))/g,
+    /os\.getenv\(["']([A-Za-z0-9_]+)["']\)/g,
+];
+
+/**
+ * D19: the environment variables a source file reads a URL from. Resolution
+ * against compose `environment:` values happens in the assembly phase, which
+ * sees the deploying services; here only the referenced names are collected.
+ *
+ * @param text - The source file's full text.
+ * @returns The referenced variable names, in first-use order.
+ */
+export function findEnvRefs(text: string): string[] {
+    const stripped = stripJsComments(text);
+    const refs: string[] = [];
+    for (const pattern of ENV_REF_PATTERNS) {
+        for (const match of stripped.matchAll(pattern)) {
+            const name = match.slice(1).find((group) => group !== undefined);
+            if (name !== undefined && !refs.includes(name)) refs.push(name);
+        }
+    }
+    return refs;
+}
+
+// Static-asset serving: `express.static("<dir>")` (Express) and
+// `StaticFiles(directory="<dir>")` (FastAPI/Starlette). The served dir names
+// the shipped app — usually build output that is never inventoried, so the
+// edge targets the owning package's entry, resolved in the assembly phase.
+const SERVE_PATH_PATTERNS = [
+    /\.static\s*\(\s*['"`]([^'"`$]+)['"`]/g,
+    /StaticFiles\s*\(\s*directory\s*=\s*['"`]([^'"`$]+)['"`]/g,
+];
+
+/**
+ * D21: the directories a source file serves as static assets.
+ *
+ * @param text - The source file's full text.
+ * @returns The served paths as written.
+ */
+export function findServePaths(text: string): string[] {
+    const stripped = stripJsComments(text);
+    const paths: string[] = [];
+    for (const pattern of SERVE_PATH_PATTERNS) {
+        for (const match of stripped.matchAll(pattern)) {
+            const served = match[1];
+            if (served !== undefined && !paths.includes(served)) paths.push(served);
+        }
+    }
+    return paths;
+}
+
 /**
  * D19: the static HTTP call targets in a source file: every single- or
- * double-quoted http(s) URL in a fetch/axios/request call argument, comments
- * stripped (a URL in prose names no call). Dynamic URLs (template literals,
- * concatenation) resolve to nothing and are excluded here.
+ * double-quoted http(s) URL in a fetch/axios/request call argument or a
+ * client-config property (`baseURL`, `endpoint`, ... — the SDK-construction
+ * half of the evidence), comments stripped (a URL in prose names no call).
+ * Dynamic URLs (template literals, concatenation) resolve to nothing and are
+ * excluded here.
  *
  * @param text - The source file's full text.
  * @returns One hostname/port pair per static call URL.
  */
 export function findHttpCalls(text: string): { hostname: string; port: string | null }[] {
+    const stripped = stripJsComments(text);
+    const patterns = [CALL_URL_PATTERN, CONFIG_URL_PATTERN];
     const calls: { hostname: string; port: string | null }[] = [];
-    for (const match of stripJsComments(text).matchAll(CALL_URL_PATTERN)) {
-        const raw = match[1];
-        if (raw === undefined) continue;
-        let url: URL;
-        try {
-            url = new URL(raw);
-        } catch {
-            continue;
+    for (const pattern of patterns) {
+        for (const match of stripped.matchAll(pattern)) {
+            const raw = match[1];
+            if (raw === undefined) continue;
+            const endpoint = parseEndpoint(raw);
+            if (endpoint) calls.push(endpoint);
         }
-        if (url.protocol !== "http:" && url.protocol !== "https:") continue;
-        calls.push({ hostname: url.hostname.replace(/^\[|\]$/g, ""), port: url.port || null });
     }
     return calls;
 }

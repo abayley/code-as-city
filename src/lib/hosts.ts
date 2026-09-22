@@ -8,7 +8,7 @@ import { type ComposeService, parseComposeServices } from "./compose.ts";
 import type { CrontabSchedule } from "./crontab.ts";
 import { parseDockerfile } from "./dockerfile.ts";
 import { isTestPath } from "./inventory.ts";
-import { readText } from "./read.ts";
+import { readJsonSafe, readText } from "./read.ts";
 import { kebab } from "./text.ts";
 
 // Known container images -> infra classification. Databases are matched
@@ -280,6 +280,96 @@ export type HostShape = {
     serviceOwner: Map<string, string>;
 };
 
+type EcsContainer = {
+    name?: string;
+    image?: string;
+    portMappings?: { containerPort?: number; hostPort?: number }[];
+    dependsOn?: { containerName?: string }[];
+};
+
+type EcsTaskDef = { family?: string; containerDefinitions?: EcsContainer[] };
+
+/**
+ * D22: parses an ECS task-definition file into a host district. Each
+ * container definition becomes a service — image, port mappings (kept as
+ * `host:container` strings for the D19/D20 port matching), and container
+ * dependencies, which join the D6 `depends_on` harvest. Files that fail to
+ * parse or declare no containers are not topologies and yield nothing.
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param file - Repo-relative path of the task-definition file.
+ * @returns The host, or null when the file declares no containers.
+ */
+function parseEcsHost(repo: string, file: string): Host | null {
+    const taskDef = (readJsonSafe(readText(join(repo, file))) ?? {}) as EcsTaskDef;
+    const containers = (taskDef.containerDefinitions ?? []).filter((c) => c.name);
+    if (!containers.length) return null;
+    const name = taskDef.family?.trim() || basename(repo);
+    const services = containers.map((container): HostService => {
+        const ports = (container.portMappings ?? [])
+            .filter((m) => m.containerPort !== undefined)
+            .map((m) => (m.hostPort !== undefined ? `${m.hostPort}:${m.containerPort}` : `${m.containerPort}`));
+        const dependsOn = (container.dependsOn ?? [])
+            .map((d) => d.containerName)
+            .filter((dep): dep is string => dep !== undefined);
+        const imageClass = classifyService(container.image, container.name ?? "");
+        return {
+            name: container.name ?? "",
+            image: container.image,
+            ports,
+            hasPorts: ports.length > 0,
+            dependsOn,
+            copies: [],
+            entryFile: null,
+            imageClass,
+        };
+    });
+    return { file, name, id: kebab(`host-${name}`), services, rank: envRank(file) };
+}
+
+/**
+ * D23: parses a directory of quadlet `.container` units into one host
+ * district — a quadlet directory is one machine's deployment the way a
+ * compose file is one topology's. Each unit contributes its container name
+ * (the filename), image, published ports, and ordering dependencies
+ * (`After`/`Requires`/`Wants` naming a sibling container, so systemd targets
+ * never become dependencies).
+ *
+ * @param repo - Absolute path of the repository being mapped.
+ * @param dir - Repo-relative directory holding the `.container` units.
+ * @param files - The directory's unit files.
+ * @returns The host (always non-null: the caller only passes non-empty dirs).
+ */
+function parseQuadletHost(repo: string, dir: string, files: readonly string[]): Host {
+    const containers = new Set(files.map((f) => basename(f).replace(/\.container$/, "")));
+    const services = files.map((file): HostService => {
+        const name = basename(file).replace(/\.container$/, "");
+        const text = readText(join(repo, file));
+        const image = /^\s*Image\s*=\s*(.+?)\s*$/m.exec(text)?.[1];
+        const ports = [...text.matchAll(/^\s*PublishPort\s*=\s*(.+?)\s*$/gm)]
+            .map((m) => m[1]?.replace(/\/\w+$/, "").trim())
+            .filter((p): p is string => p !== undefined && p !== "");
+        const dependsOn = [...text.matchAll(/^\s*(?:After|Requires|Wants)\s*=\s*(.+?)\s*$/gm)]
+            .flatMap((m) => (m[1] ?? "").split(/\s+/))
+            .map((unit) => unit.replace(/\.service$/, ""))
+            .filter((dep) => containers.has(dep));
+        const imageClass = classifyService(image, name);
+        return {
+            name,
+            image,
+            ports,
+            hasPorts: ports.length > 0,
+            dependsOn,
+            copies: [],
+            entryFile: null,
+            imageClass,
+        };
+    });
+    const informative = dir.split(sep).filter((seg) => seg !== "." && !GENERIC_SEGMENTS.has(seg));
+    const name = informative.join(" ") || basename(repo);
+    return { file: dir, name, id: kebab(`host-${name}`), services, rank: envRank(dir) };
+}
+
 /**
  * Builds deployment hosts: one per compose file (partial overlays excluded),
  * named from informative path segments, each service bound to its Dockerfile
@@ -346,6 +436,37 @@ export function buildHosts(
             });
             return { file, name, id: kebab(`host-${name}`), services, rank: envRank(file) };
         });
+
+    // D22/D23 (HC-025, second slice): platform container deployments beside
+    // compose — ECS task definitions (one host per file) and quadlet unit
+    // directories (one host per directory). They join the candidate hosts, so
+    // the existing variant dedup, `depends_on` harvest, and name+image
+    // ownership folding treat them as topologies like any other: a platform
+    // file restating the compose shape folds away (an empty district is
+    // dropped), while platform-only services surface under their own host.
+    // Test-path files are fixtures, not topologies.
+    const platformIds = new Set(candidateHosts.map((host) => host.id));
+    const claimPlatformHost = (host: Host): void => {
+        host.id = uniqueId(host.id, (candidate) => platformIds.has(candidate));
+        platformIds.add(host.id);
+        candidateHosts.push(host);
+    };
+    for (const file of allFiles) {
+        if (!/task-definition\.json$/i.test(basename(file))) continue;
+        if (/(^|\/)(test|tests|__tests__)\//.test(file) || /\.test\.json$/.test(basename(file))) continue;
+        const ecs = parseEcsHost(repo, file);
+        if (ecs) claimPlatformHost(ecs);
+    }
+    const quadletDirs = new Map<string, string[]>();
+    for (const file of allFiles) {
+        if (!/\.container$/.test(file)) continue;
+        if (/(^|\/)(test|tests|__tests__)\//.test(file)) continue;
+        const dir = dirname(file);
+        quadletDirs.set(dir, [...(quadletDirs.get(dir) ?? []), file]);
+    }
+    for (const [dir, files] of [...quadletDirs.entries()].sort()) {
+        claimPlatformHost(parseQuadletHost(repo, dir, files));
+    }
 
     const serviceDependsOn = new Map<string, Set<string>>();
     for (const host of candidateHosts) {

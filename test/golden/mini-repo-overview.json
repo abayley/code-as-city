@@ -768,7 +768,7 @@
       "label": "@Mini/Api",
       "kind": "scope",
       "archetype": "district",
-      "description": "Function area: packages/api/ — 9 modules.",
+      "description": "Function area: packages/api/ — 10 modules.",
       "tags": [
         "band:Generators"
       ],
@@ -878,6 +878,40 @@
       }
     },
     {
+      "id": "mini-api-src-static",
+      "label": "Static",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-api-district",
+      "description": "Serves the web client's built bundle (SERVE_UI).",
+      "attributes": {
+        "entry-point": "packages/api/src/static.ts"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/static.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1,
+        "files": 1
+      },
+      "tags": [
+        "composer"
+      ],
+      "display": {
+        "size": [
+          1.1,
+          0.6,
+          0.935
+        ],
+        "color": "#C77740",
+        "flowLayer": 0,
+        "flowOrder": 7
+      }
+    },
+    {
       "id": "mini-api-src-store",
       "label": "Store",
       "kind": "module",
@@ -905,7 +939,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 1,
-        "flowOrder": 7
+        "flowOrder": 8
       }
     },
     {
@@ -939,7 +973,7 @@
         ],
         "color": "#C77740",
         "flowLayer": 0,
-        "flowOrder": 8
+        "flowOrder": 9
       }
     },
     {
@@ -955,8 +989,8 @@
         }
       ],
       "metrics": {
-        "loc": 7,
-        "complexity": 1,
+        "loc": 14,
+        "complexity": 2,
         "files": 1
       },
       "tags": [
@@ -964,9 +998,9 @@
       ],
       "display": {
         "size": [
-          1.1,
+          1.2035533905932738,
           0.51,
-          0.935
+          1.0230203820042827
         ],
         "color": "#C77740",
         "flowLayer": 1,
@@ -1568,6 +1602,91 @@
       ],
       "tags": [
         "host:mini-repo"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "host-mini",
+      "label": "Mini host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Mini host: 1 node.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#283B47",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "infra-mini-worker",
+      "label": "Worker",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-mini",
+      "description": "mini/worker:latest on the mini host.",
+      "sourceRefs": [
+        {
+          "path": "docker/ecs-task-definition.json"
+        }
+      ],
+      "tags": [
+        "host:mini"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "host-quadlet",
+      "label": "Quadlet host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Quadlet host: 2 nodes.",
+      "tags": [
+        "band:Mini Repo host"
+      ],
+      "display": {
+        "color": "#283B47",
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "infra-quadlet-cache",
+      "label": "Cache",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-quadlet",
+      "description": "redis:7 on the quadlet host.",
+      "sourceRefs": [
+        {
+          "path": "docker/quadlet"
+        }
+      ],
+      "tags": [
+        "host:quadlet"
+      ],
+      "display": {
+        "color": "#283B47"
+      }
+    },
+    {
+      "id": "infra-quadlet-scheduler",
+      "label": "Scheduler",
+      "kind": "infra",
+      "archetype": "cloud",
+      "parentId": "host-quadlet",
+      "description": "mini/scheduler:latest on the quadlet host.",
+      "sourceRefs": [
+        {
+          "path": "docker/quadlet"
+        }
+      ],
+      "tags": [
+        "host:quadlet"
       ],
       "display": {
         "color": "#283B47"

@@ -109,7 +109,7 @@
         }
       ],
       "metrics": {
-        "loc": 89,
+        "loc": 101,
         "complexity": 2,
         "coverage": 62.5
       },
@@ -123,7 +123,7 @@
         "flowLayer": 1,
         "size": [
           1.2035533905932738,
-          0.8920882209992749,
+          0.9243699178417375,
           1.0230203820042827
         ]
       }
@@ -141,7 +141,7 @@
         }
       ],
       "metrics": {
-        "loc": 10
+        "loc": 11
       },
       "display": {
         "flowLayer": 0
@@ -287,6 +287,84 @@
       }
     },
     {
+      "id": "host-mini",
+      "label": "Mini host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Deployment host projected from docker/ecs-task-definition.json.",
+      "display": {
+        "flowLayer": 1000
+      }
+    },
+    {
+      "id": "host-mini-worker",
+      "label": "Worker",
+      "kind": "infra",
+      "archetype": "gateway",
+      "parentId": "host-mini",
+      "description": "Container image mini/worker:latest.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker/ecs-task-definition.json"
+        }
+      ],
+      "tags": [
+        "listens"
+      ],
+      "display": {
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "host-quadlet",
+      "label": "Quadlet host",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Deployment host projected from docker/quadlet.",
+      "display": {
+        "flowLayer": 1000
+      }
+    },
+    {
+      "id": "host-quadlet-cache",
+      "label": "Cache",
+      "kind": "infra",
+      "archetype": "queue",
+      "parentId": "host-quadlet",
+      "description": "Container image redis:7.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker/quadlet"
+        }
+      ],
+      "tags": [
+        "listens"
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "host-quadlet-scheduler",
+      "label": "Scheduler",
+      "kind": "infra",
+      "archetype": "worker",
+      "parentId": "host-quadlet",
+      "description": "Container image mini/scheduler:latest.",
+      "attributes": {},
+      "sourceRefs": [
+        {
+          "path": "docker/quadlet"
+        }
+      ],
+      "tags": [],
+      "display": {
+        "flowLayer": 1
+      }
+    },
+    {
       "id": "host-mini-repo-image",
       "label": "Mini Repo Image host",
       "kind": "scope",
@@ -375,6 +453,22 @@
       "sourceRefs": [
         {
           "path": "docker-compose.yml"
+        }
+      ],
+      "display": {
+        "flowLayer": 2
+      }
+    },
+    {
+      "id": "host-mini-db",
+      "label": "Db",
+      "kind": "infra",
+      "archetype": "database",
+      "parentId": "host-mini",
+      "description": "Backing service (image postgres:16) declared in a compose variant; the deployed host provides it via configuration.",
+      "sourceRefs": [
+        {
+          "path": "docker/ecs-task-definition.json"
         }
       ],
       "display": {
@@ -523,6 +617,30 @@
       ]
     },
     {
+      "id": "mini-api-src-static",
+      "label": "Static",
+      "kind": "module",
+      "archetype": "room",
+      "parentId": "mini-api-area",
+      "description": "Serves the web client's built bundle (SERVE_UI).\n\n1 source file.",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/static.ts"
+        }
+      ],
+      "metrics": {
+        "loc": 5,
+        "complexity": 1
+      },
+      "display": {
+        "size": [
+          1.1,
+          0.6195931503518967,
+          0.935
+        ]
+      }
+    },
+    {
       "id": "mini-api-src-telemetry",
       "label": "Telemetry",
       "kind": "module",
@@ -559,17 +677,20 @@
         }
       ],
       "metrics": {
-        "loc": 7,
-        "complexity": 1
+        "loc": 14,
+        "complexity": 2
       },
       "display": {
         "flowLayer": 0,
         "size": [
-          1.1,
-          0.6272969222485302,
-          0.935
+          1.2035533905932738,
+          0.6536859381445322,
+          1.0230203820042827
         ]
-      }
+      },
+      "tags": [
+        "http-client"
+      ]
     },
     {
       "id": "mini-api-src-migrations",
@@ -1352,6 +1473,22 @@
       "label": "compose depends_on"
     },
     {
+      "id": "host-mini-worker--host-mini-db",
+      "from": "host-mini-worker",
+      "to": "host-mini-db",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "compose depends_on"
+    },
+    {
+      "id": "host-quadlet-scheduler--host-quadlet-cache",
+      "from": "host-quadlet-scheduler",
+      "to": "host-quadlet-cache",
+      "kind": "depends_on",
+      "evidence": "declared",
+      "label": "compose depends_on"
+    },
+    {
       "id": "mini-edge-src-api--edge-worker",
       "from": "mini-edge-src-api",
       "to": "edge-worker",
@@ -1557,6 +1694,19 @@
       ]
     },
     {
+      "id": "mini-api-src-jobs--host-mini-repo-ml-http",
+      "from": "mini-api-src-jobs",
+      "to": "host-mini-repo-ml",
+      "kind": "data_flow",
+      "evidence": "declared",
+      "label": "http",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/jobs/sweep.ts"
+        }
+      ]
+    },
+    {
       "id": "mini-api-src-server--host-mini-repo-ml-http",
       "from": "mini-api-src-server",
       "to": "host-mini-repo-ml",
@@ -1566,6 +1716,19 @@
       "sourceRefs": [
         {
           "path": "packages/api/src/server.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-api-src-static--mini-web-src-serves",
+      "from": "mini-api-src-static",
+      "to": "mini-web-src",
+      "kind": "data_flow",
+      "evidence": "declared",
+      "label": "serves",
+      "sourceRefs": [
+        {
+          "path": "packages/api/src/static.ts"
         }
       ]
     },

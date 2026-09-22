@@ -40,7 +40,15 @@ import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
-import { findHttpCalls, findScrapeTargets, resolveServiceEndpoint, type ServiceTarget } from "./service-calls.ts";
+import {
+    findEnvRefs,
+    findHttpCalls,
+    findScrapeTargets,
+    findServePaths,
+    parseEndpoint,
+    resolveServiceEndpoint,
+    type ServiceTarget,
+} from "./service-calls.ts";
 import { type SiteHost, siteShortName } from "./sites.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
@@ -438,10 +446,11 @@ export function assembleServiceEdges(
         allFiles: readonly string[];
         sourceFiles: readonly string[];
         deployReachable: ReadonlySet<string>;
+        runnableApps: readonly RunnableApp[];
     },
 ): void {
-    const { repo, nodes, edges, fileText, nodeOwningFile } = state;
-    const { hosts, allFiles, sourceFiles, deployReachable } = options;
+    const { repo, nodes, edges, fileText, nodeOwningFile, owningPackage } = state;
+    const { hosts, allFiles, sourceFiles, deployReachable, runnableApps } = options;
     const declared: ServiceTarget[] = [];
     for (const host of hosts) {
         for (const service of host.services) {
@@ -455,21 +464,80 @@ export function assembleServiceEdges(
         nodes.filter((node) => (node.parentId ?? "").startsWith("host-")).map((node) => [node.id, node.parentId ?? ""]),
     );
     const targetId = (target: ServiceTarget): string => kebab(`${target.host.id}-${target.service.name}`);
-    // D19: static call URLs in deployed code.
+    /**
+     * Draws one endpoint edge when it resolves to exactly one declared
+     * service, sharing the literal-URL edge id so one relationship draws one
+     * edge however it is written.
+     */
+    const drawEndpoint = (
+        caller: string,
+        file: string,
+        endpoint: { hostname: string; port: string | null } | null,
+    ): void => {
+        if (!endpoint) return;
+        const target = resolveServiceEndpoint(
+            declared,
+            endpoint.hostname,
+            endpoint.port,
+            hostOfNode.get(caller) ?? null,
+        );
+        if (!target || targetId(target) === caller) return;
+        addEdge(edges, {
+            id: `${caller}--${targetId(target)}-http`,
+            from: caller,
+            to: targetId(target),
+            kind: "data_flow",
+            evidence: "declared",
+            label: "http",
+            sourceRefs: [{ path: file }],
+        });
+    };
+    // D19: static call URLs in deployed code, plus env-indirected ones — an
+    // env var read in the file resolves through the `environment:` entries of
+    // the services whose images copy the file in. One agreed value draws;
+    // conflicting values stay silent.
+    const shippingServices = (file: string): HostService[] =>
+        hosts
+            .flatMap((host) => host.services)
+            .filter((service) =>
+                (service.copies ?? []).some(
+                    (copy) => file === normaliseCopyDir(copy) || file.startsWith(`${normaliseCopyDir(copy)}/`),
+                ),
+            );
     for (const file of sourceFiles) {
         if (!deployReachable.has(file)) continue;
         const caller = nodeOwningFile(file);
         if (!caller) continue;
-        for (const call of findHttpCalls(fileText(file))) {
-            const target = resolveServiceEndpoint(declared, call.hostname, call.port, hostOfNode.get(caller) ?? null);
-            if (!target || targetId(target) === caller) continue;
+        const text = fileText(file);
+        for (const call of findHttpCalls(text)) {
+            drawEndpoint(caller, file, call);
+        }
+        for (const ref of findEnvRefs(text)) {
+            const values = new Set(
+                shippingServices(file)
+                    .map((service) => service.environment?.[ref])
+                    .filter((value): value is string => value !== undefined),
+            );
+            if (values.size !== 1) continue;
+            drawEndpoint(caller, file, parseEndpoint([...values][0] ?? ""));
+        }
+        // D21: a server shipping a UI bundle — a served dir names the app it
+        // belongs to (usually build output, never inventoried), so the edge
+        // targets the owning package's runnable entry.
+        for (const served of findServePaths(text)) {
+            const resolved = join(dirname(file), served);
+            const owner = owningPackage(resolved);
+            if (!owner) continue;
+            const entry = runnableApps.find((app) => app.pkgDir === owner.dir)?.entry;
+            const target = entry ? nodeOwningFile(entry) : nodeOwningFile(resolved);
+            if (!target || target === caller) continue;
             addEdge(edges, {
-                id: `${caller}--${targetId(target)}-http`,
+                id: `${caller}--${target}-serves`,
                 from: caller,
-                to: targetId(target),
+                to: target,
                 kind: "data_flow",
                 evidence: "declared",
-                label: "http",
+                label: "serves",
                 sourceRefs: [{ path: file }],
             });
         }

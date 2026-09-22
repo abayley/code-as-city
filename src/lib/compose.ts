@@ -14,10 +14,13 @@ export type ComposeService = {
     devBindMount?: boolean | undefined;
     /** REVIEW-0010: the service's command runs a known dev server. */
     devServerCommand?: boolean | undefined;
+    /** HC-023: literal `environment:` entries, for env-indirected URL resolution. */
+    environment?: Record<string, string> | undefined;
     volumesIndent?: number | undefined;
     dependsOn?: string[] | undefined;
     dependsOnIndent?: number | undefined;
     portsIndent?: number | undefined;
+    envIndent?: number | undefined;
 };
 
 /**
@@ -118,6 +121,26 @@ export function parseComposeServices(text: string): ComposeService[] {
             if (dep !== undefined) current.dependsOn?.push(dep);
         } else if (current.dependsOnIndent !== undefined && indent <= current.dependsOnIndent) {
             current.dependsOnIndent = undefined;
+        }
+        // HC-023: literal environment entries, so an env-indirected base URL
+        // (ML_URL=http://ml:8000) resolves to a declared service. Key-only
+        // entries and interpolated values resolve to nothing and are skipped.
+        if (/^environment:\s*$/.test(key)) {
+            current.envIndent = indent;
+            current.environment ??= {};
+            continue;
+        }
+        if (current.envIndent !== undefined && indent > current.envIndent) {
+            const entry = (
+                /^-\s*([A-Za-z0-9_]+)\s*[:=]\s*(.+?)\s*$/.exec(key) ?? /^([A-Za-z0-9_]+)\s*:\s*(.+?)\s*$/.exec(key)
+            )?.slice(1);
+            const envName = entry?.[0];
+            const rawValue = entry?.[1]?.replace(/^["']|["']$/g, "");
+            if (envName !== undefined && rawValue !== undefined && rawValue !== "" && !rawValue.includes("${")) {
+                if (current.environment) current.environment[envName] = rawValue;
+            }
+        } else if (current.envIndent !== undefined && indent <= current.envIndent) {
+            current.envIndent = undefined;
         }
     }
     return services;

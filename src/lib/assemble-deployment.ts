@@ -395,8 +395,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // 7c-vi. D18: platform site deployments (vercel.json, netlify.toml).
     assembleSiteDistricts(state, { siteHosts, runnableApps, rooms, entryDirNames });
 
-    // 7c-vii. D19/D20: service-to-service HTTP calls and monitoring scrapes.
-    assembleServiceEdges(state, { hosts, allFiles, sourceFiles, deployReachable });
+    // 7c-vii. D19-D21: service-to-service HTTP calls, monitoring scrapes, and
+    // servers shipping UI bundles.
+    assembleServiceEdges(state, { hosts, allFiles, sourceFiles, deployReachable, runnableApps });
 
     // 7e-iii. Config-declared external services (D12).
     assembleConfigExternals(state, { packages });

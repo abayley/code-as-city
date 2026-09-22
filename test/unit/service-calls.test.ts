@@ -5,8 +5,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { containerPort, parseComposeServices } from "../../src/lib/compose";
 import type { Host } from "../../src/lib/hosts";
 import {
+    findEnvRefs,
     findHttpCalls,
     findScrapeTargets,
+    findServePaths,
+    parseEndpoint,
     resolveServiceEndpoint,
     type ServiceTarget,
 } from "../../src/lib/service-calls";
@@ -60,6 +63,33 @@ describe("findHttpCalls (D19)", () => {
 
     it("given a URL in a comment, when scanned, then it names no call", () => {
         expect(findHttpCalls("// see http://ml:8000/predict for docs\nconst x = 1;")).toEqual([]);
+    });
+
+    it("given client-config properties, when scanned, then their URLs are targets", () => {
+        const calls = findHttpCalls(['const client = new ApiClient({ baseURL: "http://ml:8000" });'].join("\n"));
+        expect(calls).toEqual([{ hostname: "ml", port: "8000" }]);
+    });
+
+    it("given a bare host and port, when parsed, then it reads as http", () => {
+        expect(parseEndpoint("ml:8000")).toEqual({ hostname: "ml", port: "8000" });
+        expect(parseEndpoint("not a url !!!")).toBeNull();
+    });
+});
+
+describe("findEnvRefs (D19)", () => {
+    it("given JS and Python env reads, when scanned, then the variable names are collected", () => {
+        expect(
+            findEnvRefs(['const url = process.env.ML_URL ?? "x";', "other = os.environ.get('DB_URL')"].join("\n")),
+        ).toEqual(["ML_URL", "DB_URL"]);
+    });
+});
+
+describe("findServePaths (D21)", () => {
+    it("given static-serving calls, when scanned, then the served dirs are found", () => {
+        expect(findServePaths(['app.use(express.static("../../web/dist"));'].join("\n"))).toEqual(["../../web/dist"]);
+        expect(findServePaths(['app.mount("/s", StaticFiles(directory="../ui/build"), name="s")'].join("\n"))).toEqual([
+            "../ui/build",
+        ]);
     });
 });
 
