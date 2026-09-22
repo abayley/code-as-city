@@ -598,6 +598,30 @@ describe("assemblePackageDistricts (7c)", () => {
         );
         expect(state.nodes.find((n) => n.id === "x-p-area")).toMatchObject({ kind: "scope", archetype: "district" });
     });
+
+    it("given a room holding only lib plus loose files, when assembled, then it stays a leaf rather than a single-room building", () => {
+        const state = makeState();
+        const p = pkg({ dir: "packages/p", id: "x-p" });
+        const src = room({
+            id: "x-p-src",
+            segment: "src",
+            files: ["packages/p/src/lib/a.ts", "packages/p/src/main.ts"],
+            pkg: p,
+        });
+        assemblePackageDistricts(
+            state,
+            pkgOpts({
+                packages: [p],
+                rooms: new Map([["x-p-src", src]]),
+                // main.ts is imported (fan-in 1), so it groups to (files);
+                // lib/ is shared plumbing and never emitted.
+                fileCoupling: new Map([["packages/p/src/main.ts", { in: 1, out: 0, instability: 0 }]]),
+                deployReachable: new Set(["packages/p/src/lib/a.ts", "packages/p/src/main.ts"]),
+            }),
+        );
+        expect(state.nodes.find((n) => n.id === "x-p-src")).toMatchObject({ kind: "module", archetype: "worker" });
+        expect(state.nodes.some((n) => n.parentId === "x-p-src")).toBe(false);
+    });
 });
 
 describe("assembleHostDistricts (7a)", () => {

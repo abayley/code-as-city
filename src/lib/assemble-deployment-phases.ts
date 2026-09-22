@@ -1204,13 +1204,17 @@ export function assemblePackageDistricts(
 
     /**
      * Decides whether a room has interior structure worth expanding into a
-     * building: two subdirs, or one subdir plus loose files.
+     * building: two subdirs, or one subdir plus loose files. Counts only the
+     * children that are actually emitted — a `lib` child is shared plumbing
+     * and skipped below, so a room holding nothing but `lib/` plus loose
+     * files is a leaf, not a single-room building (which the validator
+     * rejects).
      *
      * @param room - Room to test.
      * @returns True when the room should expand into child structures.
      */
     function hasInteriorStructure(room: Room): boolean {
-        const allChildren = childRoomsOf(room);
+        const allChildren = childRoomsOf(room).filter(({ seg }) => seg !== "lib");
         const dirChildren = allChildren.filter(({ seg }) => seg !== "(files)");
         return dirChildren.length >= 2 || (dirChildren.length >= 1 && allChildren.length >= 2);
     }

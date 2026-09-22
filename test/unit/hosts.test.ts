@@ -373,4 +373,10 @@ describe("standalone Dockerfiles (HC-018)", () => {
         const built = buildHosts(repo, ["latest/Dockerfile-latest", "latest/a.ts"], [], new Map());
         expect(built.hosts[0]?.services[0]).toMatchObject({ devEnvironment: false });
     });
+
+    it("given a source module named like a variant, when built, then it is code, not a host (HC-018)", () => {
+        writeFile("src/lib/dockerfile.ts", "export const x = 1;\n");
+        const built = buildHosts(repo, ["src/lib/dockerfile.ts"], [], new Map());
+        expect(built.hosts).toHaveLength(0);
+    });
 });

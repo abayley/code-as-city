@@ -411,7 +411,11 @@ export function buildHosts(
     );
     const takenIds = new Set(hosts.map((host) => host.id));
     for (const file of allFiles) {
-        if (!/^[Dd]ockerfile([-_.].+)?$/.test(basename(file))) continue;
+        const base = basename(file);
+        if (!/^[Dd]ockerfile([-_.].+)?$/.test(base)) continue;
+        // A source module named like a variant (this repo's own
+        // src/lib/dockerfile.ts) is code, not a build declaration.
+        if (/\.(ts|tsx|js|jsx|mjs|cjs|py)$/.test(base)) continue;
         if (boundDockerfiles.has(file) || isTestPath(file)) continue;
         const dir = dirname(file);
         const parsed = parseDockerfile(repo, file, allFiles, dir === "." ? undefined : dir);
