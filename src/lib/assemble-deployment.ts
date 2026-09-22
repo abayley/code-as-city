@@ -19,6 +19,7 @@ import {
     assembleHostDistricts,
     assembleImportEdges,
     assemblePackageDistricts,
+    assembleSiteDistricts,
     assembleStaticClassification,
     reclassifyPublishedArtefacts,
     reclassifyRunnableApps,
@@ -35,6 +36,7 @@ import { readText } from "./read.ts";
 import type { Room } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import type { EmbeddedDatabase, ExternalServiceDep } from "./scans.ts";
+import type { SiteHost } from "./sites.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
 import type { EdgeHost } from "./wrangler.ts";
@@ -78,6 +80,7 @@ export type DeploymentContext = {
     scriptReachable: ReadonlySet<string>;
     spawnedEntries: readonly SpawnedEntry[];
     runnableApps: readonly RunnableApp[];
+    siteHosts: readonly SiteHost[];
     devToolingWarnings: readonly string[];
     pathReassignments: Map<string, PathReassignment>;
     entryDirNames: ReadonlySet<string>;
@@ -151,6 +154,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         scriptReachable,
         spawnedEntries,
         runnableApps,
+        siteHosts,
         devToolingWarnings,
         pathReassignments,
         entryDirNames,
@@ -185,6 +189,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
     // D16: the directories of packages run directly, for the R5 spare and the
     // D14 precedence check.
     const runnableByDir = new Map(runnableApps.map((app) => [app.pkgDir, app]));
+    // D18: the directories of packages a platform site ships, spared from R5
+    // the way runnable packages are.
+    const sitePkgDirs = new Set(siteHosts.map((site) => site.pkgDir));
 
     const nodes: MapNode[] = [];
     const edges: MapEdge[] = [];
@@ -349,6 +356,7 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
         hostDeployReachable,
         hasHostDeployShape,
         runnableByDir,
+        sitePkgDirs,
         hosts,
         roomEdges,
         fileToRoom,
@@ -382,6 +390,9 @@ export function assembleDeployment(context: DeploymentContext): AssembledMap {
 
     // 7c-v. D15: runtime-supervised processes spawned from deploy-reachable code.
     assembleDaemons(state, { spawnedEntries });
+
+    // 7c-vi. D18: platform site deployments (vercel.json, netlify.toml).
+    assembleSiteDistricts(state, { siteHosts, runnableApps, rooms, entryDirNames });
 
     // 7e-iii. Config-declared external services (D12).
     assembleConfigExternals(state, { packages });

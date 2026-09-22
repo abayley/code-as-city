@@ -537,6 +537,7 @@ describe("assemblePackageDistricts (7c)", () => {
         hostDeployReachable: new Set(),
         hasHostDeployShape: false,
         runnableByDir: new Map(),
+        sitePkgDirs: new Set<string>(),
         hosts: [],
         roomEdges: new Map(),
         fileToRoom: new Map(),

@@ -39,6 +39,7 @@ import { readJson, readText } from "./read.ts";
 import { type Room, roomDir } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { type EmbeddedDatabase, type ExternalServiceDep, OTLP_PATTERN } from "./scans.ts";
+import { type SiteHost, siteShortName } from "./sites.ts";
 import { kebab, titleCase } from "./text.ts";
 import type { CiWorkflow } from "./workflows.ts";
 import type { EdgeHost } from "./wrangler.ts";
@@ -331,6 +332,85 @@ export function assembleDaemons(state: AssemblyState, options: { spawnedEntries:
             label: "starts",
             sourceRefs: [{ path: caller }],
         });
+    }
+}
+
+/**
+ * 7c-vi / D18: draws platform site deployments. Each `vercel.json` or
+ * `netlify.toml` becomes a site district with a gateway deployable tagged
+ * `site` and by platform, carrying the build command and publish dir as
+ * attributes. The owning package's entry deploys to it — the runnable entry
+ * when the owner is a D16 app, else an emitted entry-dir room — mirroring
+ * the wrangler deploys edge (7c-i). Deployment-view only.
+ *
+ * @param state - The assembly state (`repo`, `nodes`/`edges`,
+ *   `nodeOwningFile`, `uniqueNodeId`).
+ * @param options - `siteHosts` the declared sites; `runnableApps` for the
+ *   runnable-entry edge source; `rooms`/`entryDirNames` for the entry-dir
+ *   fallback.
+ */
+export function assembleSiteDistricts(
+    state: AssemblyState,
+    options: {
+        siteHosts: readonly SiteHost[];
+        runnableApps: readonly RunnableApp[];
+        rooms: ReadonlyMap<string, Room>;
+        entryDirNames: ReadonlySet<string>;
+    },
+): void {
+    const { repo, nodes, edges, nodeOwningFile, uniqueNodeId } = state;
+    const { siteHosts, runnableApps, rooms, entryDirNames } = options;
+    for (const site of siteHosts) {
+        const short = siteShortName(repo, site.pkgDir);
+        const districtId = uniqueNodeId(kebab(`site-${site.platform}-${short}`));
+        nodes.push({
+            id: districtId,
+            label: `${titleCase(site.platform)} site: ${titleCase(short)}`,
+            kind: "scope",
+            archetype: "district",
+            description: `Static site deployed to ${titleCase(site.platform)} as declared in ${site.file}.`,
+        });
+        const siteId = uniqueNodeId(`${districtId}-site`);
+        nodes.push({
+            id: siteId,
+            label: titleCase(short),
+            kind: "deployable",
+            archetype: "gateway",
+            parentId: districtId,
+            description: `Site entry deployed from ${site.file}.`,
+            ...(site.buildCommand || site.publishDir
+                ? {
+                      attributes: {
+                          ...(site.buildCommand ? { "site-build": site.buildCommand } : {}),
+                          ...(site.publishDir ? { "site-publish": site.publishDir } : {}),
+                      },
+                  }
+                : {}),
+            sourceRefs: [{ path: site.file }],
+            tags: ["site", site.platform],
+            display: { flowLayer: 0 },
+        });
+        const runnable = runnableApps.find((app) => app.pkgDir === site.pkgDir);
+        const entryOwner = runnable ? nodeOwningFile(runnable.entry) : null;
+        const roomOwner =
+            entryOwner ??
+            [...rooms.values()].find(
+                (room) =>
+                    room.pkg.dir === site.pkgDir &&
+                    entryDirNames.has(basename(room.segment)) &&
+                    nodes.some((node) => node.id === room.id),
+            )?.id;
+        if (roomOwner) {
+            addEdge(edges, {
+                id: `${roomOwner}--${siteId}`,
+                from: roomOwner,
+                to: siteId,
+                kind: "deploys",
+                evidence: "declared",
+                label: `${site.platform} deploy`,
+                sourceRefs: [{ path: site.file }],
+            });
+        }
     }
 }
 
@@ -1111,6 +1191,7 @@ export function assemblePackageDistricts(
         hostDeployReachable: ReadonlySet<string>;
         hasHostDeployShape: boolean;
         runnableByDir: ReadonlyMap<string, RunnableApp>;
+        sitePkgDirs: ReadonlySet<string>;
         hosts: readonly Host[];
         roomEdges: ReadonlyMap<string, number>;
         fileToRoom: ReadonlyMap<string, Room>;
@@ -1134,6 +1215,7 @@ export function assemblePackageDistricts(
         hostDeployReachable,
         hasHostDeployShape,
         runnableByDir,
+        sitePkgDirs,
         hosts,
         roomEdges,
         fileToRoom,
@@ -1262,14 +1344,16 @@ export function assemblePackageDistricts(
         const pathReferenced = pkgRooms.some((room) => pathReassignments.has(room.id));
         // A published artefact (D14) or a runnable app (D16) is deployed by
         // publication or by being run, not by a host, so R5 must not strip it
-        // even though no host root reaches it.
+        // even though no host root reaches it. A site-shipped package (D18)
+        // is deployed by its platform the same way.
         if (
             hasHostDeployShape &&
             !residual &&
             !pathReferenced &&
             !packageDeployed &&
             pkg.artefact === null &&
-            !runnableByDir.has(pkg.dir)
+            !runnableByDir.has(pkg.dir) &&
+            !sitePkgDirs.has(pkg.dir)
         ) {
             warnings.push(
                 `Dev-only package excluded from the deployment view (reached by no host deploy root): ${pkg.name} (${pkgRooms.length} area${pkgRooms.length === 1 ? "" : "s"}).`,

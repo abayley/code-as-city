@@ -343,6 +343,38 @@ describe("generate-map golden master", async () => {
         }
     });
 
+    it("given platform site configs, when generating, then each is a site deployable with a deploys edge (D18)", async () => {
+        const map = (await generateMap([])) as GeneratedMap & {
+            nodes: Array<{
+                id?: string;
+                kind?: string;
+                archetype?: string;
+                tags?: string[];
+                attributes?: Record<string, string> | null;
+                sourceRefs?: Array<{ path?: string }>;
+            }>;
+            edges: Array<{ from?: string; to?: string; kind?: string; label?: string }>;
+        };
+        // packages/site ships via netlify.toml; packages/web via vercel.json.
+        // Both yield a site district holding a gateway deployable that the
+        // owning entry deploys to.
+        for (const [config, platform, publish] of [
+            ["packages/site/netlify.toml", "netlify", "public"],
+            ["packages/web/vercel.json", "vercel", "dist"],
+        ] as const) {
+            const site = map.nodes.find(
+                (node) => node.kind === "deployable" && (node.sourceRefs ?? []).some((ref) => ref.path === config),
+            );
+            expect(site).toMatchObject({
+                archetype: "gateway",
+                tags: ["site", platform],
+                attributes: { "site-build": "npm run build", "site-publish": publish },
+            });
+            const deploys = map.edges.find((edge) => edge.to === site?.id && edge.kind === "deploys");
+            expect(deploys?.label).toBe(`${platform} deploy`);
+        }
+    });
+
     it("given a wrangler entry-dir room, when generating the deployment map, then it deploys to the edge worker (7c-i)", async () => {
         const map = (await generateMap([])) as GeneratedMap & {
             edges: Array<{

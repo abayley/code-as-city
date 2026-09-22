@@ -992,6 +992,38 @@
       }
     },
     {
+      "id": "mini-site-area",
+      "label": "Site",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Package @mini/site, rooted at packages/site/."
+    },
+    {
+      "id": "mini-site-app",
+      "label": "App",
+      "kind": "module",
+      "archetype": "gateway",
+      "parentId": "mini-site-area",
+      "description": "Docs site entry, deployed to Netlify.\n\n1 source file under app/.",
+      "sourceRefs": [
+        {
+          "path": "packages/site/app"
+        }
+      ],
+      "metrics": {
+        "loc": 3,
+        "complexity": 1
+      },
+      "display": {
+        "flowLayer": 0,
+        "size": [
+          1.1,
+          0.6118138500757483,
+          0.935
+        ]
+      }
+    },
+    {
       "id": "mini-toolkit-2-area",
       "label": "Toolkit",
       "kind": "scope",
@@ -1174,6 +1206,68 @@
       "display": {
         "flowLayer": 1
       }
+    },
+    {
+      "id": "site-netlify-site",
+      "label": "Netlify site: Site",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Static site deployed to Netlify as declared in packages/site/netlify.toml."
+    },
+    {
+      "id": "site-netlify-site-site",
+      "label": "Site",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "site-netlify-site",
+      "description": "Site entry deployed from packages/site/netlify.toml.",
+      "attributes": {
+        "site-build": "npm run build",
+        "site-publish": "public"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/site/netlify.toml"
+        }
+      ],
+      "tags": [
+        "site",
+        "netlify"
+      ],
+      "display": {
+        "flowLayer": 0
+      }
+    },
+    {
+      "id": "site-vercel-web",
+      "label": "Vercel site: Web",
+      "kind": "scope",
+      "archetype": "district",
+      "description": "Static site deployed to Vercel as declared in packages/web/vercel.json."
+    },
+    {
+      "id": "site-vercel-web-site",
+      "label": "Web",
+      "kind": "deployable",
+      "archetype": "gateway",
+      "parentId": "site-vercel-web",
+      "description": "Site entry deployed from packages/web/vercel.json.",
+      "attributes": {
+        "site-build": "npm run build",
+        "site-publish": "dist"
+      },
+      "sourceRefs": [
+        {
+          "path": "packages/web/vercel.json"
+        }
+      ],
+      "tags": [
+        "site",
+        "vercel"
+      ],
+      "display": {
+        "flowLayer": 0
+      }
     }
   ],
   "edges": [
@@ -1353,6 +1447,32 @@
       "sourceRefs": [
         {
           "path": "packages/greeter/src/cli.ts"
+        }
+      ]
+    },
+    {
+      "id": "mini-site-app--site-netlify-site-site",
+      "from": "mini-site-app",
+      "to": "site-netlify-site-site",
+      "kind": "deploys",
+      "evidence": "declared",
+      "label": "netlify deploy",
+      "sourceRefs": [
+        {
+          "path": "packages/site/netlify.toml"
+        }
+      ]
+    },
+    {
+      "id": "mini-web-src--site-vercel-web-site",
+      "from": "mini-web-src",
+      "to": "site-vercel-web-site",
+      "kind": "deploys",
+      "evidence": "declared",
+      "label": "vercel deploy",
+      "sourceRefs": [
+        {
+          "path": "packages/web/vercel.json"
         }
       ]
     },

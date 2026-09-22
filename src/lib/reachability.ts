@@ -9,6 +9,7 @@ import { readJson, readText } from "./read.ts";
 import type { Room } from "./rooms.ts";
 import type { RunnableApp } from "./runnable.ts";
 import { OTLP_PATTERN } from "./scans.ts";
+import type { SiteHost } from "./sites.ts";
 import type { EdgeHost } from "./wrangler.ts";
 
 // package.json script entries split by naming convention: QA/codebase
@@ -95,6 +96,8 @@ type PackageManifest = {
  * @param fileEdges - File-level import edges to traverse.
  * @param fileToRoom - Index of files placed in rooms; only such files can
  *   resolve as script or bin roots.
+ * @param runnableApps - D16 runnable apps, whose entries seed deploy roots.
+ * @param siteHosts - D18 platform sites, whose owners' files seed deploy roots.
  * @returns The three reachability sets, the raw script-root files, and the
  *   dev-tooling predicate combining them.
  */
@@ -107,6 +110,7 @@ export function analyseReachability(
     fileEdges: readonly FileEdge[],
     fileToRoom: ReadonlyMap<string, Room>,
     runnableApps: readonly RunnableApp[],
+    siteHosts: readonly SiteHost[] = [],
 ): Reachability {
     /**
      * Resolves a manifest token (a bin/main value or a script-command word)
@@ -186,6 +190,15 @@ export function analyseReachability(
     // packages directly instead.
     for (const app of runnableApps) {
         if (fileToRoom.has(app.entry)) deployRoots.add(app.entry);
+    }
+    // D18: a platform site ships its owning package's code (the site bundles
+    // the app), so the package's files are deploy roots and survive the R3
+    // orphan sweep. Like D16 entries, they are NOT host deploy roots — a site
+    // must not make the repo host-shaped; R5 spares site packages directly.
+    for (const site of siteHosts) {
+        for (const f of sourceFiles) {
+            if (site.pkgDir === "." || f === site.pkgDir || f.startsWith(`${site.pkgDir}/`)) deployRoots.add(f);
+        }
     }
 
     const deployReachable = reachableFrom(deployRoots, fileEdges);

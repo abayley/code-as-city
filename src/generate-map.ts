@@ -28,6 +28,7 @@ import { readText } from "./lib/read.ts";
 import { buildRooms } from "./lib/rooms.ts";
 import { findRunnableApps } from "./lib/runnable.ts";
 import { createDocScanner, findEmbeddedDatabases, findExternalServiceDeps, scanCoverage } from "./lib/scans.ts";
+import { findSiteHosts } from "./lib/sites.ts";
 import { scanCiWorkflows } from "./lib/workflows.ts";
 import { findEdgeHost } from "./lib/wrangler.ts";
 
@@ -129,6 +130,10 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
     // entries seed deploy roots.
     const runnableApps = findRunnableApps(repo, packages, sourceFiles);
 
+    // D18: platform site deployments (vercel.json, netlify.toml) — recognised
+    // before reachability so their owners' files seed deploy roots.
+    const siteHosts = findSiteHosts(repo, allFiles, packages);
+
     // 6. Dev-tooling detection by reachability
     const reachability = analyseReachability(
         repo,
@@ -139,6 +144,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         fileEdges,
         fileToRoom,
         runnableApps,
+        siteHosts,
     );
     const { deployReachable, hostDeployReachable, hasHostDeployShape, scriptReachable, scriptReferencedFiles } =
         reachability;
@@ -220,6 +226,7 @@ export async function runGenerator(argumentsList: readonly string[]): Promise<nu
         scriptReachable,
         spawnedEntries,
         runnableApps,
+        siteHosts,
         devToolingWarnings,
         pathReassignments,
         entryDirNames: ENTRY_DIR_NAMES,

@@ -1060,6 +1060,19 @@ task definitions and quadlet units yield host districts the way compose
 does (containers, images, port/dependency edges). Each family is small; the
 risk is table sprawl — maybe land them one at a time, evidence-led.
 
+**Progress (first slice Done, D18; entry stays Proposed).** Netlify/Vercel
+landed as D18 (`sites.ts`): each `vercel.json`/`netlify.toml` outside test
+paths and template dirs is a site district with a `gateway` deployable
+tagged `site` plus the platform, build command and publish dir as
+attributes; the owning package's files seed deploy roots (R3 keeps the
+shipped code) without becoming host roots, R5 spares site packages, and the
+owner's entry carries a declared `deploys` edge mirroring the wrangler one.
+Deployment-view only. Verified on the fixture: a `@mini/site` docs site via
+`netlify.toml` (edge from its `app/` entry room) and the `@mini/web` app via
+`vercel.json` (edge from its D16 entry); `sites.ts` unit tests pin parsing,
+ownership, and the template/test guards. ECS task definitions and quadlet
+units are still open — the second slice.
+
 ## HC-026: Non-Node Services (Python) Are Never Inventoried
 
 **Rules:** I1 (inventory), D17 (client SDKs).
